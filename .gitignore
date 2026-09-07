@@ -1,0 +1,7 @@
+node_modules/
+__pycache__/
+*.pyc
+
+# eval run artifacts quote source under review; they belong in ~/.config
+last-run.jsonl
+last-intent-run.jsonl
