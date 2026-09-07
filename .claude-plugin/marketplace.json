@@ -1,0 +1,23 @@
+{
+  "name": "narthur",
+  "owner": {
+    "name": "Nathan Arthur",
+    "url": "https://narthur.com"
+  },
+  "description": "Nathan Arthur's Claude Code skills.",
+  "plugins": [
+    {
+      "name": "narthur-skills",
+      "source": "./",
+      "description": "Nathan Arthur's agent skills: PR workflow, multi-agent code review, skill-authoring meta-tooling, and everyday dev chores.",
+      "category": "engineering",
+      "keywords": [
+        "skills",
+        "code-review",
+        "pull-requests",
+        "github",
+        "claude-code"
+      ]
+    }
+  ]
+}

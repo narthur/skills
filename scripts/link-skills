@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Symlink every skill in this repo into ~/.claude/skills, so a `git pull` here
+# is the whole update mechanism. Existing real directories are never touched;
+# the script refuses rather than clobbering something it did not create.
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+DEST="${1:-$HOME/.claude/skills}"
+mkdir -p "$DEST"
+
+linked=0 skipped=0
+for dir in "$REPO"/skills/*/*/; do
+  name="$(basename "$dir")"
+  target="$DEST/$name"
+  if [[ -L "$target" ]]; then
+    ln -sfn "${dir%/}" "$target"; linked=$((linked+1))
+  elif [[ -e "$target" ]]; then
+    echo "skip: $name already exists and is not a symlink" >&2; skipped=$((skipped+1))
+  else
+    ln -s "${dir%/}" "$target"; linked=$((linked+1))
+  fi
+done
+echo "linked $linked skill(s) into $DEST${skipped:+, skipped $skipped}"

@@ -1,0 +1,47 @@
+{
+  "name": "narthur-skills",
+  "version": "1.0.0",
+  "description": "Nathan Arthur's agent skills: PR workflow, multi-agent code review, skill-authoring meta-tooling, and everyday dev chores.",
+  "author": {
+    "name": "Nathan Arthur",
+    "url": "https://narthur.com"
+  },
+  "repository": "https://github.com/narthur/skills",
+  "license": "MIT",
+  "keywords": [
+    "skills",
+    "code-review",
+    "pull-requests",
+    "github",
+    "claude-code"
+  ],
+  "skills": [
+    "./skills/github/actions-usage-report",
+    "./skills/github/dependabot-alerts",
+    "./skills/github/drive-pr",
+    "./skills/github/fix-ci",
+    "./skills/github/grooming",
+    "./skills/github/issue-blitz",
+    "./skills/github/pr-triage",
+    "./skills/github/resolve-feedback",
+    "./skills/github/split-pr",
+    "./skills/github/walk-pr",
+    "./skills/review/review-loop",
+    "./skills/review/static-analysis",
+    "./skills/meta/bitter-lesson",
+    "./skills/meta/create-skill",
+    "./skills/meta/refine-skill",
+    "./skills/meta/update-project-skills",
+    "./skills/meta/zoom-out",
+    "./skills/media/ascii-screenshot",
+    "./skills/media/surge-image-upload",
+    "./skills/media/trim-video",
+    "./skills/media/ui-mockups",
+    "./skills/dev/cleanup-worktrees",
+    "./skills/dev/local-llm",
+    "./skills/dev/name-it",
+    "./skills/dev/organize-files",
+    "./skills/dev/playwright",
+    "./skills/dev/prod-uvis"
+  ]
+}
