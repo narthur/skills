@@ -32,7 +32,6 @@
     "./skills/meta/create-skill",
     "./skills/meta/refine-skill",
     "./skills/meta/update-project-skills",
-    "./skills/meta/zoom-out",
     "./skills/media/ascii-screenshot",
     "./skills/media/surge-image-upload",
     "./skills/media/trim-video",

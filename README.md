@@ -2,7 +2,7 @@
 
 Agent skills for [Claude Code](https://claude.com/claude-code), written by Nathan Arthur and split out of a dotfiles repo so they can be read, borrowed and forked.
 
-27 skills in five groups. Everything here is original work. Skills that are merely *used* — vendor packs, other people's published skills — stay in the dotfiles repo they came from.
+26 skills in five groups. Everything here is original work. Skills that are merely *used* — vendor packs, other people's published skills — stay in the dotfiles repo they came from.
 
 ## Install
 
@@ -44,7 +44,6 @@ Or clone and take individual directories; each skill is self-contained.
 | [`create-skill`](skills/meta/create-skill/) | Scaffold a new Claude Code skill (personal or project-specific) | — |
 | [`refine-skill`](skills/meta/refine-skill/) | Review and improve an existing Claude Code skill | — |
 | [`update-project-skills`](skills/meta/update-project-skills/) | Review the current conversation for frictions and problems, then update or create project skills to prevent them in the future | — |
-| [`zoom-out`](skills/meta/zoom-out/) | Tell the agent to zoom out and give broader context or a higher-level perspective | — |
 
 ### `media/` — Turning things into images, video and hosted URLs.
 
