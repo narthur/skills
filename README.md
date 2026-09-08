@@ -71,6 +71,12 @@ The `Requires` column is honest rather than aspirational. These skills grew insi
 
 Helpers stay outside a skill only when they are shared by several skills or genuinely useful to run by hand. Everything else lives in the skill directory.
 
+## Prior art
+
+[**mattpocock/skills**](https://github.com/mattpocock/skills) is the best collection of Claude Code skills going, and it shaped this repo in three concrete ways: the categorised directory layout, shipping as an installable plugin while symlinking the working copy back for the maintainer, and the habit of writing a skill as a thing that can be handed to someone else rather than a private note to the agent. Several of those skills are in daily use here alongside these; they live in a dotfiles repo rather than this one, because this one is for original work.
+
+Worth reading in its own right — `grilling`, `triage` and `to-spec` in particular.
+
 ## Licence
 
 MIT — see [LICENSE](LICENSE).
