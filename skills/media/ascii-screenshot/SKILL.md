@@ -5,8 +5,8 @@ description: >
   lipgloss/bubbletea views) into a PNG image — preserving ANSI colors — for
   embedding in PRs, issues, docs, or READMEs. Use when asked to screenshot a
   TUI/CLI, capture terminal output as an image, or "add a screenshot" of
-  text-based/ASCII output. Pairs with the surge-image-upload skill to host the
-  result and `gh` to embed it. Not for GUI/browser screenshots (use playwright).
+  text-based/ASCII output. `gh --attach` posts the result straight to an issue
+  or PR. Not for GUI/browser screenshots (use playwright).
 ---
 
 # ASCII / Terminal Screenshot
@@ -32,12 +32,16 @@ some-command-with-color | ~/.claude/skills/ascii-screenshot/render.sh - -o /tmp/
 
 It prints the PNG path. `-s N` sets the max dimension (default 1400).
 
-Then host + embed:
+Then post it — `gh` uploads the PNG itself (`--attach`, gh >= 2.99):
 
 ```bash
-url=$(~/.claude/skills/surge-image-upload/upload.sh /tmp/shot.png)
-gh pr edit <num> --body-file <(...)        # or: gh pr comment <num> --body "![shot]($url)"
+gh pr comment <num> --attach '/tmp/shot.png#<what the output shows>' --body "..."
 ```
+
+Also on `gh pr create/edit` and `gh issue create/edit/comment`. Referencing the
+local path in the body (`![shot](/tmp/shot.png)`) puts the image there instead of
+at the end. Needs an OAuth/PAT credential on GitHub.com/GHEC; elsewhere fall back
+to **surge-image-upload** for a public URL.
 
 ## Step 1 — Capture the ANSI text (the part that bites you)
 
@@ -113,5 +117,5 @@ you, so you can rasterise it elsewhere.
 
 ## Related skills
 
-- **surge-image-upload** — host the PNG at a public URL for markdown embeds.
+- **surge-image-upload** — fallback host for the PNG when `gh --attach` can't be used (GHES, GitHub App token) or the URL is needed outside GitHub.
 - **playwright** — for GUI/web screenshots (not terminal output).

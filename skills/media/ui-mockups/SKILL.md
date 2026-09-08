@@ -54,22 +54,17 @@ kill %1 2>/dev/null
 
 Then `Read` the PNG to eyeball it. Iterate on the HTML and re-run until it's clean. (If chrome *is* installed, you can skip Firefox + the HTTP server and `goto` a `file://` URL directly.)
 
-## 4. Host the image
+## 4. Post it to the issue/PR
 
-Use the `surge-image-upload` skill — no login dance, content-addressed, stable URLs, renders in GitHub markdown on private repos too:
-
-```bash
-url=$(~/.claude/skills/surge-image-upload/upload.sh /tmp/<name>/mockup.png 2>/dev/null)
-```
-
-(Hosting: use the `surge-image-upload` skill — browser-free, and surge URLs render inline on public repos via GitHub's image proxy.)
-
-## 5. Embed in the issue/PR
+`gh` uploads the PNG itself (`--attach`, gh >= 2.99) — no external host:
 
 ```bash
-gh issue comment <n> --body "![mockups]($url)
-... per-screen notes, each mapped to the issue it addresses ..."
+gh issue comment <n> --attach '/tmp/<name>/mockup.png#<what the mockup shows>' --body "... per-screen notes, each mapped to the issue it addresses ..."
 ```
+
+The attachment is appended to the end of the body. To place it yourself, reference the local path in the body (`![mockups](/tmp/<name>/mockup.png)`) and `gh` rewrites that reference to the uploaded asset URL. Repeat `--attach` for multiple screens; alt text follows the path after `#`.
+
+Same flag on `gh issue create/edit` and `gh pr create/edit/comment`. It needs an OAuth or PAT credential on GitHub.com/GHEC — under a GitHub App/Actions token, or on GHES, fall back to the `surge-image-upload` skill and embed the returned URL.
 
 To revise later, edit the comment in place instead of posting a new one:
 

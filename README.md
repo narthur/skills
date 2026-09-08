@@ -50,7 +50,7 @@ Or clone and take individual directories; each skill is self-contained.
 | Skill | What it does | Requires |
 |---|---|---|
 | [`ascii-screenshot`](skills/media/ascii-screenshot/) | Turn colored terminal / ASCII output (charts, TUIs, CLI output, asciigraph, lipgloss/bubbletea views) into a PNG image — preserving ANSI colors — for embedding in PRs, issues, docs, or READMEs | — |
-| [`surge-image-upload`](skills/media/surge-image-upload/) | Upload local image(s) to a public surge.sh URL and embed them in GitHub PRs/issues or any markdown — no browser required | `surge` CLI, logged in |
+| [`surge-image-upload`](skills/media/surge-image-upload/) | Upload local image(s) to a public surge.sh URL — fallback for when `gh --attach` can't be used, or for markdown outside GitHub | `surge` CLI, logged in |
 | [`trim-video`](skills/media/trim-video/) | Trim long idle/static periods in a screen recording (or any video) down to a max duration using ffmpeg scene detection | `ffmpeg` |
 | [`ui-mockups`](skills/media/ui-mockups/) | Produce low-fi UI wireframes/mockups as HTML/CSS, render them to a PNG, and (optionally) host the image and embed it in a GitHub issue/PR | `playwright-cli` on PATH |
 

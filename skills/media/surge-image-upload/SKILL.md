@@ -2,9 +2,11 @@
 name: surge-image-upload
 description: >
   Upload local image(s) to a public surge.sh URL and embed them in GitHub
-  PRs/issues or any markdown — no browser required. Use when asked to upload,
-  host, or "add a screenshot" to a PR/issue, or to get a public URL for a local
-  image. No browser or login required; surge URLs render inline on public
+  PRs/issues or any markdown — no browser required. Fallback only: for GitHub
+  issue/PR bodies and comments, `gh --attach` (gh >= 2.99) uploads images and
+  videos directly, so use this skill only when that is unavailable (GHES, a
+  GitHub App/Actions token, which the upload endpoint rejects) or when the URL
+  is needed outside GitHub. No browser or login required; surge URLs render inline on public
   repos via GitHub's image proxy.
 ---
 

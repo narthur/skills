@@ -26,9 +26,18 @@ No sufficient evidence → produce it:
 
 **Everything works** → publish the evidence to the PR:
 
-1. Images → public URLs via the **surge-image-upload** skill: `~/.claude/skills/surge-image-upload/upload.sh <files>`.
-2. Post one PR comment (`gh pr comment`) with a `## Manual testing evidence` section: what was tested and how, embedded screenshots, transcripts in fenced blocks, and the environment (local dev, commit SHA tested).
-3. Gate passes → Step 14.
+1. Post one PR comment with a `## Manual testing evidence` section: what was tested and how, embedded screenshots/recordings, transcripts in fenced blocks, and the environment (local dev, commit SHA tested). Upload the images and videos with `gh pr comment`'s repeatable `--attach` flag (gh ≥ 2.99) — no external host:
+
+   ```bash
+   gh pr comment --body-file evidence.md \
+     --attach './before.png#Empty state before the fix' \
+     --attach './after.png#Rows rendered after the fix'
+   ```
+
+   Reference a file in the body as `![alt](./after.png)` and gh rewrites that reference to the uploaded asset URL; anything unreferenced is appended at the end. Alt text follows the path after `#` (videos render as a player and take none). Up to 50 files per command.
+2. Gate passes → Step 14.
+
+Only OAuth/PAT credentials can upload, and only on GitHub.com/GHEC. On GHES, or if the upload is rejected, fall back to the **surge-image-upload** skill (`~/.claude/skills/surge-image-upload/upload.sh <files>`) and embed the returned URLs.
 
 **Testing finds a real issue** (broken behavior, error, regression):
 
