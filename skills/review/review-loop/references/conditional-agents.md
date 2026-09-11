@@ -20,11 +20,11 @@ Look for "code judo" — restructurings that preserve behavior while making the 
 
 For each finding, the `suggested_fix` should describe the restructuring in plain language and name what it deletes ("collapse the three `status` string checks into a `Status` union; the `isPending`/`isDone` helpers then disappear"). These are **proposals, not patches** — do not expect them to be auto-applied (see SKILL Step 6 and Step 8a routing). Scored on value-vs-risk and always routed to ask-user.
 
-## Agent #8 — Observability coverage (conditional) `[model: sonnet]`
+## Agent #8 — Observability & cost coverage (conditional) `[model: sonnet]`
 
-**Gating — only spawn this agent when BOTH hold:** the diff is substantial/risky (same threshold as Agent #7), AND the repo already has an observability convention — a logger, metrics client, or error reporter visible in the surrounding files. **Skip entirely** if the project logs nothing; don't invent a convention where none exists. As with #7, when in doubt on a borderline diff, spawn it.
+**Gating — only spawn this agent when the diff is substantial/risky (same threshold as Agent #7) AND at least one of:** the repo already has an observability convention — a logger, metrics client, or error reporter visible in the surrounding files — **or** the diff touches a *metered* resource (paid API, LLM call, CI workflow, cron schedule, queue/worker invocation, cache, storage, egress). **Skip the observability half** if the project logs nothing; don't invent a convention where none exists. As with #7, when in doubt on a borderline diff, spawn it.
 
-This is the mirror of Agent #6 (test coverage): #6 asks "does changed logic have tests?"; #8 asks "if changed logic fails in prod, will we find out?"
+This is the mirror of Agent #6 (test coverage): #6 asks "does changed logic have tests?"; #8 asks two questions about the same paths — "if changed logic fails in prod, will we find out?" and "what does it cost when it runs a lot?" One agent, two lenses: they look at the same external-I/O and background-work surface, so splitting them would ship the diff twice for no gain.
 
 Like #7, this agent is **allowed and expected to read beyond the diff** — observability is often satisfied upstream or downstream of the changed line. Confirm a failure path is *actually* unsurfaced, not merely out of frame, before flagging.
 
@@ -32,7 +32,18 @@ Like #7, this agent is **allowed and expected to read beyond the diff** — obse
 2. For each, check whether a failure would be **detectable**: is there a log, metric, error report, or surfaced error on the failure path?
 3. Flag only failure-bearing changes where a silent failure would matter and nothing surfaces it. Also flag observability the diff **removed or downgraded** on such a path (a deleted log line, an error report dropped, a log level lowered on a failure path). State the symptom concretely: "if this charge fails, the user sees nothing and no log/metric fires — first signal is a support ticket."
 
-Findings here are verifiable (the failure path either surfaces something or it doesn't), so they use the **normal Step 6 rubric** — no special-casing like #7. The fixes are almost always additive (add a log line / metric / error surface), which makes them low-risk under Step 8a and so usually auto-applied.
+### The cost half — "what does this cost when it runs a lot?"
+
+Same diff, second lens. Cost bugs hide in exactly the places observability bugs do — the external-I/O and background-work paths — and they're invisible in a diff because the expensive version and the cheap version look identical at one call. Flag only where the diff **raises** the bill or **removes a bound**; a change that is merely expensive-but-was-always-expensive is not a finding.
+
+1. **Unbounded multiplication** — a per-item call where there was a batch, a retry added with no cap or no backoff, a fan-out whose width comes from user data, a new call inside an existing loop.
+2. **A bound removed** — caching deleted or a cache key narrowed until it stops hitting, a rate limit or concurrency cap loosened, pagination or a `limit` dropped, a timeout raised.
+3. **A dial turned** — cron interval tightened, a schedule moved from manual to on-push, a CI job moved off a path filter or onto a bigger runner, an LLM model swapped for a pricier one, `max_tokens` raised, prompt caching broken by making a cached prefix variable, a log/metric added to a per-request hot path (including one *this agent* would otherwise suggest — check yourself).
+4. **Denial-of-wallet** — billable work reachable by an unauthenticated or unthrottled caller: a public endpoint that triggers an LLM call, a paid API, or a large storage read. Overlaps the security review; flag it here too if the security pass frames it only as abuse rather than spend.
+
+State the finding as a multiplier, not a number: "this runs once per row of an unbounded query instead of once per request — 1 API call becomes N." Never invent a dollar figure. If you can't name what multiplies, you don't have a finding.
+
+Findings here are verifiable (the failure path either surfaces something or it doesn't; the call either multiplies or it doesn't), so they use the **normal Step 6 rubric** — no special-casing like #7. Observability fixes are almost always additive (add a log line / metric / error surface), which makes them low-risk under Step 8a and so usually auto-applied. Cost fixes are not: restoring a bound, re-batching a call, or reverting a schedule changes behaviour, so they usually land in high-risk ask-user — except a straight revert of a dial the diff turned, which is as reversible as it gets.
 
 ## Agent #9 — Intent reconciliation (conditional, cycle 1 only) `[model: sonnet]`
 
