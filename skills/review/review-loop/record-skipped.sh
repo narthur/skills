@@ -17,6 +17,14 @@ if [ -z "$reason" ]; then
 	echo "record-skipped: a reason is required — e.g. record-skipped.sh 'comment-only, actionlint green'" >&2
 	exit 1
 fi
+# A flag is a mistake, not a reason: `record-skipped.sh --help` would otherwise
+# record the string "--help" against HEAD and exit 0. Same class as the sha bug below.
+case "$reason" in
+	-*) echo "record-skipped: '$reason' is a flag, not a reason — usage: record-skipped.sh \"<reason>\" [<sha>]" >&2; exit 2 ;;
+esac
+# The store is one line per sha, tab-separated, and capped by line count, so a tab
+# or newline inside the reason would forge extra lines and evict real records.
+reason=$(printf '%s' "$reason" | tr '\n\t' '  ')
 # Resolve a commit-ish to a bare 40-hex sha, or fail loudly. Without this,
 # `git rev-parse --help` exits 0 and prints a man page to stdout, which then
 # gets appended to the store as if it were a sha — and since the store is
