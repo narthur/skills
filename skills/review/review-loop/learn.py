@@ -24,6 +24,15 @@ import sys
 ENTRY_RE = re.compile(r'^- (\d{4}-\d{2}-\d{2}): (.*)$')
 
 
+SKELETON = [
+    "# Review Loop Learnings", "",
+    "## Dismissed",
+    "<!-- Patterns the user has chosen to skip. Skill won't auto-flag matches. -->", "",
+    "## Accepted patterns",
+    "<!-- Patterns the user has explicitly confirmed matter here. Skill weights matches higher. -->",
+]
+
+
 def today():
     return datetime.date.today().isoformat()
 
@@ -92,6 +101,21 @@ def _selftest():
     assert "- 2026-01-15: PATTERN: keep me" in kept       # PATTERN survives
     assert "- 2026-01-01: a" in dropped                   # oldest dismissed dropped
     assert len([l for l in kept if ENTRY_RE.match(l)]) == 2
+    # main() on a missing file: add creates the documented skeleton, bump/prune refuse
+    import os, tempfile
+    with tempfile.TemporaryDirectory() as d:
+        f = os.path.join(d, "learnings.md")
+        for cmd in (["bump", f, "x"], ["prune", f]):
+            try:
+                main(cmd)
+                raise AssertionError(f"{cmd[0]} on missing file should exit")
+            except SystemExit as e:
+                assert "no learnings file" in str(e.code)
+        assert not os.path.exists(f)
+        main(["add", f, "--section", "dismissed", "first"])
+        with open(f) as fh:
+            written = fh.read().splitlines()
+        assert written == SKELETON[:4] + [f"- {today()}: first"] + SKELETON[4:]
     print("ok")
 
 
@@ -116,7 +140,7 @@ def main(argv):
     except FileNotFoundError:
         if a.cmd != "add":
             sys.exit(f"no learnings file: {a.file}")
-        lines = ["# review-loop learnings", "", "## Dismissed", "", "## Accepted patterns"]
+        lines = list(SKELETON)
 
     if a.cmd == "bump":
         lines, hit = bump(lines, a.text, today())
@@ -130,8 +154,11 @@ def main(argv):
         lines, dropped = prune(lines, a.cap)
         sys.stderr.write(f"pruned {len(dropped)} entr{'y' if len(dropped)==1 else 'ies'}\n")
 
-    with open(a.file, "w") as f:
-        f.write("\n".join(lines) + "\n")
+    try:
+        with open(a.file, "w") as f:
+            f.write("\n".join(lines) + "\n")
+    except OSError as e:
+        sys.exit(f"can't write {a.file}: {e}")
     return 0
 
 

@@ -71,7 +71,7 @@ non-converged tree is the costly mistake, and a script cannot talk itself into i
 
 When it says push:
 
-`git push`
+`git push` — or `git push -u origin <branch>` when `reason` says the branch has no upstream yet
 
 If the push fails (network error, branch protection, missing upstream, non-fast-forward), surface
 the error verbatim in the final report and continue — do not retry, do not force.
@@ -83,7 +83,8 @@ the error verbatim in the final report and continue — do not retry, do not for
 - **Cycle limit reached with unaddressed ≥80 findings.** The loop did not converge.
 - **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That is
   an unresolved ambiguity they may still want to think about; let them push when ready.
-- **No upstream configured for the branch.** Do not infer one; report and stop.
+- **The current or default branch name is unknown.** Fail closed rather than skip the
+  default-branch guard.
 - **Branch is the repo's default branch (main/master).** Never auto-push to main; surface the
   unusual state instead.
 - **The Step 13 evidence gate is blocked or hit its restart cap.** Untested (or known-broken)

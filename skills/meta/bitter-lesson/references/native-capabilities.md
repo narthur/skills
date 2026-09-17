@@ -26,8 +26,8 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 - **/config key=value** + **/config --help** (v2.1.183) — set any setting from the prompt. → bears on
   `update-config`-style scaffolding.
 - **Marketplace search UI + Suggested Plugins** (v2.1.154, 2.1.181) — search bar when browsing
-  plugins; relevance-pinned suggestions. NOTE: this is a browse/search *UI*, NOT a `/find-skills`
-  slash command — `find-skills` is only *partially* superseded.
+  plugins; relevance-pinned suggestions. NOTE: this is a browse/search _UI_, NOT a `/find-skills`
+  slash command — `find-skills` is only _partially_ superseded.
 - **/reload-skills** (v2.1.152), **claude plugin init** (v2.1.157), nested `.claude/skills` loading
   (v2.1.178) — native skill/plugin scaffolding + reload. → bears on `create-skill`.
 - **Hook additions**: Stop/SubagentStop can return `additionalContext` to continue the turn (v2.1.152);
@@ -64,13 +64,13 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 
 ### New since baseline (v2.1.183 → v2.1.219, noted 2026-07-24)
 
-- **`/doctor` is a full setup checkup that diagnoses *and fixes* issues** (v2.1.214; `/checkup`
+- **`/doctor` is a full setup checkup that diagnoses _and fixes_ issues** (v2.1.214; `/checkup`
   is an alias). Obsoletes hand-rolled config/hook/permission health checking.
   → **This audit should delegate the hooks + `settings.json` health dimension to `/doctor`**
   rather than re-deriving it. Run `/doctor` first, then audit what it doesn't cover.
 - **`/doctor` proposes trimming checked-in `CLAUDE.md` files** by cutting content Claude could
   derive from the codebase (v2.1.206). Obsoletes the CLAUDE.md-bloat dimension of this audit.
-  → Hand CLAUDE.md trimming to `/doctor`. Keep bitter-lesson focused on what it does *not* do:
+  → Hand CLAUDE.md trimming to `/doctor`. Keep bitter-lesson focused on what it does _not_ do:
   skill **content** quality, over-engineering, and staleness against model capability.
 - **Startup warning for `Write(path)` / `NotebookEdit(path)` / `Glob(path)` permission rules**
   (v2.1.210) — prefer `Edit(path)` / `Read(path)`. Settings-hygiene now self-reporting.
@@ -78,7 +78,7 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 ### New since 2.1.219 → 2.1.258 (noted 2026-09-02)
 
 - **`/review` is now just an alias of `/code-review`** (v2.1.223). `/code-review [level] [pr#|branch|path]`
-  reviews the current diff *or* a PR, remembers the last effort level, takes **`--comment`** (posts inline
+  reviews the current diff _or_ a PR, remembers the last effort level, takes **`--comment`** (posts inline
   findings to a GitHub PR — and, since v2.1.257, GitLab MRs via `glab mr note`) and **`--fix`** (applies
   findings to the working tree). **`/code-review ultra`** runs a deep multi-agent review in the cloud, with
   `--post` to publish the result to the PR. Claude may now start `/code-review` on its own (v2.1.246).
@@ -90,14 +90,14 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 - **Built-in "Concise" output style** (v2.1.237) — leads with results, skips preamble/narration. Partial
   overlap with `caveman` — which Nathan chose to DELETE on 2026-09-02 on that basis.
 - **`SendFeedback` tool** (v2.1.247) — Claude drafts a feedback report for `/feedback`. Adjacent to, but not
-  a replacement for, the private `~/.claude/friction.md` log (that one feeds *this* audit, not Anthropic).
+  a replacement for, the private `~/.claude/friction.md` log (that one feeds _this_ audit, not Anthropic).
 - **Cross-session messaging** (v2.1.224): `SendMessage` / `ListAgents` between sessions on the same machine,
   plus `notify_when_idle` (v2.1.236, one-shot idle notice, no polling). → obsoletes bespoke session-coordination
   and polling scaffolding.
 - **`--restricted` / `CLAUDE_CODE_RESTRICTED=1`** (v2.1.248) — strips command-running tools and WebFetch.
 - **Auto-mode Containment Escape rule** (v2.1.257) — cloud metadata-credential fetches, egress evasion, and
   cross-tenant reach are no longer auto-approved. Plus `permissions.blockReadsOutsideWorkingDirectories`
-  (v2.1.257). → *Complements* `egress-guard.sh`; does not replace it (that hook is a local deterministic
+  (v2.1.257). → _Complements_ `egress-guard.sh`; does not replace it (that hook is a local deterministic
   control and stays protected), but the overlap is now real enough to re-check the hook's scope.
 - **Auto mode tab in `/permissions`** (v2.1.246) for viewing/editing classifier rules.
 - **`/usage` Loops breakdown** (v2.1.243) — per-loop run count/tokens/last-run; **per-session prompt-cache line
@@ -143,7 +143,7 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 
 - Strong unprompted ability at: reading stack traces, writing idiomatic code/commits,
   summarizing, classification, following multi-step instructions without a spelled-out script.
-  → Skills that *only* encode generic best practice for these are bitter-lesson candidates.
+  → Skills that _only_ encode generic best practice for these are bitter-lesson candidates.
 - Reliable structured output / tool-calling → skills don't need to hand-hold JSON formatting.
 - Large context windows → aggressive pre-summarization scaffolding is often unnecessary now;
   keep the raw (see Fieldnotes "AI Infrastructure Upgrades" item #4).
@@ -154,7 +154,7 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
   as is scaffolding that works around old context limits (subagent fan-out for long inputs,
   chunking, re-reading for attention). The rules and an audit checklist live in
   `~/.claude/skills/create-skill/references/context-engineering.md`; `refine-skill` reads it too.
-  **Guardrail:** this does *not* license deleting non-inferable knowledge — author preferences,
+  **Guardrail:** this does _not_ license deleting non-inferable knowledge — author preferences,
   lessons with a real incident behind them, private facts, safety gates.
 
 ## Superseded-in-this-setup (confirmed deletions/merges from past audits)
@@ -169,4 +169,5 @@ _Append as the audit confirms them, so we don't re-litigate. Date each entry._
 - **`ynab`** — DELETED 2026-09-17 (Nathan approved). YNAB replaced by hledger on 2026-07-30
   (`Fieldnotes/YNAB to hledger Migration 2026-07-30.md`); `reconcile` and `ppd-financial-review` cover
   the job. Moved to `~/.Trash/ynab-skill-2026-09-17` (was untracked in dotfiles and the skills repo).
-  `taxes-2025` still calls the `ynab` CLI — it was declined for deletion on 09-02 and left alone.
+  `taxes-2025` still calls the `ynab` CLI; `taxes-2025` itself (declined for deletion on 09-02) was
+  left unchanged.

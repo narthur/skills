@@ -181,6 +181,7 @@ python3 ~/.claude/skills/review-loop/batch-files.py <this-cycle's diff-range>
 It bin-packs the changed files into **batches under a ~1500-line whole-file budget** and lists any oversized file to handle by diff-plus-enclosing-scope. **Spawn one instance of each file-scoped agent per batch, in parallel**, each receiving the whole contents of its batch's files plus the diff of what changed in them. On a normal PR this is a single batch = one instance each (identical to before); it only fans out when the changed files exceed the budget — which is exactly where attention-splitting starts to hurt. Batches are disjoint file sets, so instances of the same agent never produce duplicate findings.
 
 Each agent must also receive:
+
 - The contents of `.git/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
 - The agent's specific focus (below)
 - The style default below (verbatim)
@@ -322,6 +323,7 @@ On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (t
 **Security dismissals go to the threat model, not here.** When the user skips a *security* finding at Step 8b, write it under `## Not an issue here` in `<git-common-dir>/info/review-loop-threat-model.md` with today's date and a `[path @ sha]` pin. That file is the per-repo override channel for the vendored exclusion list, and it is the only section the security review reads for suppressions. A security dismissal in the learnings file is invisible to it.
 
 Do the edits with `learn.py` — you judge match/novelty/section; the script does the dated surgery:
+
 - Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring>"` (bumps its date to today — the freshness signal Step 2a depends on).
 - Novel entry → `learn.py add <file> --section dismissed|accepted "<text, no date>"` (stamps today's date; creates the file/sections if missing).
 - Cap fallback → `learn.py prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).

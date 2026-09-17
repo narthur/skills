@@ -26,10 +26,15 @@ def decide(clean_exit, gate_state, unresolved_skip, branch, default_branch, upst
         return False, "evidence gate blocked or hit its restart cap"
     if unresolved_skip:
         return False, "a 50-79 finding was skipped without 'remember as dismissal' — unresolved"
-    if branch and default_branch and branch == default_branch:
+    if not branch or not default_branch:
+        # Fail closed: an unknown name would skip the default-branch guard below.
+        return False, "current or default branch unknown — refusing to push"
+    if branch == default_branch:
         return False, f"branch is the default branch ({branch}) — never auto-push to it"
     if not upstream_exists:
-        # First push of a new feature branch is the normal case, not a block.
+        # First push of a new feature branch is the normal case, not a block. SKILL.md Step 14
+        # pushes it with `-u origin`. The old "don't infer an upstream" rule blocked every
+        # fresh branch, so the first push always needed a manual step (changed 2026-09-17).
         return True, "clean exit, evidence gate ok, feature branch has no upstream yet — push with -u"
     return True, "clean exit, evidence gate ok, feature branch with upstream"
 
@@ -48,8 +53,10 @@ def _selftest():
     assert decide(True, "blocked", False, *ok)[0] is False           # gate blocked
     assert decide(True, "passed", True, *ok)[0] is False             # unresolved skip
     assert decide(True, "passed", False, "main", "main", True)[0] is False   # default branch
-    assert decide(True, "passed", False, "feat/x", "main", False)[0] is True   # first push
-    assert "-u" in decide(True, "passed", False, "feat/x", "main", False)[1]
+    first = decide(True, "passed", False, "feat/x", "main", False)   # first push
+    assert first[0] is True and "-u" in first[1]
+    assert decide(True, "passed", False, "main", "", False)[0] is False     # default unknown
+    assert decide(True, "passed", False, "", "main", True)[0] is False      # branch unknown
     assert decide(True, "passed", False, "main", "main", False)[0] is False  # default branch, no upstream
     print("ok")
 
