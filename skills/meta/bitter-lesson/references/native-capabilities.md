@@ -115,6 +115,30 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
   (v2.1.248), wildcard-Bash-allow-rule startup warning (v2.1.246).
 - **Write tool** no longer requires a prior Read for newer models (v2.1.228).
 
+### New since 2.1.258 → 2.1.274 (noted 2026-09-17)
+
+- **`/skill-doctor`** (v2.1.261) — shows which loaded skills go unused and what each costs in context.
+  → Supersedes the hand-joined usage table this audit used to build from `skill-usage.log` + transcript
+  greps — but it's an interactive table that can't be pasted, so this audit doesn't ask for it (Nathan,
+  2026-09-17). Use `/doctor` check 1, which reads the same `skillUsage` counters into the conversation.
+  (The `skill-usage.log` hook only sees Skill-tool calls, not slash invocations — e.g. `pilot` logs 0
+  while transcripts show 14 `/pilot` since 09-02 — so it undercounts user-driven skills.)
+- **`claude plugin eval`** (v2.1.269) — scored, reproducible eval suites for plugins. Relevant only if a
+  personal skill is ever packaged as a plugin.
+- **`/output-style [name]`** (v2.1.269) — list/switch output styles anywhere, incl. Remote Control.
+- **`/code-review` uses lean inline prompts** instead of many subagents on models without tuned settings
+  (v2.1.274). Doesn't change `review-loop`'s protected status.
+- **Monitor `persistent` option removed** (v2.1.271) — watches now always have a ≤30 min deadline and
+  re-arm. Grep skills for `persistent` Monitor usage (none found 2026-09-17).
+- **Workflow medium size guideline lowered 15 → 10 agents** (v2.1.271).
+- **`omitClaudeMd` agent frontmatter** (v2.1.271) — subagents can run without CLAUDE.md files.
+- **Frontmatter `model:` / `effort:` on skills now honored** (v2.1.259, v2.1.267) — previously ignored in
+  interactive sessions / on pinned-effort models. Skills that worked around this in prose can now just set it.
+- **`/diff` panel** (v2.1.260), **prompt-cache miss causes in `/cost`** (v2.1.260),
+  **`bashOutputMaxChars` / `taskOutputMaxChars`** (v2.1.261).
+- **Auto mode**: skill-inline `!` shell commands follow default-mode permission rules (v2.1.271); public
+  diagram-renderer URLs packing content count as uploads (v2.1.261). Complements `egress-guard`.
+
 ## Model capabilities (Claude, current generation)
 
 - Strong unprompted ability at: reading stack traces, writing idiomatic code/commits,
@@ -142,3 +166,7 @@ _Append as the audit confirms them, so we don't re-litigate. Date each entry._
   re-propose creating it. The `ponytail` plugin still references pairing with it — that's a vendor
   bundle, left alone.
 - **`coderabbit-review-loop`** — DELETED 2026-06-19. Self-documented fallback to `review-loop` (the default Claude-driven local review); the CodeRabbit-CLI iterative loop was dead weight. One-shot CodeRabbit needs are met by a manual `@coderabbitai review` or native `/code-review`. Don't re-propose creating it.
+- **`ynab`** — DELETED 2026-09-17 (Nathan approved). YNAB replaced by hledger on 2026-07-30
+  (`Fieldnotes/YNAB to hledger Migration 2026-07-30.md`); `reconcile` and `ppd-financial-review` cover
+  the job. Moved to `~/.Trash/ynab-skill-2026-09-17` (was untracked in dotfiles and the skills repo).
+  `taxes-2025` still calls the `ynab` CLI — it was declined for deletion on 09-02 and left alone.

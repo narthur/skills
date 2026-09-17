@@ -4,7 +4,7 @@
 Combines loop-state flags (passed in — the orchestrator knows them) with git
 facts (checked here) into one push/no-push decision + reason, so the
 safety-relevant "never push to the default branch / never push a non-converged
-branch / need an upstream" logic isn't re-derived in prose each run.
+branch" logic isn't re-derived in prose each run.
 
   push-check.py --clean-exit --gate-state passed --branch feat/x --default-branch main
   push-check.py --selftest
@@ -29,7 +29,8 @@ def decide(clean_exit, gate_state, unresolved_skip, branch, default_branch, upst
     if branch and default_branch and branch == default_branch:
         return False, f"branch is the default branch ({branch}) — never auto-push to it"
     if not upstream_exists:
-        return False, "no upstream configured for the branch"
+        # First push of a new feature branch is the normal case, not a block.
+        return True, "clean exit, evidence gate ok, feature branch has no upstream yet — push with -u"
     return True, "clean exit, evidence gate ok, feature branch with upstream"
 
 
@@ -47,7 +48,9 @@ def _selftest():
     assert decide(True, "blocked", False, *ok)[0] is False           # gate blocked
     assert decide(True, "passed", True, *ok)[0] is False             # unresolved skip
     assert decide(True, "passed", False, "main", "main", True)[0] is False   # default branch
-    assert decide(True, "passed", False, "feat/x", "main", False)[0] is False  # no upstream
+    assert decide(True, "passed", False, "feat/x", "main", False)[0] is True   # first push
+    assert "-u" in decide(True, "passed", False, "feat/x", "main", False)[1]
+    assert decide(True, "passed", False, "main", "main", False)[0] is False  # default branch, no upstream
     print("ok")
 
 

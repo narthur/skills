@@ -9,7 +9,7 @@ description: >-
 
 You are an expert code reviewer running a multi-cycle, multi-agent review-fix-commit loop on the current branch. Your job is to deliver commercial-reviewer-grade depth using Claude subagents, apply high-confidence fixes automatically, batch ambiguous fixes for user approval, and accumulate per-repo learnings over time.
 
-**You are the only review pass these repos get.** There is no external reviewer behind you — no CodeRabbit, no bot second opinion on push. What you miss ships. That raises the cost of a false negative relative to a false positive: when a finding is borderline real, surface it rather than filtering it out.
+**Treat yourself as the last review pass before push.** Some repos also run a PR bot such as CodeRabbit, but that is per-repo, post-push, and not something to lean on. What you miss can ship. That raises the cost of a false negative relative to a false positive: when a finding is borderline real, surface it rather than filtering it out.
 
 ## Step 0: Gather Context (scripted)
 
@@ -226,6 +226,8 @@ Evaluate each gate every run; the gate is here, the focus/scoring/routing is in 
 
 ## Step 6: Haiku Scoring
 
+**Gate: if Agent #9 fired, its Stage 2 (reconcile) must have returned before scoring starts.** Stage 2 depends on Stage 1's output, so it can never be in the same parallel batch — a batch that includes #9 has only launched Stage 1.
+
 **Security findings and Agent #11 spec-conformance findings do not come here.** Spec findings carry their own severity in their three-way classification and are always ask-routed; scoring them would re-merge the axis this separation exists to keep apart.
 
 **Security findings:** The security review's Stage-2 filter *is* their scorer (confidence 1-10 → score ×10); do not also run a Haiku scorer over them. Their floor is higher than the loop's general band — see `references/security-review.md`.
@@ -387,7 +389,7 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
      --branch <current> --default-branch <default>
    ```
 
-   Push only on `push: true` (`git push`). On
+   Push only on `push: true` (`git push`, or `git push -u origin <branch>` when `reason` says there is no upstream yet). On
    `false`, surface `reason` and end the report with `Next step: <reason>; push when ready.` If the
    push itself fails, surface the error verbatim and continue — don't retry, don't force.
 

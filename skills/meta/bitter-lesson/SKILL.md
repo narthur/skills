@@ -58,10 +58,12 @@ Hooks and settings still appear in the Step 2 inventory, but as *context* for ju
 What can the harness/model do *now* that scaffolding might be reimplementing?
 
 1. Get the installed version: `claude --version`.
-2. **Ask Nathan to run `/doctor`** and paste or summarize what it flags. You can't invoke it —
-   it's a slash command, not a skill. Its findings are the config/hooks/settings/CLAUDE.md
-   half of the picture; take them as given and don't re-derive them. Note anything it reports
-   that a *skill* is also trying to handle — that's a DELETE lead.
+2. **Ask Nathan to run `/doctor`** at the start of the run. It expands into a prompt this session
+   executes, so its findings land in the conversation. They are the config/hooks/settings/CLAUDE.md
+   half of the picture; take them as given and don't re-derive them. Note anything it reports that a
+   *skill* is also trying to handle — that's a DELETE lead. Its check 1 table (lifetime `skillUsage`
+   counts from `~/.claude.json` plus est. listing cost) is the usage signal. Don't ask about
+   `/skill-doctor`: it opens a scrolling table that can't practically be pasted (Nathan, 2026-09-17).
 3. Read `references/native-capabilities.md` for the last-known baseline.
 4. Fetch the current Claude Code changelog and read entries newer than the last audit:
    `WebFetch https://raw.githubusercontent.com/anthropics/claude-code/main/CHANGELOG.md`
@@ -90,6 +92,9 @@ SKILL.md before assigning any non-KEEP verdict.
 
 Scaffolding that annoys or misfires is a strong audit lead. Pull from:
 
+- **`~/.claude/friction.md`** — one line per skill misfire, written for this audit to drain. For
+  each entry since the last audit, grep the named file to check whether the fix actually landed;
+  unapplied entries are FIX items.
 - **Auto-memory feedback** — read `~/.claude/projects/-Users-narthur/memory/MEMORY.md` and any
   `type: feedback` entries; these often record "X misfires" or "stop doing Y".
 - **Fieldnotes** — grep `$OBSIDIAN_VAULT/Fieldnotes` for outage/issue/bug notes that implicate

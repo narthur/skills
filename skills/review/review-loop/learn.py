@@ -110,8 +110,13 @@ def main(argv):
     if not a.cmd or not a.file:
         ap.error("cmd and file are required")
 
-    with open(a.file) as f:
-        lines = f.read().splitlines()
+    try:
+        with open(a.file) as f:
+            lines = f.read().splitlines()
+    except FileNotFoundError:
+        if a.cmd != "add":
+            sys.exit(f"no learnings file: {a.file}")
+        lines = ["# review-loop learnings", "", "## Dismissed", "", "## Accepted patterns"]
 
     if a.cmd == "bump":
         lines, hit = bump(lines, a.text, today())
