@@ -61,6 +61,12 @@ Never write an OBSERVED claim you did not verify by reading the cited lines.
 - OBSERVED: Stripe customer, payment-method and billing data reach the error path via
   `logger.error({...errorInfo, error})`. [packages/api/src/lib/charge/authorize.ts:88 @ a1b2c3d]
 
+## Abuse surface
+- OBSERVED: `/api/summarize` calls Claude per request and is reachable with a free-tier token; no
+  per-account cap. [packages/api/src/routes/summarize.ts:31 @ a1b2c3d]
+- INFERRED: The webhook retry path can be triggered repeatedly by a third party, and each retry
+  sends mail through Postmark.
+
 ## Not an issue here
 <!-- Written by Step 11 when the user dismisses a security finding. Overrides the generic
      exclusion list in either direction. Date every entry. -->
@@ -89,13 +95,21 @@ location, it is reported even when an exclusion or precedent would otherwise dro
 Both directions are per-repo and evidence-backed. Neither is a licence to relax the exclusions in
 general.
 
+This is also the only channel through which an **abuse surface** claim can produce a finding.
+Exclusions 1, 3, 4 and 16 drop DoS, rate limiting, resource exhaustion and CPU/memory exhaustion
+outright, so a bare `## Abuse surface` entry primes the reviewer but never survives the filter. When
+an unbounded metered path is genuinely load-bearing for this repo — a per-call LLM spend, an
+unauthenticated mail send, an outbound request to a caller-chosen host — mirror it into
+`## Watch this spot` with its citation. That entry beats the exclusion; the `## Abuse surface` entry
+alone does not.
+
 ## Bootstrap brief (first run only, when the file does not exist)
 
 One agent, `model: sonnet`. **Hard caps: read at most ~30 files, write at most ~60 lines.** The
 point is priming, not documentation, and an unbounded "build a threat model of this app" prompt on
 a monorepo eats a session.
 
-Answer exactly four questions and stop:
+Answer exactly five questions and stop:
 
 1. **What is the auth mechanism?** Per route family if they differ. Cookie/session, bearer token,
    signed request, none. Where is it enforced — middleware, per handler, edge?
@@ -105,6 +119,10 @@ Answer exactly four questions and stop:
    client→server, server→DB, first-party→third-party API, authenticated→public surface.
 4. **What is the sensitive-data inventory?** What in this system would matter if it leaked, and
    which paths carry it.
+5. **What can an attacker make this system spend or do on their behalf?** Metered resources (LLM
+   calls, egress, per-invocation billing, queue workers) reachable without auth or without a
+   bound; outbound requests to attacker-chosen hosts; anything that sends mail, posts, or calls a
+   third party.
 
 Prefer breadth over depth: a cited one-liner per route family beats an exhaustive treatment of one.
 Write INFERRED freely; the update pass promotes claims to OBSERVED as it verifies them.
@@ -122,7 +140,7 @@ Input: `python3 ~/.claude/skills/review-loop/threat-model.py` output plus this c
    delete (no longer true). Do not re-pin without re-reading — a blind re-pin is how a stale claim
    becomes permanent.
 2. **Add new surface from the diff.** New route, new job, new external integration, new sensitive
-   field, new trust boundary → a new claim.
+   field, new trust boundary, new metered resource, new outbound call → a new claim.
 3. **Demote what you could not verify.** An OBSERVED claim you could not confirm becomes INFERRED
    with its citation dropped. `uncited` in the script output counts OBSERVED claims that are
    already missing citations — fix or demote those.
