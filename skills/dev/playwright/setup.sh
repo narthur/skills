@@ -56,6 +56,17 @@ if [[ ! -f "\$PLAYWRIGHT_CLI" ]]; then
   exit 1
 fi
 
+# open without --browser defaults to Google Chrome, which not every machine has.
+# Fall back to a browser Playwright itself installed, so a bare open just works.
+cmd=""; for a in "\$@"; do [[ "\$a" == -* ]] || { cmd=\$a; break; }; done
+if [[ "\$cmd" == open && " \$* " != *" --browser"* && ! -d "/Applications/Google Chrome.app" ]]; then
+  for cache in "\${PLAYWRIGHT_BROWSERS_PATH:-}" "\$HOME/Library/Caches/ms-playwright" "\$HOME/.cache/ms-playwright"; do
+    for b in firefox webkit; do
+      if [[ -n "\$cache" ]] && compgen -G "\$cache/\$b-*" >/dev/null; then set -- "\$@" --browser "\$b"; break 2; fi
+    done
+  done
+fi
+
 exec "\$NODE" "\$PLAYWRIGHT_CLI" "\$@"
 WRAPPER_EOF
 

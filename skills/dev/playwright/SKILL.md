@@ -19,13 +19,10 @@ Always use **named sessions** (`-s=name`) so the user can observe the browser wi
 
 Always open the session first, then navigate. `goto` will fail if the session isn't open yet.
 
-⚠️ **`open` fails if no browser is installed** — this machine has no Chrome, so the default
-`open` errors with `Chromium distribution 'chrome' not found at /Applications/Google Chrome.app`.
-Four separate sessions have died here. Use Firefox, or install a browser once:
+With no `--browser`, the wrapper uses Chrome if it's installed, else a browser Playwright installed itself (Firefox, then WebKit), so a bare `open` works either way.
 
 ```bash
-playwright-cli open -s=main --browser firefox        # works today, no install needed
-# one-time alternative: npx playwright install chrome
+playwright-cli open -s=main
 playwright-cli goto https://example.com -s=main
 ```
 
