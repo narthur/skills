@@ -47,7 +47,7 @@ If the file does not exist, that's fine — start with no learnings.
 
 ## Step 3: Detect Test & Lint Commands
 
-The broad analyzer set (linters, security, secrets) is handled deterministically by the static-analysis pass (Step 4a) — you don't need to detect per-tool commands for it. What you're detecting here is the **test** command and any **project-specific** lint/format/typecheck script (Prettier, `tsc`, a custom `npm run lint`) that static-analysis doesn't replicate and that runs alongside it.
+The broad analyzer set (linters, security, secrets) is handled deterministically by the code-analysis pass (Step 4a) — you don't need to detect per-tool commands for it. What you're detecting here is the **test** command and any **project-specific** lint/format/typecheck script (Prettier, `tsc`, a custom `npm run lint`) that code-analysis doesn't replicate and that runs alongside it.
 
 Search for project-standard test and lint commands. Check (in this order):
 

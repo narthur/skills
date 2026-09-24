@@ -5,3 +5,7 @@ __pycache__/
 # eval run artifacts quote source under review; they belong in ~/.config
 last-run.jsonl
 last-intent-run.jsonl
+
+# analyzer output
+.code-analysis/
+.ruff_cache/

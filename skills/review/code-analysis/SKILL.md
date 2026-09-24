@@ -1,9 +1,9 @@
 ---
-name: static-analysis
-description: Run every applicable static-analysis tool on a repo — detect languages/configs, run the curated CodeRabbit-weighted analyzer set (installed or ephemerally via npx/uvx), and write results to .static-analysis/. Use when asked to run static analysis, lint the whole repo, run all linters/analyzers, do a code-quality/security scan, or check a repo before pushing. Report-only by default; --fix opts into safe autofixers. Subagent-safe (never blocks).
+name: code-analysis
+description: Run every applicable automated analyzer against a repo — static tools that read the source (linters, SAST, secrets) plus dynamic ones that drive the running app (pa11y accessibility audits) — detecting languages/configs, running the curated CodeRabbit-weighted set (installed or ephemerally via npx/uvx), and writing results to .code-analysis/. Use when asked to run code analysis, lint the whole repo, run all linters/analyzers, do a code-quality/security/accessibility scan, or check a repo before pushing. Report-only by default; --fix opts into safe autofixers. Subagent-safe (never blocks).
 ---
 
-# static-analysis
+# code-analysis
 
 One runner that detects what a repo is written in, picks the right analyzers
 (one per concern — no overlap), runs them, and writes machine- + human-readable
@@ -12,7 +12,7 @@ results. All detection/dispatch/execution lives in the script; your job is thin.
 ## Run it
 
 ```bash
-python3 ~/.claude/skills/static-analysis/static-analysis.py [PATH] [flags]
+python3 ~/.claude/skills/code-analysis/code-analysis.py [PATH] [flags]
 ```
 
 - `PATH` — repo/dir to analyze (default: current directory).
@@ -27,7 +27,7 @@ python3 ~/.claude/skills/static-analysis/static-analysis.py [PATH] [flags]
 ## Output (git-ignored, latest overwrites)
 
 ```
-.static-analysis/
+.code-analysis/
   summary.json   # machine-readable: tools run/skipped, finding counts, exit codes
   report.md      # human-readable, rendered by the script
   raw/<tool>.txt # each tool's raw output
@@ -35,14 +35,14 @@ python3 ~/.claude/skills/static-analysis/static-analysis.py [PATH] [flags]
 
 ## What you do after it runs (thin relay)
 
-1. Relay the one-line result: per-tool finding counts, what was skipped, exit status. Point to `.static-analysis/report.md` for detail.
+1. Relay the one-line result: per-tool finding counts, what was skipped, exit status. Point to `.code-analysis/report.md` for detail.
 2. **Do not** re-read every finding and re-analyze — the tools already did that. (Deep triage is review-loop's job, not this skill's.)
 3. **Install offer — only if you can actually prompt the user** (you are the main interactive agent, not a headless subagent): if `summary.json` lists skipped-but-installable tools, offer to install them (use each entry's `install_hint`) and re-run. In a subagent, skip this step — just report the skips upward and return `summary.json`.
 
 ## Adding a tool
 
 Edit `registry.toml` — one table per tool (fields documented at the top of that
-file). Add a count parser in `static-analysis.py` (`COUNTERS`) only if the tool
+file). Add a count parser in `code-analysis.py` (`COUNTERS`) only if the tool
 emits clean JSON; otherwise it falls back to exit-code + line count automatically.
 
 ## Scope
@@ -51,9 +51,23 @@ Registry covers the languages actually in use here (TS/JS, Ruby/Rails, Python,
 Go, CSS/SCSS, Markdown, HTML, YAML/GitHub Actions, SQL, Shell, Docker) plus
 all-files secret (gitleaks) and SAST (semgrep) scanning, plus dependency
 hygiene (**depend**: e18e module-replacements data via eslint-plugin-depend,
-linting `package.json` for deps with native/lighter/maintained replacements). Overlapping tools are
+linting `package.json` for deps with native/lighter/maintained replacements),
+plus accessibility (**a11y**: eslint-plugin-jsx-a11y over changed `.jsx`/`.tsx`,
+catching mechanical defects only — missing alt, unlabeled control,
+click-without-key-handler, invalid role; report-only, no autofix). Overlapping tools are
 pruned to one per concern; the JS/TS linter is chosen by the repo's own config
 (biome.json → Biome, eslint config → ESLint, else oxlint).
+
+**pa11y** is the one *dynamic* analyzer — it drives a real browser against the
+running app, so it sees what the static a11y linter structurally cannot: composited
+contrast, computed focus order, landmark structure in the rendered DOM. It is gated
+on `.pa11yci.json`, the same file `narthur/pa11y-ratchet` reads in CI, so a repo that
+already ratchets post-push gets the identical check pre-push for free. `pa11y/run`
+skips (exit 0, no findings) when the config declares no `urls` — `blog/.pa11yci.json`
+is defaults-only, because the Action feeds it URLs from `sitemap-url` — or when
+nothing is listening on the first URL's port. It never starts a server; that is the
+`run` skill's job. Headless Chrome per URL is not free, so it should sit out
+review-loop's fast path.
 
 **fallow** (TS/JS dead code, import cycles, duplication, complexity) is
 whole-repo only, so it runs only in repos that opted in with a `.fallowrc.json`

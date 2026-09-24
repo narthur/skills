@@ -27,7 +27,7 @@
     "./skills/github/split-pr",
     "./skills/github/walk-pr",
     "./skills/review/review-loop",
-    "./skills/review/static-analysis",
+    "./skills/review/code-analysis",
     "./skills/meta/bitter-lesson",
     "./skills/meta/create-skill",
     "./skills/meta/refine-skill",

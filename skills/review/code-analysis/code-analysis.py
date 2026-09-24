@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""One static-analysis runner to rule them all.
+"""One code-analysis runner to rule them all.
 
 Detects languages + configs in a repo, maps them to a curated registry of
 analyzers, runs the applicable ones (installed or ephemerally via
-npx/uvx/etc.), and writes .static-analysis/{summary.json,report.md,raw/}.
+npx/uvx/etc.), and writes .code-analysis/{summary.json,report.md,raw/}.
 
 Pure stdlib. See registry.toml for the tool set and SKILL.md for the contract.
 """
@@ -21,12 +21,17 @@ from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REGISTRY = HERE / "registry.toml"
-OUTDIR = ".static-analysis"
+OUTDIR = ".code-analysis"
+# Vendored tools live beside this script. Resolve them relative to it, never to a
+# fixed ~/.claude/skills path: installed as a plugin the skill lives under
+# ~/.claude/plugins/marketplaces/<mp>/skills/..., and a hardcoded path silently
+# resolves to nothing there. "{skill}" in a runner spec or cmd arg expands to this.
+SKILL_DIR = str(Path(__file__).resolve().parent)
 STYLE_EXTS = {"css", "scss", "sass", "less"}
 MD_EXTS = {"md", "markdown"}
 SKIP_DIRS = {".git", "node_modules", "vendor", "dist", "build", ".next",
              ".venv", "venv", "__pycache__", ".mypy_cache", ".ruff_cache",
-             "coverage", ".static-analysis"}
+             "coverage", ".code-analysis"}
 
 
 # --------------------------------------------------------------------------- #
@@ -107,7 +112,7 @@ def resolve_runner(runners: list[str]) -> list[str] | None:
     for spec in runners:
         kind, _, payload = spec.partition(":")
         if kind == "path":
-            payload = os.path.expanduser(payload)
+            payload = os.path.expanduser(payload.replace("{skill}", SKILL_DIR))
             if shutil.which(payload):
                 return [payload]
         if kind == "npx" and shutil.which("npx"):
@@ -344,6 +349,15 @@ def c_fallow(o, e):
     return len(fnd), fnd
 
 
+def c_pa11yci(o, e):
+    """pa11y-ci --json: {"results": {"<url>": [{code, type, message, selector}]}}."""
+    d = _load(o) or {}
+    fnd = [f"{url} {i.get('code','')} {i.get('message','')} [{i.get('selector','')}]"
+           for url, issues in (d.get("results") or {}).items()
+           for i in issues if i.get("type") == "error"]
+    return len(fnd), fnd
+
+
 def c_generic_json(o, e):
     d = _load(o)
     if isinstance(d, list):
@@ -375,6 +389,7 @@ COUNTERS = {
     "semgrep": c_semgrep, "golangci": c_golangci, "govulncheck": c_govulncheck,
     "zizmor": c_zizmor, "sqlfluff": c_sqlfluff, "brakeman": c_brakeman,
     "generic_json": c_generic_json, "gitleaks": c_gitleaks, "fallow": c_fallow,
+    "pa11yci": c_pa11yci,
 }
 
 
@@ -389,7 +404,7 @@ def build_argv(base, args, target_paths, report_path):
         elif a == "{report}":
             argv.append(str(report_path))
         else:
-            argv.append(os.path.expanduser(a))
+            argv.append(os.path.expanduser(a.replace("{skill}", SKILL_DIR)))
     return argv
 
 
@@ -398,7 +413,7 @@ def run_tool(name, t, root, files, scoped, do_fix, rawdir):
     if base is None:
         return {"tool": name, "status": "skipped",
                 "reason": "not installed / no ephemeral runner",
-                "install_hint": t.get("install_hint", "")}
+                "install_hint": t.get("install_hint", "").replace("{skill}", SKILL_DIR)}
 
     target = expand_target(t, root, files, scoped)
     if t.get("target") in ("files", "styleglob", "mdglob", "dockerfiles") and not target:
@@ -541,7 +556,7 @@ def main() -> int:
     }
     write_report(outdir, summary)
 
-    print(f"static-analysis: {total} findings across {len(summary['tools_run'])} tools "
+    print(f"code-analysis: {total} findings across {len(summary['tools_run'])} tools "
           f"({len(summary['tools_skipped'])} skipped) -> {OUTDIR}/report.md")
 
     if args.exit_zero:

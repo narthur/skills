@@ -12,7 +12,7 @@
 #   cmd         args appended after the resolved runner base. "{target}" expands
 #               to the path/file list.
 #   target      how {target} is filled: dir | files | dockerfiles | workflows
-#   count       parser key (see COUNTERS in static-analysis.py); "" = exit+lines
+#   count       parser key (see COUNTERS in code-analysis.py); "" = exit+lines
 #   fix         optional args for --fix (autofix), "{target}" expands as above
 #   accepts_files  true if the tool can be given an explicit changed-file list
 #                  (used by --diff/--staged); false => always whole-repo
@@ -250,9 +250,39 @@ install_hint = "uv tool install semgrep"
 [depend]
 configs = ["package.json"]
 needs_config = true
-runners = ["path:~/.claude/skills/static-analysis/depend/node_modules/.bin/eslint"]
-cmd = ["--no-config-lookup", "--config", "~/.claude/skills/static-analysis/depend/eslint.config.mjs", "-f", "json", "package.json"]
+runners = ["path:{skill}/depend/run"]
+cmd = ["-f", "json", "package.json"]
 target = "none"
 count = "eslint"
 accepts_files = false
-install_hint = "npm install --prefix ~/.claude/skills/static-analysis/depend"
+install_hint = "needs node/npm on PATH; deps install themselves on first run"
+
+# ---- Accessibility: mechanical JSX/TSX defects via eslint-plugin-jsx-a11y ----
+# Standalone: its own vendored eslint + config in the skill dir, so it never
+# touches (or needs) the repo's ESLint setup and doesn't collide with js-lint.
+# No `fix` — jsx-a11y rules are judgment calls with no safe autofix.
+[a11y]
+exts = ["jsx","tsx"]
+runners = ["path:{skill}/a11y/run"]
+cmd = ["-f", "json", "{target}"]
+target = "files"
+count = "eslint"
+accepts_files = true
+install_hint = "needs node/npm on PATH; deps install themselves on first run"
+
+# ---- Accessibility, dynamic: pa11y-ci against the running app ----
+# The only tool here that needs the app actually serving. Config-gated on
+# .pa11yci.json — the same file narthur/pa11y-ratchet reads in CI, so a repo that
+# already ratchets in CI gets the identical check pre-push for free.
+# The wrapper skips (exit 0, no findings) when the config declares no `urls` or
+# nothing is listening; it never starts a server. No `fix` — pa11y has no autofix.
+[pa11y]
+needs_config = true
+configs = [".pa11yci.json"]
+runners = ["path:{skill}/pa11y/run"]
+cmd = []
+target = "none"
+count = "pa11yci"
+accepts_files = false
+ondemand = true
+install_hint = "npm i -D pa11y-ci  (and start the dev server)"

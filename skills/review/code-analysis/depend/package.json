@@ -1,5 +1,5 @@
 {
-  "name": "static-analysis-depend",
+  "name": "code-analysis-depend",
   "private": true,
   "type": "module",
   "description": "Standalone ESLint runner for eslint-plugin-depend (e18e module-replacements data). Lints a repo's package.json without touching the repo's own ESLint config.",

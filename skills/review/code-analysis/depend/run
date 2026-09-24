@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs the vendored ESLint for the depend analyzer against its own pinned config, so
+# it never touches (or needs) the repo's ESLint setup.
+#
+# node_modules is gitignored, so a fresh clone or plugin install has no deps yet.
+# Install them on first use rather than making it a setup step nobody runs: a
+# plugin user never runs scripts/link-skills, and the alternative is this tool
+# silently sitting out every review until someone notices.
+set -euo pipefail
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [ ! -x "$HERE/node_modules/.bin/eslint" ]; then
+  echo "depend: installing vendored deps (first run only)…" >&2
+  npm install --prefix "$HERE" --no-audit --no-fund --loglevel=error >&2
+fi
+
+exec "$HERE/node_modules/.bin/eslint" --no-config-lookup --config "$HERE/eslint.config.mjs" "$@"

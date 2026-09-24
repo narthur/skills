@@ -1,0 +1,11 @@
+{
+  "name": "code-analysis-a11y",
+  "private": true,
+  "type": "module",
+  "description": "Standalone ESLint runner for eslint-plugin-jsx-a11y. Lints a repo's JSX/TSX for mechanical accessibility defects without touching the repo's own ESLint config.",
+  "dependencies": {
+    "@typescript-eslint/parser": "^8.0.0",
+    "eslint": "^9.0.0",
+    "eslint-plugin-jsx-a11y": "^6.10.0"
+  }
+}

@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Dynamic a11y pass: pa11y-ci against the URLs the repo already declares in
+# .pa11yci.json — the same file narthur/pa11y-ratchet reads in CI. This runs it
+# pre-push instead of post-push, so findings reach the review loop before the
+# code leaves the machine.
+#
+# Two preconditions registry.toml has no field for, so they live here. Both exit 0
+# with empty JSON ("no findings") rather than failing: a skipped audit must not
+# look like a broken tool.
+#   1. the config must actually declare `urls` (blog/.pa11yci.json is defaults-only,
+#      because the Action feeds it URLs from sitemap-url)
+#   2. something must be listening on the first URL's port — pa11y drives a real
+#      browser against a real server, and we don't start one here (that's `run`'s job)
+set -uo pipefail
+
+CFG=".pa11yci.json"
+skip() { echo "[]"; echo "pa11y: skipped — $1" >&2; exit 0; }
+
+[ -f "$CFG" ] || skip "no $CFG"
+
+read -r host port < <(python3 - "$CFG" <<'PY'
+import json, sys
+from urllib.parse import urlparse
+try:
+    cfg = json.load(open(sys.argv[1]))
+except (OSError, ValueError):
+    sys.exit(0)
+urls = cfg.get("urls") or []
+if not urls:
+    sys.exit(0)
+u = urls[0] if isinstance(urls[0], str) else urls[0].get("url", "")
+p = urlparse(u)
+if p.hostname:
+    print(p.hostname, p.port or (443 if p.scheme == "https" else 80))
+PY
+) || true
+
+[ -n "${host:-}" ] || skip "$CFG declares no urls"
+nc -z -G 2 "$host" "$port" 2>/dev/null || skip "nothing listening on $host:$port (start the dev server)"
+
+# ponytail: --json is pa11y-ci's per-url issue map; the eslint-shaped counter can't
+# read it, so `count = "pa11yci"` parses this in code-analysis.py.
+exec npx --yes pa11y-ci --json "$@"

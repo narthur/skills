@@ -12,6 +12,12 @@ Agent skills for [Claude Code](https://claude.com/claude-code), written by Natha
 
 Or clone and take individual directories; each skill is self-contained.
 
+To develop against a clone, `scripts/link-skills` symlinks every skill into
+`~/.claude/skills`, so a `git pull` is the whole update mechanism. It never
+touches a real directory it didn't create. Pass `--prune` to also clear symlinks
+left dangling by a skill renamed or removed upstream; it lists them and asks
+before deleting (`--prune=yes` to skip the prompt in CI).
+
 ## Skills
 
 ### `github/` — Driving pull requests and issues to done.
@@ -34,7 +40,7 @@ Or clone and take individual directories; each skill is self-contained.
 | Skill | What it does | Requires |
 |---|---|---|
 | [`review-loop`](skills/review/review-loop/) | Pre-push multi-agent code review loop with auto-fix, finding scores, and per-repo learnings | one setup step — see the skill's `references/security-review.md` |
-| [`static-analysis`](skills/review/static-analysis/) | Run every applicable static-analysis tool on a repo — detect languages/configs, run the curated CodeRabbit-weighted analyzer set (installed or ephemerally via npx/uvx), and write results to .static-analysis/ | — |
+| [`code-analysis`](skills/review/code-analysis/) | Run every applicable automated analyzer against a repo — static tools that read the source (linters, SAST, secrets) plus dynamic ones that drive the running app (pa11y accessibility audits), writing results to .code-analysis/ | `npm install` in the skill's `depend/` and `a11y/`; pa11y needs a running dev server |
 
 ### `meta/` — Skills that build, audit and improve other skills.
 

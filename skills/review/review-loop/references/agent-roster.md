@@ -25,7 +25,7 @@ Only these two. The wider Fowler catalogue is deliberately out of scope here: th
 - You receive the **whole changed file(s)** in your batch plus the diff of what changed. Review the changed behavior, using the full file for context — do not limit yourself to the added lines.
 - **Commission bugs** (a mistake in code that *is* there): off-by-ones, null/undefined access, async race conditions, wrong loop bounds, copy-paste errors, mutation-of-arguments, missing returns, incorrect error handling.
 - **Omission bugs** (behavior the code *should* have but doesn't) — read the whole file and ask what's missing on the changed path: state that should be reset/invalidated when inputs change but isn't, a documented contract left unenforced, an error/failure path that logs instead of throwing or paging, a flag set before the action it's meant to gate, a case handled elsewhere in the file that this path forgets. These are invisible in a diff-of-additions and are this agent's most common miss — weight them, and use the full-file context you're given to catch them.
-- Ignore false-positive-prone categories: linter/typechecker territory (the Step 4a static-analysis pass owns this), formatting, missing imports
+- Ignore false-positive-prone categories: linter/typechecker territory (the Step 4a code-analysis pass owns this), formatting, missing imports
 
 ### Agent #3 — Git history `[model: sonnet]`
 - For each significantly-modified region, run `git log -p -L <range>:<file>` or `git blame` on the original lines

@@ -82,7 +82,7 @@ Before entering the main loop, check the diff size. Step 0's `context.sh` alread
 
 When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
 
-**Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a static-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and the security review's Stage-1 finder — pass it the diff, the learnings file, the threat model, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
+**Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a code-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and the security review's Stage-1 finder — pass it the diff, the learnings file, the threat model, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
 
 ### Fast-path re-entry — the follow-up commit after a clean exit
 
@@ -103,7 +103,7 @@ cycle = 1
 max_cycles = 3
 
 while cycle <= max_cycles:
-    a. Run the static-analysis pass (Step 4a below): the static-analysis skill (--diff --fix) plus the project linter --fix if detected. Stage what changed; collect the deterministic tool findings.
+    a. Run the code-analysis pass (Step 4a below): the code-analysis skill (--diff --fix) plus the project linter --fix if detected. Stage what changed; collect the deterministic tool findings.
     b. Run the parallel review subagents (Step 5) over this cycle's REVIEW SCOPE (see below). Each returns findings + suggested fixes. In cycle 1 only, and only if Step 4b (run once, before the loop) established a reviewable intent, also spawn Agent #9 (intent reconciliation).
        REVIEW SCOPE:
          - cycle 1: the full branch diff, `git diff origin/<base_branch>...HEAD` — nothing has been reviewed yet.
@@ -116,7 +116,7 @@ while cycle <= max_cycles:
        - 50-79 + low-risk                 → auto-fix (no ask)
        - 50-79 + high-risk                → ask-user
        - <50                              → skip
-    e. If auto-fix bucket is empty AND the static-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → EXIT LOOP (clean).
+    e. If auto-fix bucket is empty AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → EXIT LOOP (clean).
     f. Apply auto-fix bucket via Edit (Step 7).
     g. If ask-user bucket is non-empty, batch them into one AskUserQuestion (Step 8b). Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
@@ -130,21 +130,21 @@ If cycle > max_cycles:
 
 On a clean loop exit, run the manual-testing evidence gate (Step 13) before the final report/auto-push (Step 14). If the gate's testing uncovers a real issue, fix + commit + restart the loop from cycle 1 (see Step 13).
 
-## Step 4a: Static-analysis pass (deterministic tools)
+## Step 4a: Code-analysis pass (deterministic tools)
 
 Loop step (a). Runs at the top of every cycle, before the review agents. This is the deterministic counterpart to the LLM review — the review agents (Step 5) deliberately ignore linter/typechecker territory because this pass owns it.
 
-**1. Run the static-analysis skill, scoped to the diff, with autofix:**
+**1. Run the code-analysis skill, scoped to the diff, with autofix:**
 
 ```bash
-python3 ~/.claude/skills/static-analysis/static-analysis.py . --diff --fix --exit-zero
+python3 ~/.claude/skills/code-analysis/code-analysis.py . --diff --fix --exit-zero
 ```
 
-It detects the repo's languages/configs and runs the curated analyzer set (ESLint/Biome/oxlint, Ruff, RuboCop, Stylelint, golangci-lint, govulncheck, gitleaks, Semgrep, actionlint, zizmor, markdownlint, hadolint, shellcheck, …), applies safe autofixers, and writes `.static-analysis/summary.json` + `report.md` (git-ignored — never appears in the diff). Stage whatever the autofixers changed.
+It detects the repo's languages/configs and runs the curated analyzer set (ESLint/Biome/oxlint, Ruff, RuboCop, Stylelint, golangci-lint, govulncheck, gitleaks, Semgrep, actionlint, zizmor, markdownlint, hadolint, shellcheck, jsx-a11y, pa11y, …), applies safe autofixers, and writes `.code-analysis/summary.json` + `report.md` (git-ignored — never appears in the diff). Stage whatever the autofixers changed.
 
 **2. Then run the project linter --fix if one was detected** (Step 3) — it catches formatting (Prettier), type-checking (tsc), and custom lint rules the analyzer set doesn't replicate. Stage those changes too.
 
-**3. Read `.static-analysis/summary.json` and fold the *remaining* (non-autofixed) findings into the cycle:**
+**3. Read `.code-analysis/summary.json` and fold the *remaining* (non-autofixed) findings into the cycle:**
 
 - **Security / secrets / SAST** — findings from `gitleaks`, `semgrep`, `brakeman`, `govulncheck`, `zizmor`: treat each as a high-confidence (≥80) finding. **Do not Haiku-score them** — the tool already verified them. Attempt a fix and route through Step 7 / Step 8a exactly like a review-agent finding (the risk profile still decides auto-apply vs. ask). These are the ones that matter.
 - **Quality / style residue** — anything the autofixers couldn't fix: don't run it through the agents or Haiku (deterministic, mostly low-value). Carry the per-tool counts into the final report (Step 14).
