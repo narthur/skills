@@ -5,7 +5,21 @@
 set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-DEST="${1:-$HOME/.claude/skills}"
+
+# Parse args before touching DEST: taking it from $1 unconditionally made the
+# documented `link-skills --prune` set DEST to the literal flag, and `mkdir -p`
+# then killed the script under `set -e` before it linked or pruned anything.
+DEST="$HOME/.claude/skills"
+PRUNE=no
+for arg in "$@"; do
+  case "$arg" in
+    --prune)     PRUNE=ask ;;
+    --prune=yes) PRUNE=yes ;;
+    --prune=no)  PRUNE=no ;;
+    -*)          echo "unknown option: $arg" >&2; exit 2 ;;
+    *)           DEST="$arg" ;;
+  esac
+done
 mkdir -p "$DEST"
 
 linked=0 skipped=0
@@ -13,7 +27,14 @@ for dir in "$REPO"/skills/*/*/; do
   name="$(basename "$dir")"
   target="$DEST/$name"
   if [[ -L "$target" ]]; then
-    ln -sfn "${dir%/}" "$target"; linked=$((linked+1))
+    # Only repoint a symlink that is already ours. A foreign one (a skill the user
+    # linked to a scratch checkout) is someone else's setup — the same "only ours"
+    # test the prune path uses, so create and delete agree on what this script owns.
+    if [[ "$(readlink "$target")" != "$REPO"/* ]]; then
+      echo "skip: $name is a symlink to somewhere else" >&2; skipped=$((skipped+1))
+    else
+      ln -sfn "${dir%/}" "$target"; linked=$((linked+1))
+    fi
   elif [[ -e "$target" ]]; then
     echo "skip: $name already exists and is not a symlink" >&2; skipped=$((skipped+1))
   else
@@ -26,15 +47,6 @@ echo "linked $linked skill(s) into $DEST${skipped:+, skipped $skipped}"
 # deleted upstream leaves one behind, and a dangling entry in ~/.claude/skills is
 # invisible until something tries to load it. Deleting is confirmed, never implied:
 # --prune to remove, --prune=yes to skip the prompt (CI), nothing to just report.
-PRUNE="${PRUNE:-ask}"
-for arg in "$@"; do
-  case "$arg" in
-    --prune) PRUNE=ask ;;
-    --prune=yes) PRUNE=yes ;;
-    --prune=no) PRUNE=no ;;
-  esac
-done
-
 dangling=()
 for target in "$DEST"/*; do
   [[ -L "$target" ]] || continue

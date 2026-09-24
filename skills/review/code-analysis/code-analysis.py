@@ -404,9 +404,14 @@ def c_fallow(o, e):
 def c_pa11yci(o, e):
     """pa11y-ci --json: {"results": {"<url>": [{code, type, message, selector}]}}."""
     d = _load(o) or {}
-    fnd = [f"{url} {i.get('code','')} {i.get('message','')} [{i.get('selector','')}]"
+    # pa11y-ci stores a whole-page failure (navigation error, crash, timeout) as the
+    # Error itself, which its JSON reporter flattens to a bare {"message": ...} with
+    # no "type". Dropping those would report the URL as clean — the silent-zero this
+    # tool's preconditions exist to prevent, except here the audit really did run.
+    fnd = [f"{url} {i.get('code') or 'audit-error'} {i.get('message','')} "
+           f"[{i.get('selector','')}]"
            for url, issues in (d.get("results") or {}).items()
-           for i in issues if i.get("type") == "error"]
+           for i in issues if i.get("type") == "error" or "type" not in i]
     return len(fnd), fnd
 
 
@@ -468,7 +473,10 @@ def run_tool(name, t, root, files, scoped, do_fix, rawdir):
                 "install_hint": t.get("install_hint", "").replace("{skill}", SKILL_DIR)}
 
     target = expand_target(t, root, files, scoped)
-    if t.get("target") in ("files", "styleglob", "mdglob", "dockerfiles") and not target:
+    # "dir" belongs here too now that it filters by ext in diff scope: an empty list
+    # would otherwise reach build_argv's `target_paths or ["."]` and lint the whole
+    # repo — the exact opposite of a diff-scoped run.
+    if t.get("target") in ("files", "styleglob", "mdglob", "dockerfiles", "dir") and not target:
         return {"tool": name, "status": "skipped", "reason": "no matching files in scope"}
 
     # Repo-wide tools with a diff_gate prefix only run in diff/staged scope
