@@ -21,3 +21,50 @@ for dir in "$REPO"/skills/*/*/; do
   fi
 done
 echo "linked $linked skill(s) into $DEST${skipped:+, skipped $skipped}"
+
+# Prune symlinks this script created that no longer resolve — a skill renamed or
+# deleted upstream leaves one behind, and a dangling entry in ~/.claude/skills is
+# invisible until something tries to load it. Deleting is confirmed, never implied:
+# --prune to remove, --prune=yes to skip the prompt (CI), nothing to just report.
+PRUNE="${PRUNE:-ask}"
+for arg in "$@"; do
+  case "$arg" in
+    --prune) PRUNE=ask ;;
+    --prune=yes) PRUNE=yes ;;
+    --prune=no) PRUNE=no ;;
+  esac
+done
+
+dangling=()
+for target in "$DEST"/*; do
+  [[ -L "$target" ]] || continue
+  dest="$(readlink "$target")"
+  # only ours: points into this repo, and no longer resolves
+  [[ "$dest" == "$REPO"/* ]] || continue
+  [[ -e "$target" ]] && continue
+  dangling+=("$target")
+done
+
+(( ${#dangling[@]} )) || exit 0
+
+echo
+echo "${#dangling[@]} dangling symlink(s) into this repo:"
+for d in "${dangling[@]}"; do echo "  $(basename "$d") -> $(readlink "$d")"; done
+
+if [[ "$PRUNE" == "no" ]]; then
+  exit 0
+elif [[ "$PRUNE" == "yes" ]]; then
+  reply=y
+elif [[ -t 0 ]]; then
+  read -r -p "Delete these ${#dangling[@]} symlink(s)? [y/N] " reply
+else
+  # Non-interactive and not told explicitly: report and leave them alone.
+  echo "(re-run with --prune=yes to delete, or --prune interactively)"
+  exit 0
+fi
+
+if [[ "$reply" == [yY]* ]]; then
+  for d in "${dangling[@]}"; do rm "$d"; echo "removed $(basename "$d")"; done
+else
+  echo "left in place"
+fi
