@@ -64,9 +64,16 @@ contrast, computed focus order, landmark structure in the rendered DOM. It is ga
 on `.pa11yci.json`, the same file `narthur/pa11y-ratchet` reads in CI, so a repo that
 already ratchets post-push gets the identical check pre-push for free. `pa11y/run`
 skips (exit 0, no findings) when the config declares no `urls` — `blog/.pa11yci.json`
-is defaults-only, because the Action feeds it URLs from `sitemap-url` — or when
-nothing is listening on the first URL's port. It never starts a server; that is the
-`run` skill's job. Headless Chrome per URL is not free, so it should sit out
+is defaults-only, because the Action feeds it URLs from `sitemap-url` — when any URL
+is **not loopback**, or when nothing is listening. It never starts a server; that is
+the `run` skill's job.
+
+The loopback rule is a security boundary, not a convenience: `.pa11yci.json` belongs
+to the repo *under review*, and `pa11y-ci` re-reads it and visits the whole `urls`
+list. Probing only the first URL would let a hostile repo pair a live
+`localhost` entry with off-box ones and aim this headless Chrome at cloud metadata or
+an internal service, landing the response in `.code-analysis/report.md` — which the
+review agents then read. Auditing a deployed URL is `pa11y-ratchet`'s job in CI. Headless Chrome per URL is not free, so it should sit out
 review-loop's fast path.
 
 **fallow** (TS/JS dead code, import cycles, duplication, complexity) is

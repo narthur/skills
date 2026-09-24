@@ -16,8 +16,9 @@ import os
 import shutil
 import subprocess
 import sys
-import tomllib
 from pathlib import Path
+
+import tomllib
 
 HERE = Path(__file__).resolve().parent
 REGISTRY = HERE / "registry.toml"
@@ -132,10 +133,24 @@ def resolve_runner(runners: list[str]) -> list[str] | None:
 # tool selection
 # --------------------------------------------------------------------------- #
 def basename_matches(files: list[str], patterns: list[str]) -> bool:
+    """Does any repo file match one of these config patterns?
+
+    A bare pattern matches a basename (or directory part) anywhere in the tree.
+    A "./"-prefixed pattern matches only at the repo root — use it for a tool whose
+    command assumes the root, e.g. depend's literal `package.json` or pa11y reading
+    `.pa11yci.json` from the cwd. Without the anchor, a nested config activates the
+    tool and the run then fails on the root file it expected: a vendored
+    `a11y/package.json` is not evidence that this repo is an npm project.
+    """
     import fnmatch
     bases = {Path(f).name for f in files}
+    roots = {f for f in files if "/" not in f}
     parts = {p for f in files for p in Path(f).parts}  # dir names too (.github)
     for pat in patterns:
+        if pat.startswith("./"):
+            if any(fnmatch.fnmatch(b, pat[2:]) for b in roots):
+                return True
+            continue
         if pat in parts:
             return True
         if any(fnmatch.fnmatch(b, pat) for b in bases):
@@ -143,8 +158,14 @@ def basename_matches(files: list[str], patterns: list[str]) -> bool:
     return False
 
 
-def select_tools(reg: dict, files: list[str], want_sql: bool) -> list[str]:
+def select_tools(reg: dict, files: list[str], want_sql: bool,
+                 root: Path | None = None) -> list[str]:
     exts = {ext_of(f) for f in files}
+    # An extensionless executable counts as its shebang's language, so a repo whose
+    # scripts are named `deploy` rather than `deploy.sh` still selects shellcheck.
+    if root is not None:
+        exts |= {lang for f in files if not ext_of(f)
+                 if (lang := _shebang_lang(root, f))}
     gemfile = next((f for f in files if Path(f).name == "Gemfile"), None)
     has_rails = False
     if gemfile:
@@ -191,6 +212,28 @@ def select_tools(reg: dict, files: list[str], want_sql: bool) -> list[str]:
 # --------------------------------------------------------------------------- #
 # target expansion
 # --------------------------------------------------------------------------- #
+def _shebang_lang(root: Path, rel: str) -> str | None:
+    """Interpreter named by a file's shebang, e.g. "bash" for #!/usr/bin/env bash.
+
+    Extensionless executables are the normal shape for a repo's scripts, so matching
+    on extension alone silently exempts them from the very linter meant to cover them.
+    """
+    try:
+        with open(root / rel, "rb") as fh:
+            first = fh.readline(200).decode("utf-8", "replace")
+    except OSError:
+        return None
+    if not first.startswith("#!"):
+        return None
+    words = first[2:].strip().replace("\\", "/").split()
+    if not words:
+        return None
+    interp = words[0].rsplit("/", 1)[-1]
+    if interp == "env" and len(words) > 1:
+        interp = words[1].rsplit("/", 1)[-1]
+    return interp or None
+
+
 def expand_target(t: dict, root: Path, files: list[str], scoped: list[str] | None) -> list[str]:
     """Return the list of path args to substitute for {target}."""
     kind = t.get("target", "dir")
@@ -198,12 +241,21 @@ def expand_target(t: dict, root: Path, files: list[str], scoped: list[str] | Non
         return []
     if kind == "dir":
         if scoped is not None:
+            # Filter the changed-file list to what this tool actually lints. Without
+            # this a dir-target tool is handed every changed file regardless of type
+            # — ruff linting a plugin.json as Python, eslint told a .webp has no
+            # matching config — and the bogus findings swamp the real ones.
+            te = set(t.get("exts", []))
+            if te and te != {"*"}:
+                return [f for f in scoped if ext_of(f) in te]
             return scoped or []
         return ["."]
     pool = scoped if scoped is not None else files
     if kind == "files":
         te = set(t.get("exts", []))
-        return [f for f in pool if ext_of(f) in te]
+        return [f for f in pool
+                if ext_of(f) in te
+                or (not ext_of(f) and _shebang_lang(root, f) in te)]
     if kind == "styleglob":
         return [f for f in pool if ext_of(f) in STYLE_EXTS]
     if kind == "mdglob":
@@ -428,7 +480,13 @@ def run_tool(name, t, root, files, scoped, do_fix, rawdir):
 
     report_path = rawdir / f"{name}.gitleaks.json"
 
-    if do_fix and t.get("fix"):
+    # An autofixer with no project config imposes the tool's defaults on files the
+    # diff never touched — markdownlint rewriting every table separator and heading
+    # in a repo that ships no .markdownlint.* is the recurring case. Where a tool
+    # declares fix_needs_config, report without a config but only rewrite with one.
+    fix_ok = do_fix and not (t.get("fix_needs_config")
+                             and not basename_matches(files, t.get("configs", [])))
+    if fix_ok and t.get("fix"):
         try:
             run(build_argv(base, t["fix"], target, report_path), cwd=root)
         except (subprocess.TimeoutExpired, OSError):
@@ -527,7 +585,7 @@ def main() -> int:
         scoped = None
         scope = "whole-repo"
 
-    tools = select_tools(reg, all_files, want_sql=args.sql)
+    tools = select_tools(reg, all_files, want_sql=args.sql, root=root)
     if not tools:
         print("no applicable tools for this repo")
         return 0

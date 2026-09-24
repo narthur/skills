@@ -25,7 +25,7 @@
 group = "js-lint"
 priority = 30
 exts = ["ts","tsx","js","jsx","mjs","cjs","json","jsonc","svelte","astro","vue"]
-configs = ["biome.json","biome.jsonc"]
+configs = ["./biome.json","./biome.jsonc"]
 runners = ["npx:@biomejs/biome", "bunx:@biomejs/biome", "path:biome"]
 cmd = ["check", "--reporter=json", "{target}"]
 fix = ["check", "--write", "{target}"]
@@ -38,7 +38,7 @@ install_hint = "npm i -D @biomejs/biome"
 group = "js-lint"
 priority = 20
 exts = ["ts","tsx","js","jsx","mjs","cjs","svelte","astro","vue"]
-configs = ["eslint.config.js","eslint.config.mjs","eslint.config.cjs","eslint.config.ts",".eslintrc",".eslintrc.js",".eslintrc.cjs",".eslintrc.json",".eslintrc.yml",".eslintrc.yaml"]
+configs = ["./eslint.config.js","./eslint.config.mjs","./eslint.config.cjs","./eslint.config.ts","./.eslintrc","./.eslintrc.js","./.eslintrc.cjs","./.eslintrc.json","./.eslintrc.yml","./.eslintrc.yaml"]
 runners = ["npx:eslint", "bunx:eslint", "path:eslint"]
 cmd = ["-f", "json", "{target}"]
 fix = ["--fix", "{target}"]
@@ -142,6 +142,10 @@ install_hint = "npm i -D stylelint"
 # ---- Markup / docs ----
 [markdownlint]
 exts = ["md","markdown"]
+# Report always; only rewrite where the repo ships a config. Its defaults reformat
+# table separators and headings repo-wide, far outside any diff.
+fix_needs_config = true
+configs = [".markdownlint.json",".markdownlint.jsonc",".markdownlint.yaml",".markdownlint.yml",".markdownlint-cli2.jsonc",".markdownlint-cli2.yaml",".markdownlint-cli2.cjs"]
 runners = ["npx:markdownlint-cli2", "bunx:markdownlint-cli2", "path:markdownlint-cli2"]
 cmd = ["{target}"]
 fix = ["--fix", "{target}"]
@@ -248,7 +252,7 @@ install_hint = "uv tool install semgrep"
 # Standalone: its own vendored eslint + config in the skill dir, so it never
 # touches (or needs) the repo's ESLint setup and doesn't collide with js-lint.
 [depend]
-configs = ["package.json"]
+configs = ["./package.json"]
 needs_config = true
 runners = ["path:{skill}/depend/run"]
 cmd = ["-f", "json", "package.json"]
@@ -278,7 +282,7 @@ install_hint = "needs node/npm on PATH; deps install themselves on first run"
 # nothing is listening; it never starts a server. No `fix` — pa11y has no autofix.
 [pa11y]
 needs_config = true
-configs = [".pa11yci.json"]
+configs = ["./.pa11yci.json"]
 runners = ["path:{skill}/pa11y/run"]
 cmd = []
 target = "none"

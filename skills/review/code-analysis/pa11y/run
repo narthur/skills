@@ -4,13 +4,19 @@
 # pre-push instead of post-push, so findings reach the review loop before the
 # code leaves the machine.
 #
-# Two preconditions registry.toml has no field for, so they live here. Both exit 0
+# Preconditions registry.toml has no field for, so they live here. Each exits 0
 # with empty JSON ("no findings") rather than failing: a skipped audit must not
-# look like a broken tool.
-#   1. the config must actually declare `urls` (blog/.pa11yci.json is defaults-only,
+# look like a broken tool, nor like a page that audited clean.
+#   1. the config must declare `urls` (blog/.pa11yci.json is defaults-only,
 #      because the Action feeds it URLs from sitemap-url)
-#   2. something must be listening on the first URL's port — pa11y drives a real
-#      browser against a real server, and we don't start one here (that's `run`'s job)
+#   2. EVERY url must be loopback. pa11y-ci re-reads .pa11yci.json itself and
+#      visits the whole list, so checking only the first would let a repo under
+#      review pair a live localhost url[0] with off-box url[1..n] and drive our
+#      headless Chrome at cloud metadata or an internal service, landing the
+#      response in .code-analysis/report.md — which review agents then read.
+#      Loopback-only is also the honest scope: this audits the local dev server.
+#      Deployed URLs are pa11y-ratchet's job in CI.
+#   3. something must be listening — we don't start a server (that's `run`'s job)
 set -uo pipefail
 
 CFG=".pa11yci.json"
@@ -18,24 +24,49 @@ skip() { echo "[]"; echo "pa11y: skipped — $1" >&2; exit 0; }
 
 [ -f "$CFG" ] || skip "no $CFG"
 
-read -r host port < <(python3 - "$CFG" <<'PY'
-import json, sys
+probe="$(python3 - "$CFG" <<'PY'
+import ipaddress, json, sys
 from urllib.parse import urlparse
+
 try:
     cfg = json.load(open(sys.argv[1]))
-except (OSError, ValueError):
-    sys.exit(0)
+except (OSError, ValueError) as e:
+    print("ERR unreadable %s: %s" % (sys.argv[1], e)); raise SystemExit
+
 urls = cfg.get("urls") or []
 if not urls:
-    sys.exit(0)
-u = urls[0] if isinstance(urls[0], str) else urls[0].get("url", "")
-p = urlparse(u)
-if p.hostname:
-    print(p.hostname, p.port or (443 if p.scheme == "https" else 80))
-PY
-) || true
+    print("ERR declares no urls"); raise SystemExit
 
-[ -n "${host:-}" ] || skip "$CFG declares no urls"
+def loopback(host):
+    if not host:
+        return False
+    if host.lower() in ("localhost", "localhost.localdomain"):
+        return True
+    try:
+        return ipaddress.ip_address(host.strip("[]")).is_loopback
+    except ValueError:
+        return False   # a name we can't resolve statically is not trusted
+
+first = None
+for entry in urls:
+    raw = entry if isinstance(entry, str) else (entry or {}).get("url", "")
+    p = urlparse(raw)
+    if not loopback(p.hostname):
+        print("ERR non-loopback url %r; this pass audits the local dev server only" % (raw[:120],))
+        raise SystemExit
+    if first is None:
+        first = (p.hostname, p.port or (443 if p.scheme == "https" else 80))
+
+print("OK %s %s" % first)
+PY
+)"
+
+case "$probe" in
+  "OK "*) read -r _ host port <<<"$probe" ;;
+  "ERR "*) skip "${probe#ERR }" ;;
+  *) skip "could not read $CFG" ;;
+esac
+
 nc -z -G 2 "$host" "$port" 2>/dev/null || skip "nothing listening on $host:$port (start the dev server)"
 
 # ponytail: --json is pa11y-ci's per-url issue map; the eslint-shaped counter can't

@@ -40,7 +40,7 @@ before deleting (`--prune=yes` to skip the prompt in CI).
 | Skill | What it does | Requires |
 |---|---|---|
 | [`review-loop`](skills/review/review-loop/) | Pre-push multi-agent code review loop with auto-fix, finding scores, and per-repo learnings | one setup step — see the skill's `references/security-review.md` |
-| [`code-analysis`](skills/review/code-analysis/) | Run every applicable automated analyzer against a repo — static tools that read the source (linters, SAST, secrets) plus dynamic ones that drive the running app (pa11y accessibility audits), writing results to .code-analysis/ | `npm install` in the skill's `depend/` and `a11y/`; pa11y needs a running dev server |
+| [`code-analysis`](skills/review/code-analysis/) | Run every applicable automated analyzer against a repo — static tools that read the source (linters, SAST, secrets) plus dynamic ones that drive the running app (pa11y accessibility audits), writing results to .code-analysis/ | `node`/`npm` for the JS analyzers (vendored deps install themselves on first run); pa11y only runs where a repo has `.pa11yci.json` and its dev server is up |
 
 ### `meta/` — Skills that build, audit and improve other skills.
 
