@@ -4,7 +4,9 @@
 set -euo pipefail
 # Absolute: the tests cd into temp repos, so a $0-relative path breaks after the first cd.
 script="$(cd "$(dirname "$0")" && pwd)/ensure-husky-gate.sh"
-tmp=$(mktemp -d)
+# ${TMPDIR:-/tmp}: a bare `mktemp -d` is refused under the sandbox, which made
+# this test unrunnable there. Matches the other three test files in this dir.
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/ensure-husky-gate-test.XXXXXX")
 trap 'rm -rf "$tmp"' EXIT
 
 # --- husky repo missing the delegator → creates it, adds to exclude ---

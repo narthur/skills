@@ -204,10 +204,15 @@ ridz=$("$PY" runlog.py plan --tier full --model m \
 
 # A fat-fingered env override must not take down every invocation, including the
 # Stop hook's per-turn check.
-REVIEW_LOOP_TAIL=abc "$PY" runlog.py check >/dev/null 2>&1
-[ $? -le 1 ] && ok "a non-numeric tail override degrades, not crashes" || bad "a non-numeric tail override degrades, not crashes"
-REVIEW_LOOP_TAIL=-5 "$PY" runlog.py check >/dev/null 2>&1
-[ $? -le 1 ] && ok "a negative tail override degrades, not crashes" || bad "a negative tail override degrades, not crashes"
+# Assert the exact code and the absence of a traceback: an uncaught exception
+# also exits 1, so `-le 1` would pass on the very crash this guards against.
+for badval in abc -5 "" "  "; do
+	err=$(REVIEW_LOOP_TAIL="$badval" "$PY" runlog.py check 2>&1 >/dev/null)
+	rc=$?
+	[ "$rc" -eq 0 ] && ! grep -q Traceback <<<"$err" \
+		&& ok "tail override '$badval' degrades, not crashes" \
+		|| bad "tail override '$badval' degrades, not crashes (rc=$rc)"
+done
 
 # With no session env we cannot tell dead from in-flight, so we must not guess.
 export REVIEW_LOOP_RUNS="$TMP/nosess.jsonl"

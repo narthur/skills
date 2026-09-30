@@ -57,8 +57,9 @@ resolve_sha() {
 }
 
 STORE="$HOME/.claude/review-loop/skipped-shas"
-# Drop this sha's line from the store. Used twice: refreshing a re-record, and
-# rolling back after runlog refuses the reason.
+# Drop this sha's line from the store, so a re-record replaces rather than
+# duplicates. No longer used for rollback: the runlog write happens before
+# skipped-shas is touched, so a refused reason has nothing here to undo.
 drop_sha() {
 	[ -f "$STORE" ] || return 0
 	# `cmd || rc=$?` is an || compound, so set -e does not fire on grep's status.

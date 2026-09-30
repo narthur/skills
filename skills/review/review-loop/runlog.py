@@ -17,6 +17,8 @@ run_id.
                     [--inputs <json>] [--gates <json>] [--head <sha>] [--run-id <id>]
   runlog.py finish  --run-id <id> --outcome <o> [--tier <t>] [--executed <json>]
                     [--escalations <json>] [--agents <json>] [--findings <json>] [--asks <n>]
+                    [--allow-unaccounted]
+  runlog.py skipped --reason <r> [--model <m>]     one complete row, tier=skipped
   runlog.py check   [--head <sha>] [--session <id>] [--force]   exit 1 on an unfinished run
   runlog.py nudge   --run-id <id>
   runlog.py abandon --run-id <id> --missing <text>
