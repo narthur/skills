@@ -234,6 +234,12 @@ def main():
     rc, alarm, _ = run([sys.executable, os.path.join(HERE, "review-stats.py"), "--alarm"], timeout=10)
     if rc == 0 and alarm:
         print("\n" + alarm, file=sys.stderr)
+        # stderr only reaches a human who is watching this run. The runs most
+        # likely to accumulate repeated failures are the unattended ones, so an
+        # alarm that lives only in their transcript reaches nobody. Route it the
+        # same way unresolved asks are routed.
+        if os.environ.get("AO_SESSION_ID"):
+            run(["ao", "report", "--checkpoint", "--note", alarm], timeout=20)
     if a.dry_run:
         return
 

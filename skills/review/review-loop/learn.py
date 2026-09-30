@@ -33,6 +33,13 @@ SKELETON = [
 ]
 
 
+# A Dismissed entry suppresses a whole class of finding on every future run, in
+# every agent, forever. That makes it the busiest channel by which "code like this
+# already exists here" can quietly reduce review — busier by far than a one-off
+# gate skip. Same ban as runlog.py's, applied at the same kind of choke point.
+import runlog  # noqa: E402  (sits beside this file; see review-stats.py)
+
+
 def today():
     return datetime.date.today().isoformat()
 
@@ -147,6 +154,8 @@ def main(argv):
         if not hit:
             sys.exit(f"no entry matched: {a.text!r}")
     elif a.cmd == "add":
+        if a.section == "dismissed":
+            runlog.reject_banned([("this dismissal", a.text)])
         if not a.section:
             ap.error("add requires --section")
         lines = add(lines, a.section, a.text, today())

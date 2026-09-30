@@ -149,6 +149,15 @@ BANNED_REASON = (
     "matches existing pattern", "same pattern as", "pattern copy", "pattern-copy",
     "copied from existing", "consistent with existing code", "follows the existing pattern",
     "established pattern in this repo",
+    "how the rest of the codebase",
+    "how the rest of this codebase",
+    "it's the convention here",
+    "the convention in this repo",
+    "identical to what",
+    "same as what",
+    "already done this way",
+    "done this way elsewhere",
+    "mirrors the existing",
 )
 
 
@@ -209,9 +218,13 @@ def cmd_plan(a):
     print(rec["run_id"])
 
 
-def planned_gates(run_id):
-    """Gates the plan for this run said to run. Uncapped: see load()."""
-    plan = load(limit=None).get(run_id) or {}
+def plan_of(run_id):
+    """This run's plan record. Uncapped: see load()."""
+    return load(limit=None).get(run_id) or {}
+
+
+def planned_gates(plan):
+    """Gates the plan said to run."""
     return {g for g, v in (plan.get("gates") or {}).items()
             if isinstance(v, dict) and v.get("planned") == "run"}
 
@@ -228,7 +241,10 @@ def unaccounted(planned, executed, escalations):
     return sorted(planned - accounted)
 
 
-def derive_tier(claimed, executed, agents, planned=None):
+TIER_RANK = {"skipped": 0, "fast": 1, "full": 2, "partial": 2}
+
+
+def derive_tier(claimed, executed, agents, planned=None, floor=None):
     """`partial` is a fact about the run, not a label the caller picks.
 
     Any planned agent that failed, or any gate that did not complete, makes the run
@@ -246,13 +262,34 @@ def derive_tier(claimed, executed, agents, planned=None):
         print(f"runlog: recording tier `partial`, not {claimed!r} — did not complete: "
               f"{', '.join(broken)}", file=sys.stderr)
         return "partial"
+    # The floor exists so a run cannot be reviewed less than the rule says. That
+    # is enforced per-gate above, but the recorded tier is what the label and the
+    # aggregation report, so a claim below the floor would describe the run
+    # falsely even with every gate accounted for.
+    if floor and TIER_RANK.get(claimed, 0) < TIER_RANK.get(floor, 0):
+        sys.exit(
+            f"runlog: refusing to record tier {claimed!r} — the plan computed a floor of "
+            f"{floor!r}. You may escalate above the floor, never below it. Record "
+            f"{floor!r} (or `partial` if something did not complete)."
+        )
     return claimed
 
 
 def cmd_finish(a):
     executed = parse_json_arg(a.executed, "executed") or {}
     escalations = parse_json_arg(a.escalations, "escalations") or []
-    planned = planned_gates(a.run_id)  # one read, shared by both derivations below
+    plan = plan_of(a.run_id)  # one read, shared by everything derived below
+    planned = planned_gates(plan)
+    unexplained = sorted(g for g, v in executed.items()
+                         if isinstance(v, dict) and v.get("status") != "done"
+                         and not (v.get("reason") or "").strip())
+    if unexplained:
+        sys.exit(
+            "runlog: refusing to finish — these gates are recorded as not done with no "
+            f"reason:\n  {', '.join(unexplained)}\n"
+            "A status says what happened; the reason is the part anyone reading this "
+            "later actually needs. Give each one a measurable reason."
+        )
     missing = unaccounted(planned, executed, escalations)
     if missing and not a.allow_unaccounted:
         sys.exit(
@@ -272,7 +309,8 @@ def cmd_finish(a):
         "phase": "finish",
         "finished_at": now(),
         "outcome": a.outcome,
-        "tier_executed": derive_tier(a.tier, executed, agents, planned),
+        "tier_executed": derive_tier(a.tier, executed, agents, planned,
+                                     plan.get("tier_floor")),
         "executed": executed,
         "escalations": escalations,
         "agents": agents,
@@ -370,18 +408,25 @@ def cmd_check(a):
     if not mine:
         print("runlog: no unfinished run")
         return 0
-    run = mine[0]
-    if run.get("phase") == "nudge" and not a.force:
+    # Report every unfinished run, not just the newest: a session that re-planned
+    # after an error leaves an earlier one open, and reporting only mine[0] made it
+    # invisible for the rest of the session's life.
+    fresh = [r for r in mine if r.get("phase") != "nudge" or a.force]
+    if not fresh:
         print("runlog: unfinished run already nudged")
         return 0
-    pending = [g for g, v in (run.get("gates") or {}).items()
-               if isinstance(v, dict) and v.get("planned") == "run"]
-    print(json.dumps({
-        "run_id": run["run_id"],
-        "head": run.get("head"),
-        "tier_floor": run.get("tier_floor"),
-        "planned_gates": pending,
-    }, indent=1))
+    out = [{
+        "run_id": r["run_id"],
+        "head": r.get("head"),
+        "tier_floor": r.get("tier_floor"),
+        "planned_gates": sorted(planned_gates(r)),
+    } for r in fresh]
+    # run_id/planned_gates stay at the top level for the single-run case the Stop
+    # hook reads; `also_open` carries the rest.
+    payload = dict(out[0])
+    if len(out) > 1:
+        payload["also_open"] = out[1:]
+    print(json.dumps(payload, indent=1))
     return 1
 
 

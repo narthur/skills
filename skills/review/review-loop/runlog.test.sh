@@ -214,6 +214,42 @@ for badval in abc -5 "" "  "; do
 		|| bad "tail override '$badval' degrades, not crashes (rc=$rc)"
 done
 
+# The floor is the whole point of "escalate, never descend" — and until now it was
+# computed, recorded, and never checked.
+export REVIEW_LOOP_RUNS="$TMP/floor.jsonl"
+ridf=$("$PY" runlog.py plan --tier full --model m --gates '{}')
+out=$("$PY" runlog.py finish --run-id "$ridf" --outcome clean --tier fast --executed '{}' 2>&1)
+if [ $? -ne 0 ] && grep -q "floor" <<<"$out"; then ok "a tier below the plan's floor is refused"; else bad "a tier below the plan's floor is refused"; fi
+"$PY" runlog.py finish --run-id "$ridf" --outcome clean --tier full --executed '{}' >/dev/null 2>&1 \
+	&& ok "the floor itself is accepted" || bad "the floor itself is accepted"
+ridg=$("$PY" runlog.py plan --tier fast --model m --gates '{}')
+"$PY" runlog.py finish --run-id "$ridg" --outcome clean --tier full --executed '{}' >/dev/null 2>&1 \
+	&& ok "escalating above the floor is allowed" || bad "escalating above the floor is allowed"
+
+# A status without a reason answers "what happened" and not "why", which is the
+# half anyone reading the record later actually needs.
+export REVIEW_LOOP_RUNS="$TMP/noreason.jsonl"
+ridn=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+out=$("$PY" runlog.py finish --run-id "$ridn" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"skipped"}}' 2>&1)
+if [ $? -ne 0 ] && grep -q "no reason" <<<"$out"; then ok "a not-done gate with no reason is refused"; else bad "a not-done gate with no reason is refused"; fi
+
+# A session that re-planned after an error leaves an earlier run open; reporting
+# only the newest made it invisible for the rest of that session's life.
+export REVIEW_LOOP_RUNS="$TMP/twoopen.jsonl"
+r1=$(CLAUDE_CODE_SESSION_ID=s9 "$PY" runlog.py plan --tier full --model m --gates "$GATES")
+r2=$(CLAUDE_CODE_SESSION_ID=s9 "$PY" runlog.py plan --tier full --model m --gates "$GATES")
+chk2=$(CLAUDE_CODE_SESSION_ID=s9 "$PY" runlog.py check 2>/dev/null)
+grep -q "$r1" <<<"$chk2" && grep -q "$r2" <<<"$chk2" \
+	&& ok "check reports every open run, not just the newest" \
+	|| bad "check reports every open run, not just the newest"
+
+# A paraphrase is the realistic shape, since the writer is an LLM.
+export REVIEW_LOOP_RUNS="$TMP/paraphrase.jsonl"
+out=$("$PY" runlog.py skipped --reason "this is how the rest of the codebase does it" 2>&1)
+if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "a paraphrased precedent reason is refused"; else bad "a paraphrased precedent reason is refused"; fi
+export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
+
 # With no session env we cannot tell dead from in-flight, so we must not guess.
 export REVIEW_LOOP_RUNS="$TMP/nosess.jsonl"
 CLAUDE_CODE_SESSION_ID=live-elsewhere "$PY" runlog.py plan --tier full --model m --gates '{}' >/dev/null
