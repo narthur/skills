@@ -416,7 +416,11 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
      --findings '{"auto_fix":N,"asked":N,"skipped":N}' --asks <unresolved ask-bucket items>
    ```
 
-   One `executed` entry per gate the plan marked `run`. `partial` is the tier when any planned agent
+   One `executed` entry per gate the plan marked `run` — **`finish` refuses and writes nothing if
+   one is missing**, so account for each gate or record an escalation. If a planned gate genuinely
+   went unrun, add `--allow-unaccounted`: the run is recorded, the gate is named as unaccounted, and
+   the tier becomes `partial`. Only `done` counts as executed; a gate you skipped at execution time
+   is a gate that did not run. `partial` is the tier when any planned agent
    failed or any planned gate went unexecuted — the label and the push gate both read it that way.
    Non-interactive session with a non-empty ask bucket (`AskUserQuestion` aborts in headless and AO
    worker runs): leave those findings unapplied, list them in the PR as open questions, and pass the

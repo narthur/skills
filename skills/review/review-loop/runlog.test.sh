@@ -144,6 +144,62 @@ sk=$("$PY" runlog.py skipped --reason "docs-only, 4 lines, gitleaks clean")
 out=$("$PY" runlog.py skipped --reason "matches an existing pattern in the repo" 2>&1)
 if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent rejected on the skip path too"; else bad "precedent rejected on the skip path too"; fi
 
+# A refused skip must write nothing. cmd_skipped appends twice, so a guard that
+# only fires on the second write leaves the first behind as a phantom open run.
+export REVIEW_LOOP_RUNS="$TMP/skipfail.jsonl"
+"$PY" runlog.py skipped --reason "same pattern as the rest of the repo" >/dev/null 2>&1
+[ ! -s "$REVIEW_LOOP_RUNS" ] && ok "a refused skip writes nothing at all" || bad "a refused skip writes nothing at all"
+"$PY" runlog.py check >/dev/null 2>&1
+[ $? -eq 0 ] && ok "a refused skip leaves no phantom open run" || bad "a refused skip leaves no phantom open run"
+
+# The roster check must see the plan even after it scrolls past the read tail —
+# a bounded read is right for "is anything open", wrong for "what did this plan".
+export REVIEW_LOOP_RUNS="$TMP/tail.jsonl"
+ridt=$(REVIEW_LOOP_TAIL=100 "$PY" runlog.py plan --tier full --model m \
+	--gates '{"threat_model":{"planned":"run","reason":"2 stale"}}')
+for _ in $(seq 20); do
+	r=$(REVIEW_LOOP_TAIL=100 "$PY" runlog.py plan --tier full --model m --gates '{}')
+	REVIEW_LOOP_TAIL=100 "$PY" runlog.py finish --run-id "$r" --outcome clean --tier full >/dev/null
+done
+out=$(REVIEW_LOOP_TAIL=2 "$PY" runlog.py finish --run-id "$ridt" --outcome clean --tier full \
+	--executed '{}' 2>&1)
+if [ $? -ne 0 ] && grep -q threat_model <<<"$out"; then ok "the roster check reads past the tail"; else bad "the roster check reads past the tail"; fi
+
+# An execution-time skip of a gate the plan said to run IS an unexecuted gate,
+# and it is the commonest way one actually gets dropped.
+export REVIEW_LOOP_RUNS="$TMP/skiptier.jsonl"
+rids=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$rids" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"skipped","reason":"no time this cycle"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$rids" | grep -q '"tier_executed": "partial"' \
+	&& ok "a skipped planned gate forces tier partial" || bad "a skipped planned gate forces tier partial"
+
+# A gate the PLAN already marked skip is not a failure if it turns up in
+# executed — only gates the plan said to run can drag the tier down.
+export REVIEW_LOOP_RUNS="$TMP/planskip.jsonl"
+ridp=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$ridp" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"},"staleness_sweep":{"status":"skipped","reason":"12 entries"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridp" | grep -q '"tier_executed": "full"' \
+	&& ok "a plan-level skip does not force partial" || bad "a plan-level skip does not force partial"
+
+# Both report surfaces must agree what "abandoned" means: an explicitly
+# abandoned run is abandoned, not "finished".
+export REVIEW_LOOP_RUNS="$TMP/explicit.jsonl"
+ride=$(CLAUDE_CODE_SESSION_ID=s1 "$PY" runlog.py plan --tier full --model m --gates '{}')
+"$PY" runlog.py abandon --run-id "$ride" --missing "stopped for the day" >/dev/null
+CLAUDE_CODE_SESSION_ID=s1 "$PY" review-stats.py | grep -q "finished: 0  abandoned: 1" \
+	&& ok "an explicit abandon reports as abandoned, not finished" \
+	|| bad "an explicit abandon reports as abandoned, not finished"
+
+# With no session env we cannot tell dead from in-flight, so we must not guess.
+export REVIEW_LOOP_RUNS="$TMP/nosess.jsonl"
+CLAUDE_CODE_SESSION_ID=live-elsewhere "$PY" runlog.py plan --tier full --model m --gates '{}' >/dev/null
+noenv=$(env -u CLAUDE_CODE_SESSION_ID -u AO_SESSION_ID REVIEW_LOOP_RUNS="$TMP/nosess.jsonl" "$PY" review-stats.py)
+grep -q "abandoned: 0" <<<"$noenv" \
+	&& ok "no session env means no abandonment guess" || bad "no session env means no abandonment guess"
+export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
+
 # A concurrent worktree session's open run must not block this session's Stop.
 export REVIEW_LOOP_RUNS="$TMP/sessions.jsonl"
 CLAUDE_CODE_SESSION_ID=sess-a "$PY" runlog.py plan --tier full --model m --gates "$GATES" >/dev/null
@@ -190,6 +246,30 @@ quiet=$(echo '{"stop_hook_active":false}' | REVIEW_LOOP_RUNS="$TMP/empty.jsonl" 
 rc=$?
 [ -z "$quiet" ] && [ "$rc" -eq 0 ] \
 	&& ok "hook is silent when no run is open" || bad "hook is silent when no run is open"
+# Silence alone doesn't prove the early exit ran — the slow path is silent too.
+# It does prove it if nothing was spawned that would have created the store.
+[ ! -e "$TMP/empty.jsonl" ] \
+	&& ok "hook exits before touching the store" || bad "hook exits before touching the store"
+
+# --head must actually scope: a run planned at a different tip is not this one.
+export REVIEW_LOOP_RUNS="$TMP/headscope.jsonl"
+"$PY" runlog.py plan --tier full --model m --head 1111111111111111111111111111111111111111 --gates "$GATES" >/dev/null
+hs=$(echo '{"stop_hook_active":false}' | REVIEW_LOOP_RUNS="$TMP/headscope.jsonl" ./stop-hook.sh)
+[ -z "$hs" ] && ok "hook ignores a run planned at another tip" || bad "hook ignores a run planned at another tip"
+
+# --allow-unaccounted is the escape path: it records the gap rather than hiding it.
+export REVIEW_LOOP_RUNS="$TMP/allow.jsonl"
+rida2=$("$PY" runlog.py plan --tier full --model m \
+	--gates '{"threat_model":{"planned":"run","reason":"2 stale"},"security_review":{"planned":"run","reason":"always"}}')
+"$PY" runlog.py finish --run-id "$rida2" --outcome clean --tier full --allow-unaccounted \
+	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1 \
+	&& ok "--allow-unaccounted permits the finish" || bad "--allow-unaccounted permits the finish"
+shown2=$("$PY" runlog.py show --run-id "$rida2")
+grep -q '"tier_executed": "partial"' <<<"$shown2" \
+	&& ok "--allow-unaccounted still marks the run partial" || bad "--allow-unaccounted still marks the run partial"
+grep -q "unaccounted at finish" <<<"$shown2" \
+	&& ok "the unaccounted gate is named in the record" || bad "the unaccounted gate is named in the record"
+export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 
 # Outside a git work tree the hook has nothing to guard and must not error.
 outside=$(cd "$TMP" && echo '{"stop_hook_active":false}' | "$OLDPWD/stop-hook.sh" 2>&1)

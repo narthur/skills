@@ -14,21 +14,18 @@ moment you are already in the skill and would act on it.
 """
 import argparse
 import collections
-import importlib.util
 import os
 import sys
 
-ALARM_THRESHOLD = 3
-ALARM_WINDOW = 50
-
 # Reuse runlog's store path and phase-merge rather than keeping a second copy of
 # them here: two implementations of "read this append-only log" drift, and the
-# one that drifts is the one nobody is looking at. Loaded by path because the
-# filename has a hyphen-free sibling but this script does not sit on sys.path.
-_spec = importlib.util.spec_from_file_location(
-    "runlog", os.path.join(os.path.dirname(os.path.abspath(__file__)), "runlog.py"))
-runlog = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(runlog)
+# one that drifts is the one nobody is looking at. A plain import works because
+# Python puts the executed script's own directory at sys.path[0], and runlog.py
+# sits beside this file.
+import runlog  # noqa: E402
+
+ALARM_THRESHOLD = 3
+ALARM_WINDOW = 50
 
 
 def load():
@@ -36,7 +33,7 @@ def load():
     return sorted(runlog.load().values(), key=lambda r: r.get("planned_at") or "")
 
 
-def abandoned(run, current_session=None):
+def is_abandoned(run, current_session=None):
     """An open run that no live session owns.
 
     Nothing writes this outcome at the time it happens: the Stop hook fires at
@@ -46,6 +43,13 @@ def abandoned(run, current_session=None):
     from a session that is not the one asking, was abandoned.
     """
     if run.get("outcome"):
+        # Explicitly abandoned counts as abandoned wherever it is read; anything
+        # else with an outcome is finished.
+        return run["outcome"] == "abandoned"
+    if not current_session:
+        # Invoked from a plain shell with no session env: we cannot tell a dead
+        # run from one in flight somewhere else, and guessing here would report
+        # exactly the falsehood that deriving-on-read exists to avoid.
         return False
     return run.get("session_id") != current_session
 
@@ -68,7 +72,7 @@ def cmd_alarm(runs):
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
     counts = collections.Counter()
     for run in recent:
-        if run.get("outcome") == "abandoned" or abandoned(run, here):
+        if is_abandoned(run, here):
             counts["(run abandoned)"] += 1
         for g in dropped_gates(run):
             counts[g] += 1
@@ -89,10 +93,11 @@ def cmd_report(runs, repo):
         print("no runs recorded")
         return 0
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
-    fin = [r for r in runs if r.get("outcome")]
-    lost = [r for r in runs if abandoned(r, here)]
-    print(f"runs: {len(runs)}  finished: {len(fin)}  "
-          f"abandoned: {len(lost)}  in flight (this session): {len(runs) - len(fin) - len(lost)}")
+    lost = [r for r in runs if is_abandoned(r, here)]
+    fin = [r for r in runs if r.get("outcome") and not is_abandoned(r, here)]
+    open_n = len(runs) - len(fin) - len(lost)
+    label = "open (unknown — run from the session that owns them)" if not here else "in flight (this session)"
+    print(f"runs: {len(runs)}  finished: {len(fin)}  abandoned: {len(lost)}  {label}: {open_n}")
 
     def tally(label, key):
         c = collections.Counter(r.get(key) or "(unset)" for r in runs)

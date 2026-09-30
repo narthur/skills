@@ -49,13 +49,19 @@ resolve_sha() {
 }
 
 STORE="$HOME/.claude/review-loop/skipped-shas"
+# Drop this sha's line from the store. Used twice: refreshing a re-record, and
+# rolling back after runlog refuses the reason.
+drop_sha() {
+	[ -f "$STORE" ] || return 0
+	grep -v "^$1	" "$STORE" > "$STORE.tmp" 2>/dev/null
+	# grep exits 1 when it filters everything out, which is a legitimate empty
+	# result; only a real error (2+) should stop us replacing the store.
+	[ $? -le 1 ] && mv "$STORE.tmp" "$STORE" || rm -f "$STORE.tmp"
+}
 mkdir -p "$(dirname "$STORE")"
 sha=$(resolve_sha "${2:-HEAD}")
 # One line per sha (tab-separated: sha, date, reason); refresh if re-recorded.
-if [ -f "$STORE" ]; then
-	grep -v "^$sha	" "$STORE" > "$STORE.tmp" 2>/dev/null || true
-	mv "$STORE.tmp" "$STORE"
-fi
+drop_sha "$sha"
 printf '%s\t%s\t%s\n' "$sha" "$(date +%F)" "$reason" >> "$STORE"
 # Bound growth — keep the most recent 500.
 if [ "$(wc -l < "$STORE" 2>/dev/null || echo 0)" -gt 500 ]; then
@@ -71,8 +77,7 @@ if [ -f "$RUNLOG" ]; then
 	if [ -n "$py" ] && ! "$py" "$RUNLOG" skipped --reason "$reason" >/dev/null; then
 		# Undo the skipped-shas line we just wrote: a refused reason must not
 		# clear the gate through the older store.
-		grep -v "^$sha	" "$STORE" > "$STORE.tmp" 2>/dev/null || true
-		mv "$STORE.tmp" "$STORE"
+		drop_sha "$sha"
 		echo "record-skipped: reason refused, nothing recorded" >&2
 		exit 1
 	fi

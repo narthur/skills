@@ -35,11 +35,14 @@ BOOLS_OFF="--logic no --behavioral-goal no --runtime-change no --attacker-reacha
 
 # --- fast path runs no conditional agents and folds the security finder in
 p=$(plan 10 true $BOOLS_OFF)
+# Count, then assert on the count — an unconditional ok after the loop reports
+# success whatever the loop found.
+skipped=0
 for g in agent_7_structural agent_8_observability agent_9_intent agent_10_prior_feedback agent_11_spec; do
-	[ "$(gate $g <<<"$p")" = "skip" ] || bad "fast path skips $g"
+	[ "$(gate $g <<<"$p")" = "skip" ] && skipped=$((skipped + 1)) || bad "fast path skips $g"
 done
+[ "$skipped" -eq 5 ] && ok "fast path skips all 5 conditional agents" || bad "fast path skips all 5 conditional agents"
 [ "$(gate security_review <<<"$p")" = "skip" ] && ok "fast path folds in the security finder" || bad "fast path folds in the security finder"
-ok "fast path skips every conditional agent"
 
 # --- #7/#8 substantial threshold, both sides of the boundary
 p=$(plan 149 false $BOOLS_OFF)

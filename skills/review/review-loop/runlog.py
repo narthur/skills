@@ -94,15 +94,22 @@ def append(rec):
 # looks at the last 50 — so read a bounded tail rather than the whole history.
 # Bounding the read (not the file) keeps the append-only concurrency property:
 # compacting would mean a rewrite, which is what clobbered the shared run dir.
-TAIL_LINES = 4000
+# Overridable so the tail boundary itself is testable — a bound you cannot cross
+# in a test is a bound nothing checks.
+TAIL_LINES = int(os.environ.get("REVIEW_LOOP_TAIL") or 4000)
 
 
-def load():
-    """Merge phase records into one dict per run_id, newest last."""
+def load(limit=TAIL_LINES):
+    """Merge phase records into one dict per run_id, newest last.
+
+    `limit=None` reads the whole store. Use it for anything that must find one
+    specific run: a correctness check that silently sees no plan because the
+    record scrolled past the tail is worse than a slow one.
+    """
     runs = {}
     try:
         with open(STORE, encoding="utf-8") as fh:
-            for line in deque(fh, maxlen=TAIL_LINES):
+            for line in (fh if limit is None else deque(fh, maxlen=limit)):
                 line = line.strip()
                 if not line:
                     continue
@@ -197,6 +204,13 @@ def cmd_plan(a):
     print(rec["run_id"])
 
 
+def planned_gates(run_id):
+    """Gates the plan for this run said to run. Uncapped: see load()."""
+    plan = load(limit=None).get(run_id) or {}
+    return {g for g, v in (plan.get("gates") or {}).items()
+            if isinstance(v, dict) and v.get("planned") == "run"}
+
+
 def unaccounted(run_id, executed, escalations):
     """Gates the plan said to run that the finish neither ran nor escalated.
 
@@ -205,22 +219,22 @@ def unaccounted(run_id, executed, escalations):
     only as visible as the orchestrator's honesty — which is the failure this was
     built to stop being reliant on.
     """
-    plan = load().get(run_id) or {}
-    planned = {g for g, v in (plan.get("gates") or {}).items()
-               if isinstance(v, dict) and v.get("planned") == "run"}
     accounted = set(executed) | {e.get("gate") for e in escalations if isinstance(e, dict)}
-    return sorted(planned - accounted)
+    return sorted(planned_gates(run_id) - accounted)
 
 
-def derive_tier(claimed, executed, agents):
+def derive_tier(claimed, executed, agents, planned=frozenset()):
     """`partial` is a fact about the run, not a label the caller picks.
 
     Any planned agent that failed, or any gate that did not complete, makes the run
     partial — the PR label and the push gate both read it that way, so letting a
     caller write `full` over it launders the run.
     """
+    # Only gates the plan said to run count. An entry for a gate the plan already
+    # marked skip is redundant, not a failure, and shouldn't drag the tier down.
     broken = [g for g, v in executed.items()
-              if isinstance(v, dict) and v.get("status") not in ("done", "skipped")]
+              if isinstance(v, dict) and v.get("status") != "done"
+              and (not planned or g in planned)]
     broken += [x.get("id", "?") for x in agents
                if isinstance(x, dict) and x.get("status") not in ("ok", None)]
     if broken and claimed != "partial":
@@ -252,7 +266,7 @@ def cmd_finish(a):
         "phase": "finish",
         "finished_at": now(),
         "outcome": a.outcome,
-        "tier_executed": derive_tier(a.tier, executed, agents),
+        "tier_executed": derive_tier(a.tier, executed, agents, planned_gates(a.run_id)),
         "executed": executed,
         "escalations": escalations,
         "agents": agents,
@@ -264,7 +278,7 @@ def cmd_finish(a):
     print(f"runlog: finished {a.run_id} ({a.outcome})")
 
 
-def cmd_skipped(a):
+def cmd_skipped(a):  # noqa: D401
     """One complete row for a change judged beneath the loop.
 
     record-skipped.sh used to be a second store the gate had to ask a second
@@ -272,6 +286,10 @@ def cmd_skipped(a):
     complete row for this sha — and puts the reason through the same precedent
     check every other stated reason gets.
     """
+    # append() guards each write, but this is a two-write operation: a refusal on
+    # the second would leave the first behind as a phantom open run for the Stop
+    # hook to nag about. Check once, up front, so a refused skip writes nothing.
+    reject_banned([("this skip", a.reason)])
     rid = uuid.uuid4().hex[:12]
     base = {
         "run_id": rid, "repo": repo_id(), "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
@@ -305,7 +323,7 @@ def cmd_abandon(a):
     # load() merges records by run_id field-wise, so appending this over an
     # existing finish would leave `outcome: abandoned` sitting next to that run's
     # `executed: {all done}`. A finish is terminal; say so rather than corrupt it.
-    existing = load().get(a.run_id) or {}
+    existing = load(limit=None).get(a.run_id) or {}
     if existing.get("outcome"):
         sys.exit(f"runlog: {a.run_id} already finished as {existing['outcome']!r} — not overwriting")
     append({
@@ -362,7 +380,7 @@ def cmd_check(a):
 
 
 def cmd_show(a):
-    run = load().get(a.run_id)
+    run = load(limit=None).get(a.run_id)
     if not run:
         sys.exit(f"runlog: no run {a.run_id}")
     print(json.dumps(run, indent=1, sort_keys=True))

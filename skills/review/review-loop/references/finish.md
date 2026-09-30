@@ -10,6 +10,8 @@ Runs on **every** terminal exit — clean, cycle-limit, test-failure, or blocked
 
 Give one `executed` entry per gate the plan marked `run`, each with `status` (`done` / `skipped` / `failed`) and, for anything but `done`, a reason.
 
+**A planned gate you don't account for makes `finish` refuse and write nothing.** Every gate the plan marked `run` needs either an `executed` entry or an escalation. That refusal is the point: without it, `finish` records whatever you chose to mention, and a dropped gate is once again only as visible as you chose to make it. If a planned gate genuinely went unrun and you are recording that fact, pass `--allow-unaccounted` — the run is written, the gate is named in the record as unaccounted, and the tier becomes `partial`.
+
 **Reasons citing precedent are rejected and nothing is written.** "It matches an existing pattern here" is not evidence the existing pattern is correct — a copied pattern carries its bugs, and the copy is the cheapest moment to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
 
 **Tier:** `partial` whenever any planned agent failed or any planned gate went unexecuted. The PR label and the push gate both read it that way, so calling a partial run `full` launders it.
