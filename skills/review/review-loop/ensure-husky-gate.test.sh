@@ -19,6 +19,12 @@ git config core.hooksPath .husky/_
 grep -q 'review-gate.sh' .husky/pre-push || { echo "FAIL: delegator missing gate call"; exit 1; }
 grep -qxF '.husky/pre-push' .git/info/exclude || { echo "FAIL: not excluded"; exit 1; }
 [ -x .husky/pre-push ] || { echo "FAIL: not executable"; exit 1; }
+# post-rewrite carries a review record across a rebase; husky shadows the global
+# hook for it exactly as it does for pre-push, so it needs its own delegator.
+[ -f .husky/post-rewrite ] || { echo "FAIL: post-rewrite delegator not created"; exit 1; }
+grep -q 'carry-review.sh' .husky/post-rewrite || { echo "FAIL: post-rewrite delegator missing carry call"; exit 1; }
+grep -qxF '.husky/post-rewrite' .git/info/exclude || { echo "FAIL: post-rewrite not excluded"; exit 1; }
+[ -x .husky/post-rewrite ] || { echo "FAIL: post-rewrite not executable"; exit 1; }
 
 # --- idempotent: second run adds no duplicate exclude line, no change ---
 before=$(md5 -q .husky/pre-push 2>/dev/null || md5sum .husky/pre-push)

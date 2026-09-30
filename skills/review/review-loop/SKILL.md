@@ -39,7 +39,9 @@ Then self-heal the pre-push gate for husky repos (husky's local `core.hooksPath`
 ~/.claude/skills/review-loop/ensure-husky-gate.sh
 ```
 
-No-op unless this is a husky repo missing the `.husky/pre-push` delegator; when missing, it drops an untracked one that hands pre-push control to `~/.git-hooks/review-gate.sh`. Runs before any push this session, so the gate is in place by Step 8/14.
+No-op unless this is a husky repo missing a delegator; when one is missing it drops an untracked hook handing control to the global script — `pre-push` to `~/.git-hooks/review-gate.sh`, and `post-rewrite` to this skill's `carry-review.sh`. Husky's local `core.hooksPath` shadows both. Runs before any push this session, so the gate is in place by Step 8/14.
+
+**`post-rewrite` carries a review record across a rebase.** A rebase or amend rewrites shas, which used to invalidate a review the loop had legitimately earned — eight rows in `skipped-shas` exist only to say so, and a skip store full of bookkeeping is one nobody reads carefully. `carry-review.sh` now moves the record onto the new sha when `git patch-id --stable` proves the patch identical, and records the move as its own `carried` state rather than passing it off as a direct review. A rebase that resolved a conflict produces a different patch and does not carry, which is correct: that content was never reviewed. Nothing to invoke — the hook fires on its own.
 
 ## Step 0b: Compute the review plan (scripted)
 
@@ -124,6 +126,7 @@ Instead, re-enter here cheaply. Diff the new commit against the last reviewed sh
 
 - **Fast-path-eligible** (Step 3b's test on that delta: under ~30 changed lines, no program logic) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then Step 14 as normal (post or defer the summary comment, `record-reviewed.sh`, push check). This is ~10 seconds and ends with a *legitimate* reviewed stamp.
 - **Genuinely beneath even that** (e.g. a one-word typo fix in a comment) → `record-skipped.sh "<reason>"` (Step 14). Honest, auditable, one line.
+- **The tip changed only because of a rebase or amend, with no content change** → nothing to do. The `post-rewrite` hook already carried the record by `patch-id`. Do not reach for `record-skipped.sh` to paper over a rewritten sha; if the record did not carry, the patch differs, and a differing patch is unreviewed content.
 - **Touches logic, or you're unsure** → run the full loop from cycle 1 on the delta. The re-entry is a shortcut for *trivial* follow-ups, not a way to shrink review of real changes.
 
 The point: make the honest lightweight path as cheap as the dishonest shortcut was, so there's never a reason to fake the stamp.
