@@ -94,10 +94,17 @@ def cmd_report(runs, repo):
         return 0
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
     lost = [r for r in runs if is_abandoned(r, here)]
-    fin = [r for r in runs if r.get("outcome") and not is_abandoned(r, here)]
-    open_n = len(runs) - len(fin) - len(lost)
+    # A `carried` row is bookkeeping — a rebase moved an existing record onto a new
+    # sha — not a review pass. It has an outcome, so it would otherwise count as
+    # `finished` and inflate the cadence signal these numbers exist to report: a
+    # branch rebased ten times would read as ten more reviews than were run.
+    carried = [r for r in runs if r.get("outcome") == "carried"]
+    fin = [r for r in runs
+           if r.get("outcome") and r.get("outcome") != "carried" and not is_abandoned(r, here)]
+    open_n = len(runs) - len(fin) - len(lost) - len(carried)
     label = "open (unknown — run from the session that owns them)" if not here else "in flight (this session)"
-    print(f"runs: {len(runs)}  finished: {len(fin)}  abandoned: {len(lost)}  {label}: {open_n}")
+    print(f"runs: {len(runs)}  finished: {len(fin)}  abandoned: {len(lost)}  {label}: {open_n}"
+          + (f"  carried (rebase bookkeeping, not a review): {len(carried)}" if carried else ""))
 
     def tally(label, key):
         c = collections.Counter(r.get(key) or "(unset)" for r in runs)

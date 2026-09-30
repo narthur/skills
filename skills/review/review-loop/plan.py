@@ -35,7 +35,7 @@ BIG_FILE_LINES = 800
 
 def run(cmd, timeout=15):
     try:
-        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
         return p.returncode, p.stdout.strip(), p.stderr.strip()
     except (OSError, subprocess.SubprocessError) as exc:
         return 1, "", str(exc)
@@ -272,7 +272,7 @@ def main():
         "--changed-lines", str(plan["changed_lines"]),
         "--inputs", json.dumps(plan["inputs"]),
         "--gates", json.dumps(plan["gates"]),
-    ], capture_output=True, text=True)
+    ], capture_output=True, text=True, check=False)
     if rc.stderr:
         print(rc.stderr.rstrip(), file=sys.stderr)
     if rc.stdout:

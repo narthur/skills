@@ -181,6 +181,29 @@ else
 	bad "could not pause a rebase — the mid-rebase amend guard is not being exercised"
 fi
 
+# No audit row, no gate change — including when there is no python at all to
+# write one. The store write must not outlive the record that explains it.
+: > "$REVIEWED"; : > "$SKIPPED"
+printf '%s\n' "$feat_old" > "$REVIEWED"
+nopath="$TMP/nopy"; mkdir -p "$nopath"
+# Everything the script needs EXCEPT python. Miss one and the script dies earlier
+# for an unrelated reason, and both assertions below pass without exercising the
+# python path at all — which is how the first version of this check was hollow.
+for t in git grep awk sed cut head tail wc date sort mv rm basename dirname cat tr env; do
+	src=$(command -v "$t" 2>/dev/null) && ln -sf "$src" "$nopath/$t"
+done
+# Prove the fixture is sound before trusting what it shows: the script must get
+# far enough to say something.
+[ -n "$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | PATH="$nopath" "$SCRIPT" rebase 2>&1)" ] \
+	|| bad "the no-python fixture is broken — the script died before reaching the check"
+: > "$REVIEWED"; printf '%s\n' "$feat_old" > "$REVIEWED"
+out=$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | PATH="$nopath" "$SCRIPT" rebase 2>&1)
+grep -qxF "$feat_new" "$REVIEWED" \
+	&& bad "with no python, the gate store must not change" \
+	|| ok "with no python, the gate store does not change"
+grep -q "no python to record" <<<"$out" \
+	&& ok "and it says so rather than failing silently" || bad "and it says so rather than failing silently"
+
 # Outside a work tree it must do nothing rather than error.
 out=$(cd "$TMP" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "silent outside a git repo" || bad "silent outside a git repo"

@@ -43,8 +43,9 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 # has actually landed, and never fires at all after an abort — so wait for it.
 if [ "${1:-}" = "amend" ]; then
 	for d in rebase-merge rebase-apply; do
-		# --path-format=absolute: --git-path alone returns a path relative to the
-		# repo root, and a hook invoked from a subdirectory would test the wrong one.
+		# --path-format=absolute: plain --git-path is relative to the CWD. Git runs
+		# hooks from the work-tree root, so that resolves correctly here — the flag
+		# is a one-word hedge against a caller (a test, a manual run) that cd'd first.
 		p=$(git rev-parse --path-format=absolute --git-path "$d" 2>/dev/null) || continue
 		[ -e "$p" ] && exit 0
 	done
@@ -88,11 +89,15 @@ while read -r old new _rest; do
 	how=""; skip_line=""
 	if grep -qxF "$old" <<<"$hits_reviewed"; then
 		how=reviewed
-	else
-		# Capture the whole line now. Re-reading $SKIPPED later for the reason is a
-		# race: record-skipped.sh replaces that file wholesale (read, temp, mv), so a
-		# concurrent worktree can swap it out between the two reads and the carried
-		# entry lands with a blank reason.
+	elif grep -qxF "$old" <<<"$hits_skipped"; then
+		# hits_skipped is an unanchored pre-filter, so a hit here only means "worth
+		# looking" — the anchored read below is what actually decides. Gating on it
+		# is what stops this grepping the whole file once per rewritten commit.
+		#
+		# That read captures the whole line in one go. Re-reading $SKIPPED later for
+		# the reason would be a race: record-skipped.sh replaces the file wholesale
+		# (read, temp, mv), so a concurrent worktree can swap it out between two
+		# reads and the carried entry lands with a blank reason.
 		skip_line=$(grep "^${old}[[:space:]]" "$SKIPPED" 2>/dev/null | head -1)
 		[ -n "$skip_line" ] && how=skipped
 	fi
@@ -113,14 +118,20 @@ while read -r old new _rest; do
 	# reviewed with nothing in the record to say why — the same ordering mistake
 	# record-skipped.sh already had to correct.
 	if [ -f "$RUNLOG" ]; then
-		py=$(command -v python3.14 || command -v python3)
-		if [ -n "$py" ]; then
-			"$py" "$RUNLOG" carried --from "$old" --to "$new" --how "$how" \
-				--by "patch-id, $mode" >/dev/null 2>&1 || {
-				echo "review-gate: could not record the carry of ${old:0:12}; leaving the gate state alone" >&2
-				continue
-			}
+		py=$(command -v python3.14 || command -v python3 || true)
+		# No python is the same outcome as a failed write: no audit row. Treating it
+		# as "fine, carry on" was the half of this the reorder missed — the store got
+		# its entry and nothing recorded why, which is what the comment above says
+		# can no longer happen.
+		if [ -z "$py" ]; then
+			echo "review-gate: no python to record the carry of ${old:0:12}; leaving the gate state alone" >&2
+			continue
 		fi
+		"$py" "$RUNLOG" carried --from "$old" --to "$new" --how "$how" \
+			--by "patch-id, $mode" >/dev/null 2>&1 || {
+			echo "review-gate: could not record the carry of ${old:0:12}; leaving the gate state alone" >&2
+			continue
+		}
 	fi
 
 	if [ "$how" = reviewed ]; then
