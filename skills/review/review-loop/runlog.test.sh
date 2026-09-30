@@ -192,6 +192,23 @@ CLAUDE_CODE_SESSION_ID=s1 "$PY" review-stats.py | grep -q "finished: 0  abandone
 	&& ok "an explicit abandon reports as abandoned, not finished" \
 	|| bad "an explicit abandon reports as abandoned, not finished"
 
+# An empty planned set means "the plan ran nothing", not "no plan information".
+# Conflating them re-enabled the very behaviour the planned filter exists to stop.
+export REVIEW_LOOP_RUNS="$TMP/emptyplan.jsonl"
+ridz=$("$PY" runlog.py plan --tier full --model m \
+	--gates '{"threat_model":{"planned":"skip","reason":"12 entries"}}')
+"$PY" runlog.py finish --run-id "$ridz" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"skipped","reason":"the plan already skipped it"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridz" | grep -q '"tier_executed": "full"' \
+	&& ok "an all-skipped plan does not force partial" || bad "an all-skipped plan does not force partial"
+
+# A fat-fingered env override must not take down every invocation, including the
+# Stop hook's per-turn check.
+REVIEW_LOOP_TAIL=abc "$PY" runlog.py check >/dev/null 2>&1
+[ $? -le 1 ] && ok "a non-numeric tail override degrades, not crashes" || bad "a non-numeric tail override degrades, not crashes"
+REVIEW_LOOP_TAIL=-5 "$PY" runlog.py check >/dev/null 2>&1
+[ $? -le 1 ] && ok "a negative tail override degrades, not crashes" || bad "a negative tail override degrades, not crashes"
+
 # With no session env we cannot tell dead from in-flight, so we must not guess.
 export REVIEW_LOOP_RUNS="$TMP/nosess.jsonl"
 CLAUDE_CODE_SESSION_ID=live-elsewhere "$PY" runlog.py plan --tier full --model m --gates '{}' >/dev/null

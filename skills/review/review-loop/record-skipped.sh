@@ -10,6 +10,14 @@
 # that never happened; that is the exact dishonesty this tool exists to make
 # unnecessary. A reason is required so the record can't be a silent rubber-stamp.
 #
+# It also writes a complete plan+finish row to the shared run record
+# (~/.claude/review-loop/runs.jsonl), so a skip appears in review-stats.py
+# alongside real runs instead of living only in this script's own store. That
+# write happens FIRST, because it is the only step that can refuse the reason and
+# a refusal afterwards could not restore a previous record it had already
+# overwritten. record-reviewed.sh has no equivalent write, so the two are no
+# longer symmetric: this one does strictly more.
+#
 #   record-skipped.sh "<reason>" [<sha, default HEAD>]
 set -euo pipefail
 # Collapse the delimiters before anything else looks at the reason: the store is one
@@ -53,33 +61,39 @@ STORE="$HOME/.claude/review-loop/skipped-shas"
 # rolling back after runlog refuses the reason.
 drop_sha() {
 	[ -f "$STORE" ] || return 0
-	grep -v "^$1	" "$STORE" > "$STORE.tmp" 2>/dev/null
-	# grep exits 1 when it filters everything out, which is a legitimate empty
-	# result; only a real error (2+) should stop us replacing the store.
-	[ $? -le 1 ] && mv "$STORE.tmp" "$STORE" || rm -f "$STORE.tmp"
+	# `cmd || rc=$?` is an || compound, so set -e does not fire on grep's status.
+	# A bare `grep ... > file` here would abort the whole script the moment grep
+	# exits 1 — which is the ordinary case where every line matched and the result
+	# is legitimately empty, i.e. re-recording the only sha in the store.
+	local rc=0
+	grep -v "^$1	" "$STORE" > "$STORE.tmp" 2>/dev/null || rc=$?
+	if [ "$rc" -le 1 ]; then
+		mv "$STORE.tmp" "$STORE"
+	else
+		rm -f "$STORE.tmp"
+		return 1
+	fi
 }
 mkdir -p "$(dirname "$STORE")"
 sha=$(resolve_sha "${2:-HEAD}")
 # One line per sha (tab-separated: sha, date, reason); refresh if re-recorded.
+# Write the run-record row FIRST: it is the only step that can refuse (a reason
+# citing precedent), and refusing after the skipped-shas line is rewritten would
+# destroy a previous, perfectly good record for this sha without being able to
+# put it back. Nothing here touches skipped-shas until the reason has passed.
+RUNLOG="$(dirname "$0")/runlog.py"
+if [ -f "$RUNLOG" ]; then
+	py=$(command -v python3.14 || command -v python3)
+	if [ -n "$py" ] && ! "$py" "$RUNLOG" skipped --reason "$reason" >/dev/null; then
+		echo "record-skipped: reason refused, nothing recorded" >&2
+		exit 1
+	fi
+fi
+
 drop_sha "$sha"
 printf '%s\t%s\t%s\n' "$sha" "$(date +%F)" "$reason" >> "$STORE"
 # Bound growth — keep the most recent 500.
 if [ "$(wc -l < "$STORE" 2>/dev/null || echo 0)" -gt 500 ]; then
 	tail -n 500 "$STORE" > "$STORE.tmp" && mv "$STORE.tmp" "$STORE"
-fi
-# Also write a complete run-record row, so the record has one entry per decision
-# about a sha rather than living half here and half in runs.jsonl. The reason goes
-# through the same precedent check every other stated reason gets; if it is
-# refused, refuse the skip too rather than leaving the two stores disagreeing.
-RUNLOG="$(dirname "$0")/runlog.py"
-if [ -f "$RUNLOG" ]; then
-	py=$(command -v python3.14 || command -v python3)
-	if [ -n "$py" ] && ! "$py" "$RUNLOG" skipped --reason "$reason" >/dev/null; then
-		# Undo the skipped-shas line we just wrote: a refused reason must not
-		# clear the gate through the older store.
-		drop_sha "$sha"
-		echo "record-skipped: reason refused, nothing recorded" >&2
-		exit 1
-	fi
 fi
 echo "review-gate: recorded SKIPPED sha ${sha:0:12} — $reason"

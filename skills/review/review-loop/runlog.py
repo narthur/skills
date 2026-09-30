@@ -96,7 +96,10 @@ def append(rec):
 # compacting would mean a rewrite, which is what clobbered the shared run dir.
 # Overridable so the tail boundary itself is testable — a bound you cannot cross
 # in a test is a bound nothing checks.
-TAIL_LINES = int(os.environ.get("REVIEW_LOOP_TAIL") or 4000)
+try:
+    TAIL_LINES = max(1, int(os.environ.get("REVIEW_LOOP_TAIL") or 4000))
+except ValueError:
+    TAIL_LINES = 4000  # a fat-fingered override must not break every invocation
 
 
 def load(limit=TAIL_LINES):
@@ -211,7 +214,7 @@ def planned_gates(run_id):
             if isinstance(v, dict) and v.get("planned") == "run"}
 
 
-def unaccounted(run_id, executed, escalations):
+def unaccounted(planned, executed, escalations):
     """Gates the plan said to run that the finish neither ran nor escalated.
 
     This is the invariant the whole record exists for. Without it, `finish` records
@@ -220,10 +223,10 @@ def unaccounted(run_id, executed, escalations):
     built to stop being reliant on.
     """
     accounted = set(executed) | {e.get("gate") for e in escalations if isinstance(e, dict)}
-    return sorted(planned_gates(run_id) - accounted)
+    return sorted(planned - accounted)
 
 
-def derive_tier(claimed, executed, agents, planned=frozenset()):
+def derive_tier(claimed, executed, agents, planned=None):
     """`partial` is a fact about the run, not a label the caller picks.
 
     Any planned agent that failed, or any gate that did not complete, makes the run
@@ -234,7 +237,7 @@ def derive_tier(claimed, executed, agents, planned=frozenset()):
     # marked skip is redundant, not a failure, and shouldn't drag the tier down.
     broken = [g for g, v in executed.items()
               if isinstance(v, dict) and v.get("status") != "done"
-              and (not planned or g in planned)]
+              and (planned is None or g in planned)]
     broken += [x.get("id", "?") for x in agents
                if isinstance(x, dict) and x.get("status") not in ("ok", None)]
     if broken and claimed != "partial":
@@ -247,7 +250,8 @@ def derive_tier(claimed, executed, agents, planned=frozenset()):
 def cmd_finish(a):
     executed = parse_json_arg(a.executed, "executed") or {}
     escalations = parse_json_arg(a.escalations, "escalations") or []
-    missing = unaccounted(a.run_id, executed, escalations)
+    planned = planned_gates(a.run_id)  # one read, shared by both derivations below
+    missing = unaccounted(planned, executed, escalations)
     if missing and not a.allow_unaccounted:
         sys.exit(
             "runlog: refusing to finish — the plan said to run these gates and the "
@@ -266,7 +270,7 @@ def cmd_finish(a):
         "phase": "finish",
         "finished_at": now(),
         "outcome": a.outcome,
-        "tier_executed": derive_tier(a.tier, executed, agents, planned_gates(a.run_id)),
+        "tier_executed": derive_tier(a.tier, executed, agents, planned),
         "executed": executed,
         "escalations": escalations,
         "agents": agents,
