@@ -18,7 +18,7 @@ Then:
 
 ### Post the summary comment to the PR
 
-When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review.
+When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review. This includes fast-path and fast-path re-entry runs (Step 3b): a single-reviewer run still posts its summary, marked as a fast-path cycle, along with the user's approval if they chose to downgrade a diff that wasn't eligible.
 
 ```bash
 gh pr comment <n> --body "$(cat <<'EOF'
@@ -45,11 +45,11 @@ Cycle 2: <summary>
 
 Structural proposals (Agent #7 — not applied, your call):
 - Blockers: <high-value simplifications that delete a layer/branch, or file-size breaches — the things worth doing before this merges>
-- Nits: <smaller tidy-ups, listed briefly>
+- Nits: <smaller tidy-ups, listed briefly — including every proposal below the always-ask floor (<40), which was never asked>
 (Omit this section entirely if Agent #7 didn't run or found nothing.)
 
 Intent questions (Agent #9 — reconciled against PR intent, not applied, your call):
-- <each as a question: "intent says X; the code does Y / doesn't do Z — intended?" — ordered by plausibility × impact>
+- <each as a question: "intent says X; the code does Y / doesn't do Z — intended?" — ordered by plausibility × impact; mark the ones below the always-ask floor (<40) as "not asked">
 (Omit entirely if Agent #9 didn't run — skipped when the change had no reviewable intent (Step 4b) — or found nothing.)
 
 Spec conformance (Agent #11 — checked against the written spec, not applied, your call):

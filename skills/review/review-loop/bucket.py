@@ -9,10 +9,12 @@ mechanical bucketing, so the thresholds land identically every run.
   bucket.py --selftest
 
 Input: JSON array of findings, each {id, agent, score, risk, always_ask}.
+Use these exact agent ids; any other string gets the default routing.
 - agent "7-structural" or "9-intent" -> always ask (a proposal, never auto-applied), even at >=80.
 - agent "5-security-authz" -> always ask (an authz fix locks real users out if wrong).
 - security agents -> nothing below 80 is actioned; see SECURITY_AGENTS below.
 - always_ask true -> ask (unclear/conflicting fix, or CLAUDE.md / learnings 'always ask about X').
+- any always-ask finding scoring < ASK_FLOOR -> skip (report-only, still never auto-applied).
 - risk "low"/"high" is consulted only for 50-79; missing risk defaults to ask (safe).
 Output: {auto_fix, ask, skip} lists, each entry tagged with its routing reason.
 """
@@ -29,15 +31,23 @@ SECURITY_FLOOR = 80
 
 ASK_ALWAYS_AGENTS = {"7-structural", "9-intent", "5-security-authz"}
 
+# Always-ask routing keeps a finding from being auto-applied; it is not a reason
+# to interrupt the user at any score. Without a floor a score-0 structural nit
+# reached the user alongside a 65. Below the floor it is listed in the Step 14
+# report (#7 nits / #9 questions) instead of asked.
+ASK_FLOOR = 40
+
 
 def route(f):
     agent = f.get("agent", "")
     score = int(f.get("score", 0))
     if agent in SECURITY_AGENTS and score < SECURITY_FLOOR:
         return "skip", "security: filter confidence < 8/10 (report-only, Step 14)"
-    if agent in ASK_ALWAYS_AGENTS:
-        return "ask", f"{agent}: proposal, never auto-applied"
-    if f.get("always_ask"):
+    if agent in ASK_ALWAYS_AGENTS or f.get("always_ask"):
+        if score < ASK_FLOOR:
+            return "skip", f"always-ask below {ASK_FLOOR}: report-only (Step 14), never auto-applied"
+        if agent in ASK_ALWAYS_AGENTS:
+            return "ask", f"{agent}: proposal, never auto-applied"
         return "ask", "hard rule: unclear/conflicting fix or 'always ask' guidance"
     if score >= 80:
         return "auto_fix", "score >= 80"
@@ -65,6 +75,12 @@ def _selftest():
     assert route({"agent": "7-structural", "score": 95})[0] == "ask"    # overrides >=80
     assert route({"agent": "9-intent", "score": 90})[0] == "ask"
     assert route({"agent": "2-bugs", "score": 90, "always_ask": True})[0] == "ask"
+    # Always-ask floor: low-value proposals are report-only, not interruptions.
+    assert route({"agent": "7-structural", "score": 0})[0] == "skip"
+    assert route({"agent": "7-structural", "score": 39})[0] == "skip"
+    assert route({"agent": "7-structural", "score": 40})[0] == "ask"
+    assert route({"agent": "9-intent", "score": 28})[0] == "skip"
+    assert route({"agent": "2-bugs", "score": 20, "always_ask": True})[0] == "skip"
     # Security: no 50-79 band — sub-80 is report-only, never an interruption.
     assert route({"agent": "5-security", "score": 70, "risk": "low"})[0] == "skip"
     assert route({"agent": "5-security", "score": 60, "risk": "high"})[0] == "skip"
