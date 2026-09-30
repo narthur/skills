@@ -230,8 +230,12 @@ def main():
     a = p.parse_args()
 
     if a.context:
-        with open(a.context, encoding="utf-8") as fh:
-            raw = fh.read()
+        try:
+            with open(a.context, encoding="utf-8") as fh:
+                raw = fh.read()
+        except OSError as exc:
+            sys.exit(f"plan: cannot read the context file ({exc}). Run context.sh first "
+                     "and point --context at what it wrote.")
     else:
         raw = sys.stdin.read()
     try:
@@ -256,6 +260,10 @@ def main():
     if a.dry_run:
         return
 
+    # Capture rather than inherit stdout: the child writes to fd 1 unbuffered while
+    # our own print() is buffered, so letting it inherit puts the run_id BEFORE the
+    # plan JSON — the opposite of the documented order, and unparseable for anyone
+    # reading "the JSON, then the id".
     rc = subprocess.run([
         sys.executable, os.path.join(HERE, "runlog.py"), "plan",
         "--tier", plan["tier_floor"],
@@ -264,7 +272,11 @@ def main():
         "--changed-lines", str(plan["changed_lines"]),
         "--inputs", json.dumps(plan["inputs"]),
         "--gates", json.dumps(plan["gates"]),
-    ])
+    ], capture_output=True, text=True)
+    if rc.stderr:
+        print(rc.stderr.rstrip(), file=sys.stderr)
+    if rc.stdout:
+        print(rc.stdout.rstrip())
     if rc.returncode:
         # The plan JSON is already on stdout and looks complete. Say plainly that it
         # was not recorded, or the orchestrator reads a successful-looking plan and

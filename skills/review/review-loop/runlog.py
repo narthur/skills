@@ -253,7 +253,11 @@ def unaccounted(planned, executed, escalations):
     return sorted(planned - accounted)
 
 
-TIER_RANK = {"skipped": 0, "fast": 1, "full": 2, "partial": 2}
+# Every state the record can hold, in one place, so a consumer can discover the
+# vocabulary here rather than by reading each writer's body.
+OUTCOMES = ("clean", "cycle-limit", "test-failure", "blocked", "abandoned", "skipped", "carried")
+TIERS = ("skipped", "carried", "fast", "full", "partial")
+TIER_RANK = {"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}
 
 
 def derive_tier(claimed, executed, agents, planned=None, floor=None):
@@ -339,9 +343,10 @@ def cmd_carried(a):
     """Record that a review record moved to a rewritten commit.
 
     A rebase or amend rewrites shas, which invalidates a perfectly good review
-    record — 8 rows in skipped-shas exist only to say "the loop reviewed this exact
-    content, then a rebase renamed it". Carrying the record forward removes that
-    friction, but the carry itself is provenance and belongs in the audit trail:
+    record. Only the clean case can be carried — of the eight rebase-citing rows in
+    skipped-shas, one is a pure rename and the other seven resolved conflicts, whose
+    patch-ids differ and which therefore still owe a review. The carry itself is
+    provenance and belongs in the audit trail:
     reviewed-at-one-sha-and-carried is not the same claim as reviewed-here, and a
     later reader should be able to tell which they are looking at.
     """
@@ -498,7 +503,11 @@ def main():
     sf = sub.add_parser("finish")
     sf.add_argument("--run-id", required=True)
     sf.add_argument("--outcome", required=True,
-                    choices=["clean", "cycle-limit", "test-failure", "blocked", "abandoned"])
+                    choices=["clean", "cycle-limit", "test-failure", "blocked", "abandoned"],
+                    help="`carried` is also a valid recorded outcome but is written by the "
+                         "`carried` subcommand, not claimed here")
+    # `carried` is the fifth tier the record can hold; it is written by the
+    # `carried` subcommand rather than claimed at finish, so it is not offered here.
     sf.add_argument("--tier", choices=["fast", "full", "partial", "skipped"])
     sf.add_argument("--executed", help='JSON: {"<gate>":{"status":"done"|"skipped"|"failed","reason":"..."}}')
     sf.add_argument("--escalations", help='JSON list of {"gate":..,"reason":..}')
@@ -509,12 +518,12 @@ def main():
                     help="record planned gates that went unrun, marking the run partial")
     sf.set_defaults(func=cmd_finish)
 
-    sy = sub.add_parser("carried")
-    sy.add_argument("--from", dest="frm", required=True, help="the rewritten-away sha")
-    sy.add_argument("--to", required=True, dest="to", help="the new sha the record now covers")
-    sy.add_argument("--how", required=True, choices=["reviewed", "skipped"])
-    sy.add_argument("--by", default="patch-id", help="what established the two are the same content")
-    sy.set_defaults(func=cmd_carried)
+    scr = sub.add_parser("carried")
+    scr.add_argument("--from", dest="frm", required=True, help="the rewritten-away sha")
+    scr.add_argument("--to", required=True, dest="to", help="the new sha the record now covers")
+    scr.add_argument("--how", required=True, choices=["reviewed", "skipped"])
+    scr.add_argument("--by", default="patch-id", help="what established the two are the same content")
+    scr.set_defaults(func=cmd_carried)
 
     sk = sub.add_parser("skipped")
     sk.add_argument("--reason", required=True)

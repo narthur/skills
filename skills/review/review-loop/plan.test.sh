@@ -79,11 +79,32 @@ missing = [g for g, v in gates.items() if not (v.get("reason") or "").strip()]
 sys.exit(1 if missing else 0)
 ' <<<"$p" && ok "every gate carries a reason" || bad "every gate carries a reason"
 
-# --- --dry-run must not touch the store
-before=$(wc -l < "$HOME/.claude/review-loop/runs.jsonl" 2>/dev/null || echo 0)
+# The documented contract is "the plan, then the run_id". Stdio buffering had it
+# backwards: the child writes fd 1 unbuffered while our print() is buffered.
+# NOT --dry-run: this check is about what a real recording run prints. So it must
+# record somewhere harmless — without the override it writes a junk row into the
+# real store on every test run, which is exactly the pollution the record exists
+# to stay free of.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/plan-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
+trap 'rm -rf "$TMP"' EXIT
+full=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+	| REVIEW_LOOP_RUNS="$TMP/runs.jsonl" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null)
+last=$(tail -1 <<<"$full")
+[[ "$last" =~ ^[0-9a-f]{12}$ ]] && ok "the run_id is the last line, after the plan" || bad "the run_id is the last line, after the plan"
+"$PY" -c 'import json,sys; json.loads("\n".join(sys.stdin.read().splitlines()[:-1]))' <<<"$full" \
+	&& ok "everything before it parses as the plan JSON" || bad "everything before it parses as the plan JSON"
+
+# A missing context file is a normal mistake, not a stack trace.
+err=$("$PY" plan.py --context /nonexistent-context.json --model test $BOOLS_OFF 2>&1)
+grep -q Traceback <<<"$err" && bad "a missing context file fails cleanly" || ok "a missing context file fails cleanly"
+grep -q "context.sh" <<<"$err" && ok "and says how to fix it" || bad "and says how to fix it"
+
+# --- --dry-run must not touch the store (checked against an isolated one, so a
+# --- regression here cannot be masked by unrelated writes to the real store)
+export REVIEW_LOOP_RUNS="$TMP/dryrun.jsonl"
 plan 10 true $BOOLS_OFF >/dev/null
-after=$(wc -l < "$HOME/.claude/review-loop/runs.jsonl" 2>/dev/null || echo 0)
-[ "$before" = "$after" ] && ok "--dry-run records nothing" || bad "--dry-run records nothing"
+[ ! -e "$REVIEW_LOOP_RUNS" ] && ok "--dry-run records nothing" || bad "--dry-run records nothing"
+unset REVIEW_LOOP_RUNS
 
 echo
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"

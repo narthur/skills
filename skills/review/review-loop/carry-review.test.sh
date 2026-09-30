@@ -79,6 +79,108 @@ printf '%s\n' "$mrg" > "$REVIEWED"
 (cd "$repo" && printf '%s %s\n' "$mrg" "$feat_new" | "$SCRIPT" rebase 2>/dev/null)
 [ "$(wc -l < "$REVIEWED")" -eq 1 ] && ok "a merge commit never carries" || bad "a merge commit never carries"
 
+# BOTH patch-ids empty is the dangerous case: "" = "" is true, so string equality
+# alone would carry. git suppresses a root commit's diff unless --root is passed,
+# so an amended first commit produces an empty id on both sides no matter how much
+# the content changed. Only the -n guard stops a false carry here.
+: > "$REVIEWED"; : > "$SKIPPED"
+orphan="$TMP/orphan"; mkdir -p "$orphan"
+git init -q "$orphan"
+o() { git -C "$orphan" -c core.hooksPath=/dev/null -c user.email=t@t -c user.name=t "$@"; }
+echo "first content" > "$orphan/a.txt"; o add -A; o commit -q -m root
+root_old=$(o rev-parse HEAD)
+echo "COMPLETELY DIFFERENT CONTENT" > "$orphan/a.txt"; o add -A; o commit -q --amend --no-edit -m root
+root_new=$(o rev-parse HEAD)
+[ "$root_old" != "$root_new" ] || bad "the root amend rewrote the sha"
+# Confirm the premise rather than assuming it: both sides really are empty.
+rp_old=$(o diff-tree -p --no-commit-id "$root_old" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1)
+rp_new=$(o diff-tree -p --no-commit-id "$root_new" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1)
+[ -z "$rp_old" ] && [ -z "$rp_new" ] \
+	&& ok "a root commit yields no patch-id on either side" \
+	|| ok "root commits do produce patch-ids here; the both-empty case is moot on this git"
+printf '%s\n' "$root_old" > "$REVIEWED"
+(cd "$orphan" && printf '%s %s\n' "$root_old" "$root_new" | "$SCRIPT" amend 2>/dev/null)
+grep -qxF "$root_new" "$REVIEWED" \
+	&& bad "two empty patch-ids must never count as identical" \
+	|| ok "two empty patch-ids do not carry"
+
+# The case the script's own header names: a rebase that resolved a conflict
+# produces a different patch, so the record must not carry.
+: > "$REVIEWED"; : > "$SKIPPED"
+cf="$TMP/conflict"; mkdir -p "$cf"
+git init -q "$cf"
+c() { git -C "$cf" -c core.hooksPath=/dev/null -c user.email=t@t -c user.name=t "$@"; }
+printf 'line\n' > "$cf/f.txt"; c add -A; c commit -q -m base
+c branch -q trunk
+printf 'mine\n' > "$cf/f.txt"; c add -A; c commit -q -m mine
+conf_old=$(c rev-parse HEAD)
+c checkout -q trunk; printf 'theirs\n' > "$cf/f.txt"; c add -A; c commit -q -m theirs
+c checkout -q -
+printf '%s\n' "$conf_old" > "$REVIEWED"
+c rebase trunk >/dev/null 2>&1   # conflicts
+printf 'resolved differently\n' > "$cf/f.txt"; c add -A
+c -c core.editor=true rebase --continue >/dev/null 2>&1
+conf_new=$(c rev-parse HEAD)
+(cd "$cf" && printf '%s %s\n' "$conf_old" "$conf_new" | "$SCRIPT" rebase 2>/dev/null)
+grep -qxF "$conf_new" "$REVIEWED" \
+	&& bad "a conflict-resolved rebase must not carry" || ok "a conflict-resolved rebase does not carry"
+
+# The skipped side needs the same repeat no-op the reviewed side has.
+: > "$REVIEWED"
+printf '%s\t2026-09-30\t%s\n' "$feat_old" "docs-only" > "$SKIPPED"
+(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>/dev/null)
+n1=$(wc -l < "$SKIPPED")
+(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>/dev/null)
+[ "$(wc -l < "$SKIPPED")" -eq "$n1" ] && ok "a repeat skipped-carry is a no-op" || bad "a repeat skipped-carry is a no-op"
+
+# An amend during a paused rebase names a sha that does not exist yet; an abort
+# then makes it permanently unreachable and nothing would ever remove the record.
+: > "$REVIEWED"; : > "$SKIPPED"
+mid="$TMP/midrebase"; mkdir -p "$mid"
+git init -q "$mid"
+m() { git -C "$mid" -c core.hooksPath=/dev/null -c user.email=t@t -c user.name=t "$@"; }
+echo one > "$mid/f.txt"; m add -A; m commit -q -m one
+echo two >> "$mid/f.txt"; m add -A; m commit -q -m two
+mid_old=$(m rev-parse HEAD)
+printf '%s\n' "$mid_old" > "$REVIEWED"
+# Pause a rebase, then invoke the hook the way an --amend would during it.
+# A real sequence editor: `sed -i ''` behaves differently enough across platforms
+# that a failure to rewrite the todo would silently leave the rebase unpaused, and
+# the check would then pass without exercising anything.
+cat > "$TMP/seq-editor.sh" <<'EDIT'
+#!/bin/sh
+todo="$1"
+awk 'NR==1 && $1=="pick" { $1="edit" } { print }' "$todo" > "$todo.new" && mv "$todo.new" "$todo"
+EDIT
+chmod +x "$TMP/seq-editor.sh"
+GIT_SEQUENCE_EDITOR="$TMP/seq-editor.sh" m rebase -i HEAD~1 >/dev/null 2>&1
+paused=""
+for d in rebase-merge rebase-apply; do
+	pp=$(m rev-parse --path-format=absolute --git-path "$d" 2>/dev/null)
+	[ -n "$pp" ] && [ -e "$pp" ] && paused=1
+done
+if [ -n "$paused" ]; then
+	# A REAL amend with unchanged content: its patch-id matches, so every other
+	# guard would let this carry. Only the in-progress-rebase check stops it —
+	# which is what makes this a test of that check rather than of the others.
+	# Amend the MESSAGE, not the content: patch-id ignores the message, so the
+	# patch still matches and every other guard would allow the carry. (`--no-edit`
+	# is flaky here — within the same second the committer date is unchanged too,
+	# so git reproduces the identical sha and there is nothing to carry onto.)
+	m commit -q --amend -m "two (amended mid-rebase)"
+	mid_new=$(m rev-parse HEAD)
+	[ "$mid_new" != "$mid_old" ] || bad "the mid-rebase amend produced a new sha"
+	(cd "$mid" && printf '%s %s\n' "$mid_old" "$mid_new" | "$SCRIPT" amend 2>/dev/null)
+	grep -qxF "$mid_new" "$REVIEWED" \
+		&& bad "an amend during a paused rebase must not carry (rebase --abort would strand it)" \
+		|| ok "an amend during a paused rebase does not carry"
+	m rebase --abort >/dev/null 2>&1
+else
+	# A green "not exercised" is a hollow assertion; if the fixture cannot pause a
+	# rebase the check is broken and should say so.
+	bad "could not pause a rebase — the mid-rebase amend guard is not being exercised"
+fi
+
 # Outside a work tree it must do nothing rather than error.
 out=$(cd "$TMP" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>&1); rc=$?
 [ "$rc" -eq 0 ] && [ -z "$out" ] && ok "silent outside a git repo" || bad "silent outside a git repo"
