@@ -16,8 +16,11 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 Run the context gatherer once at the start:
 
 ```bash
-~/.claude/skills/review-loop/context.sh
+~/.claude/skills/review-loop/context.sh > "$(git rev-parse --git-dir)/review-loop-context.json"
+cat "$(git rev-parse --git-dir)/review-loop-context.json"
 ```
+
+Save it rather than reading it straight off the terminal: Step 0b needs the same JSON as a file, and re-running `context.sh` there would re-fetch and could resolve a different base.
 
 It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* deterministically — workspace detection, base-branch resolution (with `git fetch`), learnings load, and test/lint/diff-size detection. Read its fields instead of re-running those steps by hand:
 
@@ -43,7 +46,8 @@ No-op unless this is a husky repo missing the `.husky/pre-push` delegator; when 
 Every gate below whose trigger is a value in a script's output is computed here, not remembered. This exists because the orchestrator carries the whole procedure while also doing the review work, and the steps it drops are exactly those gates.
 
 ```bash
-python3 ~/.claude/skills/review-loop/plan.py --context <context.sh JSON file> \
+python3 ~/.claude/skills/review-loop/plan.py \
+  --context "$(git rev-parse --git-dir)/review-loop-context.json" \
   --model <your own model id> \
   --logic yes|no --behavioral-goal yes|no --runtime-change yes|no --attacker-reachable yes|no \
   [--spec-artifact yes|no]
@@ -468,7 +472,7 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
 | Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |
 | Skip | <50 | (any) | Reported in final summary count only |
-| Ask user | (any) | authorization finding (`5-security-authz`) | Never auto-apply — a wrong authz fix locks out real users |
+| Ask user | ≥80 | authorization finding (`5-security-authz`) | Never auto-apply — a wrong authz fix locks out real users |
 | Auto-fix / Ask | ≥80 | security, non-authz | Stage-2 filter confidence ×10; normal risk profile |
 | Skip | <80 | security (any) | **Listed line-by-line** in the report — no 50-79 band for security |
 | Ask user | (unscored) | spec-conformance finding from Agent #11 | Bypasses Step 6; never auto-apply; own report section, each with its spec quote |

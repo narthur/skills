@@ -1,7 +1,22 @@
 # Finishing a run (Step 14): reconcile, record, push
 
-Read this at Step 14. SKILL.md carries the four-step order and the script invocations; this file
+Read this at Step 14. SKILL.md carries the five-step order and the script invocations; this file
 carries the rules behind them.
+
+
+## 0. Close the run record
+
+Runs on **every** terminal exit — clean, cycle-limit, test-failure, or blocked — not just a clean one. `plan.py` wrote the planned half at Step 0b; this writes the executed half. A plan with no finish is a visibly abandoned run, which is the whole point: before this existed, a dropped gate was indistinguishable from never having invoked the skill.
+
+Give one `executed` entry per gate the plan marked `run`, each with `status` (`done` / `skipped` / `failed`) and, for anything but `done`, a reason.
+
+**Reasons citing precedent are rejected and nothing is written.** "It matches an existing pattern here" is not evidence the existing pattern is correct — a copied pattern carries its bugs, and the copy is the cheapest moment to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+
+**Tier:** `partial` whenever any planned agent failed or any planned gate went unexecuted. The PR label and the push gate both read it that way, so calling a partial run `full` launders it.
+
+**Escalations** record where you ran *more* than the plan's floor, with why. You may escalate; you may never descend. The accumulated escalations are the signal that a threshold is set too loosely.
+
+**Non-interactive sessions** (headless, AO worker) can't run `AskUserQuestion`. Leave ask-bucket findings unapplied, list them in the PR as open questions, and pass the count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody is there to ask.
 
 ## 1. Reconcile the PR description, then post the summary comment
 

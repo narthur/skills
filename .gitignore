@@ -9,3 +9,4 @@ last-intent-run.jsonl
 # analyzer output
 .code-analysis/
 .ruff_cache/
+sh-thd-*

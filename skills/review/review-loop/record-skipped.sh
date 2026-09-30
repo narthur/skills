@@ -61,4 +61,20 @@ printf '%s\t%s\t%s\n' "$sha" "$(date +%F)" "$reason" >> "$STORE"
 if [ "$(wc -l < "$STORE" 2>/dev/null || echo 0)" -gt 500 ]; then
 	tail -n 500 "$STORE" > "$STORE.tmp" && mv "$STORE.tmp" "$STORE"
 fi
+# Also write a complete run-record row, so the record has one entry per decision
+# about a sha rather than living half here and half in runs.jsonl. The reason goes
+# through the same precedent check every other stated reason gets; if it is
+# refused, refuse the skip too rather than leaving the two stores disagreeing.
+RUNLOG="$(dirname "$0")/runlog.py"
+if [ -f "$RUNLOG" ]; then
+	py=$(command -v python3.14 || command -v python3)
+	if [ -n "$py" ] && ! "$py" "$RUNLOG" skipped --reason "$reason" >/dev/null; then
+		# Undo the skipped-shas line we just wrote: a refused reason must not
+		# clear the gate through the older store.
+		grep -v "^$sha	" "$STORE" > "$STORE.tmp" 2>/dev/null || true
+		mv "$STORE.tmp" "$STORE"
+		echo "record-skipped: reason refused, nothing recorded" >&2
+		exit 1
+	fi
+fi
 echo "review-gate: recorded SKIPPED sha ${sha:0:12} — $reason"

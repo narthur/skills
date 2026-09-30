@@ -43,10 +43,10 @@ A finding goes to **auto-fix** when all three are low-risk; otherwise **ask-user
 
 Plus four hard rules that override the matrix:
 
-- **Structural finding (from Agent #7)** → always ask, never auto-apply. A behavior-preserving restructuring is inherently high-blast-radius and high-forward-binding; surface it as a proposal and let the user decide. This holds even if the Haiku score is ≥80.
+- **Structural finding (from Agent #7)** → never auto-apply. A behavior-preserving restructuring is inherently high-blast-radius and high-forward-binding; surface it as a proposal and let the user decide. This holds even if the Haiku score is ≥80. Asked at ≥ `ASK_FLOOR` (40); below it, report-only rather than an interruption.
 - **Suggested fix is unclear or conflicts with current state** → always ask. (Same as Step 7.)
-- **A `CLAUDE.md` file or learnings entry explicitly says "always ask the user about X"** → always ask.
-- **An authorization finding (`agent: "5-security-authz"`)** → always ask, never auto-apply, at any score. Adding or tightening an authz check is high-blast-radius by construction: the failure mode is locking legitimate users out of production, and it is the one class where an auto-applied wrong fix looks exactly like a right one. Injection fixes (parameterize a query) and data-exposure fixes (drop a field from a log payload) are mechanical and subtractive — those take the normal matrix.
+- **A `CLAUDE.md` file or learnings entry explicitly says "always ask the user about X"** → never auto-apply; asked at ≥ `ASK_FLOOR` (40), report-only below.
+- **An authorization finding (`agent: "5-security-authz"`)** → never auto-apply. `bucket.py` applies `SECURITY_FLOOR` (80) *before* the always-ask rules, so an authz finding the Stage-2 filter scored below 80 is report-only like any other security finding; at or above it, always ask. Adding or tightening an authz check is high-blast-radius by construction: the failure mode is locking legitimate users out of production, and it is the one class where an auto-applied wrong fix looks exactly like a right one. Injection fixes (parameterize a query) and data-exposure fixes (drop a field from a log payload) are mechanical and subtractive — those take the normal matrix.
 
 
 ## Framing the question for non-expert readers (Step 8b)

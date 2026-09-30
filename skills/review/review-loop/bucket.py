@@ -12,7 +12,10 @@ Input: JSON array of findings, each {id, agent, score, risk, always_ask}.
 Use these exact agent ids; any other string gets the default routing.
 - agent "7-structural" or "9-intent" -> always ask (a proposal, never auto-applied), even at >=80.
 - agent "5-security-authz" -> always ask (an authz fix locks real users out if wrong).
-- security agents -> nothing below 80 is actioned; see SECURITY_AGENTS below.
+- security agents -> nothing below 80 is actioned; see SECURITY_AGENTS below. This runs
+  FIRST, so it applies to 5-security-authz too: an authz finding the Stage-2 filter scored
+  under 80 is report-only (listed line-by-line at Step 14), not asked. "Never auto-apply"
+  is what always-ask buys authz; it does not exempt it from the security floor.
 - always_ask true -> ask (unclear/conflicting fix, or CLAUDE.md / learnings 'always ask about X').
 - any always-ask finding scoring < ASK_FLOOR -> skip (report-only, still never auto-applied).
 - risk "low"/"high" is consulted only for 50-79; missing risk defaults to ask (safe).
