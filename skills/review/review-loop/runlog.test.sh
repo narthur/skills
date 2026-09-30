@@ -214,6 +214,20 @@ for badval in abc -5 "" "  "; do
 		|| bad "tail override '$badval' degrades, not crashes (rc=$rc)"
 done
 
+# session_kind is one of the axes the record exists to answer, so a
+# misclassification quietly corrupts that answer. The tty test alone called every
+# interactive Claude Code run "headless", because its commands run with stdin detached.
+export REVIEW_LOOP_RUNS="$TMP/kind.jsonl"
+for pair in "1:interactive" "0:headless"; do
+	val=${pair%%:*}; want=${pair##*:}
+	rk=$(env -u AO_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED="$val" "$PY" runlog.py plan --tier full --model m --gates '{}')
+	"$PY" runlog.py show --run-id "$rk" | grep -q "\"session_kind\": \"$want\"" \
+		&& ok "attended=$val records $want" || bad "attended=$val records $want"
+done
+rk=$(AO_SESSION_ID=abc CLAUDE_CODE_SESSION_ATTENDED=1 "$PY" runlog.py plan --tier full --model m --gates '{}')
+"$PY" runlog.py show --run-id "$rk" | grep -q '"session_kind": "ao-worker"' \
+	&& ok "an AO worker outranks the attended flag" || bad "an AO worker outranks the attended flag"
+
 # `n/a` is not `skipped`: a gate with nothing to act on was not dropped, and a
 # review of a repo that has no PRs and no telemetry is not a degraded review.
 export REVIEW_LOOP_RUNS="$TMP/na.jsonl"

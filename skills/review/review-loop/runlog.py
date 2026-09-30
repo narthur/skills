@@ -59,10 +59,21 @@ def repo_id():
 
 
 def session_kind():
+    """Which kind of session is driving this run.
+
+    One of the axes the record exists to answer ("which session kind drops gates"),
+    so a misclassification here quietly corrupts that answer. The tty test alone
+    gets it wrong: an interactive Claude Code session runs its commands with stdin
+    detached, so every interactive run logged as headless. CLAUDE_CODE_SESSION_ATTENDED
+    is the harness's own answer to the question and outranks the guess.
+    """
     if os.environ.get("AO_SESSION_ID"):
         return "ao-worker"
     if os.environ.get("CLAUDE_REVIEW_LOOP_SUBAGENT"):
         return "subagent"
+    attended = os.environ.get("CLAUDE_CODE_SESSION_ATTENDED")
+    if attended is not None:
+        return "interactive" if attended not in ("", "0", "false") else "headless"
     if not sys.stdin.isatty() and not sys.stderr.isatty():
         return "headless"
     return "interactive"
