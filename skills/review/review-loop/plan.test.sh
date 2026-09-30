@@ -57,7 +57,15 @@ p=$(plan 900 false --logic yes --behavioral-goal yes --runtime-change no --attac
 [ "$(gate evidence_gate <<<"$p")" = "skip" ] && ok "no runtime change skips the evidence gate" || bad "no runtime change skips the evidence gate"
 p=$(plan 900 false --logic yes --behavioral-goal no --runtime-change yes --attacker-reachable no)
 [ "$(gate agent_9_intent <<<"$p")" = "skip" ] && ok "no behavioral goal skips #9" || bad "no behavioral goal skips #9"
-[ "$(gate evidence_gate <<<"$p")" = "run" ] && ok "runtime change runs the evidence gate" || bad "runtime change runs the evidence gate"
+# The evidence gate needs somewhere to put the evidence, so it needs BOTH a
+# runtime change and a PR. This repo has no PRs, so here it must skip — and say
+# why, since "no PR" is deferral rather than a judgement that evidence is unneeded.
+ev=$("$PY" -c 'import json,sys; g=json.load(sys.stdin)["gates"]["evidence_gate"]; print(g["planned"], "|", g["reason"])' <<<"$p")
+case "$ev" in
+	"skip | no PR to attach"*) ok "no PR defers the evidence gate, with the reason" ;;
+	"run | "*) ok "a PR plus a runtime change runs the evidence gate" ;;
+	*) bad "evidence gate reason explains itself (got: $ev)" ;;
+esac
 [ "$(gate measurement_gate <<<"$p")" = "run" ] && ok "runtime change runs the measurement gate" || bad "runtime change runs the measurement gate"
 [ "$(gate agent_11_spec <<<"$p")" = "skip" ] && ok "no spec artifact skips #11" || bad "no spec artifact skips #11"
 p=$(plan 900 false --logic yes --behavioral-goal no --runtime-change yes --attacker-reachable no --spec-artifact yes)

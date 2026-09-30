@@ -55,6 +55,12 @@ def threat_model_state():
         return None
 
 
+def pr_exists():
+    """Is there a PR for this branch? Gates the report, evidence and measurement."""
+    rc, out, _ = run(["gh", "pr", "view", "--json", "number", "-q", ".number"], timeout=20)
+    return rc == 0 and out.strip().isdigit()
+
+
 def github_reachable():
     rc, out, _ = run(["git", "remote", "-v"])
     if rc != 0 or "github.com" not in out:
@@ -112,7 +118,12 @@ def build(ctx, a):
     # --- always-on ------------------------------------------------------------
     gates["upstream_drift_check"] = gate("run", "cheap, no LLM")
     gates["learnings_capture"] = gate("run", "always")
-    gates["pr_report"] = gate("run", "always — defer to pending-report file if no PR yet")
+    has_pr = pr_exists()
+    gates["pr_report"] = gate(
+        "run" if has_pr else "skip",
+        "a PR exists to comment on" if has_pr
+        else "no PR for this branch — defer to the pending-report file, or report in-session "
+             "on a repo that does not use PRs")
     gates["record_reviewed"] = gate("run", "on clean exit")
 
     # --- computable from context.sh ------------------------------------------
@@ -172,8 +183,10 @@ def build(ctx, a):
 
     # --- post-loop gates ------------------------------------------------------
     gates["evidence_gate"] = gate(
-        "run" if a.runtime_change else "skip",
-        "runtime behavior changes" if a.runtime_change else "diff changes no runtime functionality")
+        "run" if a.runtime_change and has_pr else "skip",
+        "runtime behavior changes and a PR exists to attach evidence to" if a.runtime_change and has_pr
+        else "diff changes no runtime functionality" if not a.runtime_change
+        else "no PR to attach evidence to — deferred, not dropped (Step 0c)")
     gates["measurement_gate"] = gate(
         "run" if a.runtime_change else "skip",
         "user-facing behavior may change — waive in the report if the repo cannot measure"

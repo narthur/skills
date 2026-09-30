@@ -214,6 +214,23 @@ for badval in abc -5 "" "  "; do
 		|| bad "tail override '$badval' degrades, not crashes (rc=$rc)"
 done
 
+# `n/a` is not `skipped`: a gate with nothing to act on was not dropped, and a
+# review of a repo that has no PRs and no telemetry is not a degraded review.
+export REVIEW_LOOP_RUNS="$TMP/na.jsonl"
+ridna=$("$PY" runlog.py plan --tier full --model m \
+	--gates '{"pr_report":{"planned":"run","reason":"always"},"threat_model":{"planned":"run","reason":"2 stale"}}')
+"$PY" runlog.py finish --run-id "$ridna" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"},"pr_report":{"status":"n/a","reason":"this repo has no PRs at all"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridna" | grep -q '"tier_executed": "full"' \
+	&& ok "n/a does not force partial" || bad "n/a does not force partial"
+# Capture, don't pipe: finish exits 1 by design here, and under pipefail that
+# fails the pipeline whatever grep found.
+ridna2=$("$PY" runlog.py plan --tier full --model m --gates '{"pr_report":{"planned":"run","reason":"always"}}')
+naerr=$("$PY" runlog.py finish --run-id "$ridna2" --outcome clean --tier full \
+	--executed '{"pr_report":{"status":"n/a"}}' 2>&1)
+grep -q "no reason" <<<"$naerr" \
+	&& ok "n/a still needs its reason" || bad "n/a still needs its reason"
+
 # The floor is the whole point of "escalate, never descend" — and until now it was
 # computed, recorded, and never checked.
 export REVIEW_LOOP_RUNS="$TMP/floor.jsonl"

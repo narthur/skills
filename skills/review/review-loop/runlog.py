@@ -254,7 +254,7 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     # Only gates the plan said to run count. An entry for a gate the plan already
     # marked skip is redundant, not a failure, and shouldn't drag the tier down.
     broken = [g for g, v in executed.items()
-              if isinstance(v, dict) and v.get("status") != "done"
+              if isinstance(v, dict) and v.get("status") not in ("done", "n/a")
               and (planned is None or g in planned)]
     broken += [x.get("id", "?") for x in agents
                if isinstance(x, dict) and x.get("status") not in ("ok", None)]
@@ -282,6 +282,7 @@ def cmd_finish(a):
     planned = planned_gates(plan)
     unexplained = sorted(g for g, v in executed.items()
                          if isinstance(v, dict) and v.get("status") != "done"
+                         # n/a still needs its why — "there is no PR" is the reason.
                          and not (v.get("reason") or "").strip())
     if unexplained:
         sys.exit(

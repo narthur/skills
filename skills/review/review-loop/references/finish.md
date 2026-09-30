@@ -14,7 +14,9 @@ Give one `executed` entry per gate the plan marked `run`, each with `status` (`d
 
 **Reasons citing precedent are rejected and nothing is written.** "It matches an existing pattern here" is not evidence the existing pattern is correct — a copied pattern carries its bugs, and the copy is the cheapest moment to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
 
-**Tier:** `partial` whenever any planned agent failed or any planned gate went unexecuted. The PR label and the push gate both read it that way, so calling a partial run `full` launders it.
+**Three statuses, and the third matters.** `done` ran. `skipped` means you chose not to run it, and that makes the run `partial`. `n/a` means there was nothing for the gate to act on — no PR exists to post a report to, the repo has no telemetry to verify — and does NOT make the run partial, because a gate that cannot apply is not a gate that was dropped. All three need a reason; for `n/a` the reason is what was absent.
+
+**Tier:** `partial` whenever any planned agent failed or any planned gate was skipped. The PR label and the push gate both read it that way, so calling a partial run `full` launders it.
 
 **Escalations** record where you ran *more* than the plan's floor, with why. You may escalate; you may never descend. The accumulated escalations are the signal that a threshold is set too loosely.
 
