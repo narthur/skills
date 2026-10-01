@@ -84,7 +84,7 @@ def disclosure(convergence, run):
 
 def _upstream_exists(repo):
     r = subprocess.run(["git", "-C", repo, "rev-parse", "--abbrev-ref", "@{upstream}"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, check=False)
     return r.returncode == 0
 
 
