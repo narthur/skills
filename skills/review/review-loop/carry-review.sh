@@ -12,10 +12,12 @@
 # conflict resolutions, a re-unioned pnpm override, a two-line port, a lockfile-only
 # delta — so their patch-ids differ. This fixes the clean-rebase case and nothing
 # else, which is the point: a rebase that changed anything still owes a review. (Not
-# a rename — no row mentions one, and a rename is the one shape that could never
-# carry, since patch-id covers the file names.)
+# a rename — no row mentions one. A commit that merely contains a rename carries like
+# any other: patch-id covers the file names, so a reproduced rename reproduces its
+# id. It is a rewrite that *changes* the names that cannot match.)
 #
-# The carry is gated on `git patch-id --verbatim`, which compares the patch bytes.
+# The carry is gated on `git patch-id --verbatim`, which compares the patch itself,
+# whitespace included.
 # That is the right gate rather than a convenient one:
 #   - a clean rebase reproduces the same patch, so the record carries
 #   - a rebase that resolved a conflict produces a DIFFERENT patch, so it does not,
@@ -49,16 +51,16 @@ if [ "${1:-}" = "amend" ]; then
 		# Plain --git-path, no --path-format: the path it returns is relative to the
 		# CWD, so it resolves from wherever the caller stands — measured from a
 		# subdirectory and in a linked worktree. --path-format=absolute added nothing
-		# and needed git >= 2.31; below that rev-parse fails, `|| continue` skips this
-		# guard entirely, and a mid-rebase amend carries a record for a sha the rebase
-		# may still discard.
+		# and needed git >= 2.31. Below that the bypass is quieter than it looks:
+		# rev-parse echoes an unrecognised flag back and exits 0, so `|| continue`
+		# never fires, `$p` holds two lines, `[ -e "$p" ]` is false, and the guard
+		# simply never triggers — a mid-rebase amend then carries a record for a sha
+		# the rebase may still discard.
 		p=$(git rev-parse --git-path "$d" 2>/dev/null) || continue
 		[ -e "$p" ] && exit 0
 	done
 fi
 
-# The patch a commit introduces, independent of its sha and its parents. Empty for
-# a merge (no single patch) and for a root commit git cannot diff.
 # record-reviewed.sh and record-skipped.sh both trim to the most recent 500 after
 # every append. A third writer that skips it just moves the growth somewhere the
 # other two can't see.
@@ -67,15 +69,22 @@ cap() {
 	tail -n 500 "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
+# The patch a commit introduces, independent of its sha and its parents. Empty for a
+# merge (no single patch) and for a root commit git cannot diff, and the caller
+# refuses to carry on an empty id.
+#
 # --verbatim, NOT --stable (they cannot be combined). --stable strips whitespace
 # before hashing, so two commits differing only in indentation share an id — and in
 # Python, YAML and shell, indentation is semantics. Measured on git 2.50.1:
 # `rm -rf /tmp/junk` and `rm -rf / tmp/junk` collide under --stable and differ under
 # --verbatim. (No hash quoted: a patch-id covers the file name and surrounding
-# context too, so the value is a property of the fixture, not of the pair of lines.) --verbatim still ignores hunk headers and blob index
-# lines, so a rebase that only moved the hunk's line numbers still matches, which is
-# the whole case this feature exists for. On git < 2.39 --verbatim is rejected, the
-# id comes back empty, and the caller refuses to carry — fail closed.
+# context too, so the value is a property of the fixture, not of the pair of lines.)
+#
+# --verbatim changes exactly that one thing. It still drops the `@@ ... @@` line and
+# the `index <old>..<new>` line, so a rebase that only moved the hunk's offsets still
+# matches — the whole case this feature exists for. On git < 2.39 the flag is
+# unrecognised: rc 129 and empty stdout, so the id is empty and the caller refuses.
+# Fail closed.
 patch_id() {
 	git diff-tree -p --no-commit-id "$1" 2>/dev/null | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1
 }

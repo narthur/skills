@@ -264,6 +264,12 @@ TIERS = ("skipped", "carried", "fast", "full", "partial")
 # tier. Only `carried` is off-limits as a tier. review-stats.py also reads this to
 # keep both out of its cadence count.
 SUBCOMMAND_STATES = ("skipped", "carried")
+# A gate that reports `n/a` was handled — the gate does not apply to this repo — so
+# it is success, not a drop. review-stats.py reads this rather than restating it:
+# when it had its own `status == "done"` test, every `n/a` counted as a dropped gate
+# and the Step 0 alarm fired permanently on gates nobody could fix, which teaches a
+# reader to scroll past the alarms that are right.
+GATE_OK = ("done", "n/a")
 TIER_RANK = {"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}
 
 
@@ -277,7 +283,7 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     # Only gates the plan said to run count. An entry for a gate the plan already
     # marked skip is redundant, not a failure, and shouldn't drag the tier down.
     broken = [g for g, v in executed.items()
-              if isinstance(v, dict) and v.get("status") not in ("done", "n/a")
+              if isinstance(v, dict) and v.get("status") not in GATE_OK
               and (planned is None or g in planned)]
     # "done" and "ok" are the same claim. Gates say `done`, so a caller writing the
     # agent roster reaches for `done` too — and counted every successful agent as a
@@ -285,7 +291,7 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     # `partial` is still a false record, and it teaches the next reader that partial
     # is normal. Accept both words rather than legislating one.
     broken += [x.get("id", "?") for x in agents
-               if isinstance(x, dict) and x.get("status") not in ("ok", "done", None)]
+               if isinstance(x, dict) and x.get("status") not in ("ok", "done")]
     if broken and claimed != "partial":
         print(f"runlog: recording tier `partial`, not {claimed!r} — did not complete: "
               f"{', '.join(broken)}", file=sys.stderr)
@@ -523,7 +529,8 @@ def main():
     sf.add_argument("--escalations", help='JSON list of {"gate":..,"reason":..}')
     sf.add_argument("--agents",
                     help='JSON list of {"id":..,"model":..,"status":"done"|"ok"|"failed",'
-                         '"findings":N} — anything but done/ok makes the run partial')
+                         '"findings":N} — every entry needs an explicit done/ok; '
+                         'anything else, including a missing status, makes the run partial')
     sf.add_argument("--findings", help='JSON: {"auto_fix":N,"asked":N,"skipped":N}')
     sf.add_argument("--asks", type=int, default=0, help="unresolved ask-bucket items")
     sf.add_argument("--allow-unaccounted", action="store_true",

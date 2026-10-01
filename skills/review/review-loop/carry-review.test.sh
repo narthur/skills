@@ -212,8 +212,8 @@ grep -q "cannot record the carry" <<<"$out" \
 # --- no runlog.py beside the script: the other half of the same hole. The audit
 # --- block used to be wrapped in `if [ -f "$RUNLOG" ]`, so a partial install that
 # --- shipped the shell scripts without the python ones stamped every carry with no
-# --- audit row at all — and ensure-husky-gate.sh points the hook at this directory
-# --- precisely so the two can be shipped apart.
+# --- audit row at all. The hook runs whatever ~/.claude/skills/review-loop/ happens
+# --- to contain, which a partial sync can leave without the python half.
 lonely="$TMP/lonely"; mkdir -p "$lonely"; cp "$SCRIPT" "$lonely/carry-review.sh"
 [ ! -e "$lonely/runlog.py" ] || { echo "setup failed: runlog.py must not be beside the copy"; exit 1; }
 : > "$REVIEWED"; printf '%s\n' "$feat_old" > "$REVIEWED"
@@ -234,19 +234,20 @@ ws="$TMP/ws"; mkdir -p "$ws"; (
 	printf 'def f(x):\n    if x:\n        a()\n    b()\n' > m.py && git commit -qam outside
 ) >/dev/null 2>&1
 ws_old=$(cd "$ws" && git rev-parse HEAD)
-(cd "$ws" && git reset -q --hard HEAD~1 && printf 'def f(x):
-    if x:
-        a()
-        b()
-' > m.py && git commit -qam inside) >/dev/null 2>&1
+(cd "$ws" && git reset -q --hard HEAD~1 \
+	&& printf 'def f(x):\n    if x:\n        a()\n        b()\n' > m.py \
+	&& git commit -qam inside) >/dev/null 2>&1
 ws_new=$(cd "$ws" && git rev-parse HEAD)
-# Sanity: the two commits really are indentation-only variants of each other, or
-# this proves nothing about whitespace.
+# Sanity: assert the property that DEFINES this fixture — the pair must collide under
+# the old --stable gate. Checking only that the shas differ would let the pair drift
+# into a content difference, and then the assertion below passes under --stable too
+# and nothing says the test stopped testing whitespace.
+wspid() { (cd "$ws" && git diff-tree -p --no-commit-id "$1" | git patch-id --stable | cut -d' ' -f1); }
 [ "$ws_old" != "$ws_new" ] || { echo "setup failed: the two whitespace commits are identical"; exit 1; }
-: > "$REVIEWED"; printf '%s
-' "$ws_old" > "$REVIEWED"
-(cd "$ws" && printf '%s %s
-' "$ws_old" "$ws_new" | "$SCRIPT" amend >/dev/null 2>&1)
+[ -n "$(wspid "$ws_old")" ] && [ "$(wspid "$ws_old")" = "$(wspid "$ws_new")" ] \
+	|| { echo "setup failed: the pair is not a whitespace-only variant (--stable ids differ)"; exit 1; }
+: > "$REVIEWED"; printf '%s\n' "$ws_old" > "$REVIEWED"
+(cd "$ws" && printf '%s %s\n' "$ws_old" "$ws_new" | "$SCRIPT" amend >/dev/null 2>&1)
 grep -qxF "$ws_new" "$REVIEWED" \
 	&& bad "an indentation-only rewrite must not carry a reviewed stamp" \
 	|| ok "an indentation-only rewrite does not carry a reviewed stamp"

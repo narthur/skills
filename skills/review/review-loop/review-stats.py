@@ -67,7 +67,7 @@ def dropped_gates(run):
     out = {}
     for g in planned:
         st = (executed.get(g) or {}).get("status") if isinstance(executed.get(g), dict) else None
-        if st != "done":
+        if st not in runlog.GATE_OK:
             out[g] = st or "unreported"
     return out
 

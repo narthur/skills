@@ -75,7 +75,7 @@ printf '{"run_id":"broke' >> "$REVIEW_LOOP_RUNS"
 
 # Alarm fires on the third non-completion, not the second.
 export REVIEW_LOOP_RUNS="$TMP/alarm.jsonl"
-for i in 1 2; do
+for _ in 1 2; do
 	r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 	"$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
 		--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null
@@ -141,7 +141,7 @@ rid5=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 # failures and the run recorded `partial`. Over-reporting partial is still a false
 # record, and it teaches the next reader that partial is normal. Both words, because
 # both are in use.
-for word in ok done; do
+for word in ok "done"; do
 	rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 	"$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
 		--executed '{"threat_model":{"status":"done"}}' \

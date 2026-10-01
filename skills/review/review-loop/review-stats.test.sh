@@ -32,11 +32,16 @@ row '{"run_id":"a4","phase":"plan","planned_at":"2026-01-04T00:00:00","session_i
 # here reported every one of them abandoned and tripped the Step 0 alarm.
 row '{"run_id":"a5","phase":"plan","planned_at":"2026-01-05T00:00:00","session_id":null,"repo":"r"}'
 # `skipped` has the same shape as `carried`: an outcome, and no review behind it.
+# Written as the TWO rows runlog.py skipped actually emits, not one row carrying a
+# plan phase and an outcome together — a shape runlog never writes.
 for i in 1 2; do
-	row "{\"run_id\":\"k$i\",\"phase\":\"plan\",\"planned_at\":\"2026-01-0${i}T06:00:00\",\"outcome\":\"skipped\",\"tier_executed\":\"skipped\",\"repo\":\"r\"}"
+	row "{\"run_id\":\"k$i\",\"phase\":\"plan\",\"planned_at\":\"2026-01-0${i}T06:00:00\",\"session_id\":\"s1\",\"repo\":\"r\"}"
+	row "{\"run_id\":\"k$i\",\"phase\":\"finish\",\"outcome\":\"skipped\",\"tier_executed\":\"skipped\"}"
 done
+# Finish-only, as runlog.py carried writes them — no plan row to merge with. This is
+# the path every real carried row takes.
 for i in 1 2 3; do
-	row "{\"run_id\":\"c$i\",\"phase\":\"plan\",\"planned_at\":\"2026-01-0${i}T12:00:00\",\"outcome\":\"carried\",\"tier_executed\":\"carried\",\"repo\":\"r\"}"
+	row "{\"run_id\":\"c$i\",\"phase\":\"finish\",\"outcome\":\"carried\",\"tier_executed\":\"carried\",\"repo\":\"r\"}"
 done
 
 # CLAUDE_CODE_SESSION_ID=s1 makes a4 (session s9) derivably abandoned; without it
