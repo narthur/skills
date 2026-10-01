@@ -136,6 +136,29 @@ last=$(tail -1 <<<"$full")
 "$PY" -c 'import json,sys; json.loads("\n".join(sys.stdin.read().splitlines()[:-1]))' <<<"$full" \
 	&& ok "everything before it parses as the plan JSON" || bad "everything before it parses as the plan JSON"
 
+# The bug this pins: semantic_lines and sizing_excluded were computed, used for every
+# threshold, and printed in the plan JSON — then dropped before the record. The checks
+# above passed throughout, because they read the JSON this script prints rather than the
+# row it persists. A real run recorded `semantic_lines: null` while its own gate reason
+# cited "1377 lines of review surface". Assert the PERSISTED row, not the printout.
+store="$TMP/persist.jsonl"
+rid=$(printf '{"changed_lines":900,"semantic_lines":10,"sizing_excluded":"890 line(s) in lockfiles or generated files","fast_path_eligible_by_size":true,"base_branch":""}' \
+	| REVIEW_LOOP_RUNS="$store" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null | tail -1)
+row=$(REVIEW_LOOP_RUNS="$store" "$PY" runlog.py show --run-id "$rid" 2>/dev/null)
+"$PY" -c '
+import json, sys
+d = json.load(sys.stdin)
+bad = [k for k, want in (("changed_lines", 900), ("semantic_lines", 10)) if d.get(k) != want]
+if not (d.get("sizing_excluded") or "").strip():
+    bad.append("sizing_excluded")
+# SystemExit("") still exits 1 — an empty "nothing missing" string reads as failure.
+raise SystemExit(", ".join(bad) if bad else 0)' <<<"$row" \
+	&& ok "the sizing decision reaches the persisted record, not just the printout" \
+	|| bad "the sizing decision reaches the persisted record, not just the printout (missing: $("$PY" -c '
+import json,sys
+d=json.load(sys.stdin)
+print(", ".join([k for k,w in (("changed_lines",900),("semantic_lines",10)) if d.get(k)!=w] + ([] if (d.get("sizing_excluded") or "").strip() else ["sizing_excluded"])))' <<<"$row"))"
+
 # A missing context file is a normal mistake, not a stack trace.
 err=$("$PY" plan.py --context /nonexistent-context.json --model test $BOOLS_OFF 2>&1)
 grep -q Traceback <<<"$err" && bad "a missing context file fails cleanly" || ok "a missing context file fails cleanly"

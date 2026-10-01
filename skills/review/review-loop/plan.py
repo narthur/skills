@@ -283,6 +283,8 @@ def main():
         "--model", a.model,
         "--base", plan["base_branch"] or "",
         "--changed-lines", str(plan["changed_lines"]),
+        "--semantic-lines", str(plan["semantic_lines"]),
+        "--sizing-excluded", plan["sizing_excluded"] or "",
         "--inputs", json.dumps(plan["inputs"]),
         "--gates", json.dumps(plan["gates"]),
     ], capture_output=True, text=True, check=False)

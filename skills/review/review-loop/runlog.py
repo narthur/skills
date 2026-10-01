@@ -257,6 +257,8 @@ def cmd_plan(a):
         "inputs": parse_json_arg(a.inputs, "inputs") or {},
         "gates": gates,
         "changed_lines": a.changed_lines,
+        "semantic_lines": a.semantic_lines,
+        "sizing_excluded": a.sizing_excluded,
     }
     append(rec)
     print(rec["run_id"])
@@ -554,7 +556,16 @@ def main():
     sp.add_argument("--session-kind", choices=["interactive", "ao-worker", "headless", "subagent"])
     sp.add_argument("--inputs", help='JSON: {"logic":bool,"behavioral_goal":bool,"runtime_behavior_change":bool,"attacker_reachable":bool,"spec_artifact":bool}')
     sp.add_argument("--gates", help='JSON: {"<gate>":{"planned":"run"|"skip","reason":"..."}}')
-    sp.add_argument("--changed-lines", type=int)
+    sp.add_argument("--changed-lines", type=int, help="raw added+deleted lines")
+    # The record must hold what the sizing DECISION was made on, not just the raw
+    # count. Without these, `semantic_lines` was computed, used for every threshold,
+    # printed in the plan JSON — and dropped before the record, so a reader could not
+    # check whether a cheaper review was bought by a defensible exclusion. A real run
+    # (b480b45cc65d) recorded `semantic_lines: None` while its own gate reason cited
+    # "1377 lines of review surface".
+    sp.add_argument("--semantic-lines", type=int,
+                    help="raw minus whitespace-only, lockfiles and declared-generated files")
+    sp.add_argument("--sizing-excluded", help="what was dropped from the raw count, and how much")
     sp.set_defaults(func=cmd_plan)
 
     sf = sub.add_parser("finish")
