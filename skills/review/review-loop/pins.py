@@ -65,17 +65,15 @@ def resolvable(sha):
 def stale(pinned):
     """Those whose cited file moved since the pin, each with the commits that moved it.
 
-    Only pins that can actually be checked. `git()` returns "" on failure and an empty
-    log is also "", so an unresolvable sha — a typo, a rebased-away commit, a sha from
-    another repo — used to read as "nothing touched it" and so stayed fresh forever,
-    while still counting as pinned and therefore staying out of `unpinned` too. That is
-    worse than no pin at all: it looks checked and is unwatched. Those come back from
-    `broken()` instead.
+    `git()` returns "" on failure and an empty log is also "", so an unresolvable sha — a
+    typo, a rebased-away commit, one from another repo — reads as "nothing touched it" and
+    stays fresh forever, while still counting as pinned and therefore staying out of
+    `unpinned` too. That is worse than no pin at all: it looks checked and is unwatched.
+    No guard here: adding one changed no output, because such a pin already falls out on
+    the failed `git log`. `broken()` is what surfaces them, and callers must report it.
     """
     out = []
     for c in pinned:
-        if not resolvable(c["sha"]):
-            continue
         touched = git("log", "--oneline", f"{c['sha']}..HEAD", "--", c["path"])
         if touched:
             out.append({**c, "commits": touched.splitlines()})
@@ -104,6 +102,19 @@ def _selftest():
     assert not CITATION.search("[not a citation]")
     # No marker means no unpinned counting — the caller decides what owes a pin.
     assert citations("- OBSERVED: nothing pinned\n")[1] == 0
+
+    # A pin whose sha does not name a commit here can never be checked, yet it counts as
+    # pinned and so stays out of unpinned[] too: it looks checked and is unwatched, which
+    # is worse than no pin. Needs a real repo, so skip where there is none rather than
+    # assert vacuously.
+    if git("rev-parse", "--git-dir"):
+        real = git("rev-parse", "HEAD")
+        assert real and resolvable(real), real
+        assert not resolvable("deadbeefcafe")
+        bogus = {"path": "pins.py", "line": 1, "sha": "deadbeefcafe"}
+        good = {"path": "pins.py", "line": 2, "sha": real}
+        assert broken([bogus, good]) == [bogus], broken([bogus, good])
+        assert broken([good]) == [], broken([good])
     print("ok")
 
 
