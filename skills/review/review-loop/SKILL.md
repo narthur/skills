@@ -313,11 +313,20 @@ A 50-79 confidence score means *you* aren't sure, not necessarily that the *user
 Before asking, classify each 50-79 finding on three dimensions. A finding goes to **auto-fix** when ALL of the following are low-risk; otherwise it goes to **ask-user**.
 
 The three dimensions — **reversibility**, **blast radius**, **forward-binding** — and the three hard rules that override the matrix are in **`references/scoring-and-routing.md`**. Read it before classifying.
-**Bucket deterministically once each finding is classified.** After scoring (Step 6) and the risk classification above, assemble one JSON object per finding — `{id, agent, score, risk: "low"|"high", always_ask: bool}`, with `agent` set to the exact ids the script matches (`7-structural`, `9-intent`, `5-security`, `5-security-authz`; anything else routes as an ordinary finding) — and route them with:
+**Bucket deterministically once each finding is classified.** After scoring (Step 6) and the risk classification above, assemble one JSON object per finding — `{id, agent, score, risk: "low"|"high", always_ask: bool, cost_recurrence, category, behavioral, observed_failure}`, with `agent` set to the exact ids the script matches (`7-structural`, `9-intent`, `5-security`, `5-security-authz`; anything else routes as an ordinary finding) — and route them with:
 
 ```bash
 echo '<findings-json>' | python3 ~/.claude/skills/review-loop/bucket.py
 ```
+
+**Four fields beyond the score, each closing a measured miscalibration:**
+
+- **`cost_recurrence`: `"once"` | `"per-use"` | `"per-item"`.** Is the consequence paid once, or every time the system is used / per item it handles? Answer it about the *consequence*, never about the size of the fix. A recurring cost is never skipped on a low score — it floors to ask, because you are reading a diff and the diff cannot show you how often the operation runs. This exists because a cache-key change that re-rendered every prior artifact on each new opt-in was filed as a wording nit: one line, one file, soften the prose. The real cost was ~70 minutes of CI per rollout. An unrecognised value is **refused**, not defaulted — a typo must not buy the cheaper routing.
+- **`category`.** Set `"comment-accuracy"` for "this comment claims more than the code does". Counted apart from defects in the record and the report, because it is legitimate work but not defect-finding, and merging them makes a run look more productive than it was. **`"comment-accuracy"` together with a recurring `cost_recurrence` is refused as a contradiction** — a cost paid on every use is not a wording problem, and that pairing is precisely the mistake above. Decide which it is.
+- **`behavioral`: bool** — does the finding claim the program behaves wrongly, as opposed to being unclear, duplicated or badly named?
+- **`observed_failure`: string** — for a `behavioral` finding, *the failure you watched happen before the fix existed*. A behavioral claim without one never auto-applies. One run "fixed" CRLF handling with a regex that already worked, and its verification, run only afterwards, passed exactly as it would have without the fix. **Construct the failing case and watch it fail first; a check that never saw the failure cannot tell a fix from a no-op.**
+
+A contradiction refuses the whole batch, not just the offending finding — the one you described incorrectly is the one most worth looking at again.
 
 It emits `{auto_fix, ask, skip}` applying the exact thresholds (≥80 → auto; 50-79 low-risk → auto, else ask; Agent #7/#9 and `always_ask` → ask at ≥40, report-only below; <50 → skip) so the routing can't drift between runs. The judgment stays yours — the *score* (Step 6) and the *risk* and *always_ask* flags (this step) — the script only combines them.
 
