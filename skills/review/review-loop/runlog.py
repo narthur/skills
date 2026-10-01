@@ -279,8 +279,13 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     broken = [g for g, v in executed.items()
               if isinstance(v, dict) and v.get("status") not in ("done", "n/a")
               and (planned is None or g in planned)]
+    # "done" and "ok" are the same claim. Gates say `done`, so a caller writing the
+    # agent roster reaches for `done` too — and counted every successful agent as a
+    # failure, forcing `partial` on a run where nothing failed. An over-reported
+    # `partial` is still a false record, and it teaches the next reader that partial
+    # is normal. Accept both words rather than legislating one.
     broken += [x.get("id", "?") for x in agents
-               if isinstance(x, dict) and x.get("status") not in ("ok", None)]
+               if isinstance(x, dict) and x.get("status") not in ("ok", "done", None)]
     if broken and claimed != "partial":
         print(f"runlog: recording tier `partial`, not {claimed!r} — did not complete: "
               f"{', '.join(broken)}", file=sys.stderr)
@@ -516,7 +521,9 @@ def main():
     sf.add_argument("--tier", choices=[t for t in TIERS if t != "carried"])
     sf.add_argument("--executed", help='JSON: {"<gate>":{"status":"done"|"skipped"|"failed","reason":"..."}}')
     sf.add_argument("--escalations", help='JSON list of {"gate":..,"reason":..}')
-    sf.add_argument("--agents", help='JSON list of {"id":..,"model":..,"status":..,"findings":N}')
+    sf.add_argument("--agents",
+                    help='JSON list of {"id":..,"model":..,"status":"done"|"ok"|"failed",'
+                         '"findings":N} — anything but done/ok makes the run partial')
     sf.add_argument("--findings", help='JSON: {"auto_fix":N,"asked":N,"skipped":N}')
     sf.add_argument("--asks", type=int, default=0, help="unresolved ask-bucket items")
     sf.add_argument("--allow-unaccounted", action="store_true",

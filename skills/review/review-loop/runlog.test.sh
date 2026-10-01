@@ -135,6 +135,23 @@ rid5=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 "$PY" runlog.py show --run-id "$rid5" | grep -q '"tier_executed": "partial"' \
 	&& ok "a failed agent forces tier partial" || bad "a failed agent forces tier partial"
 
+# The other half, which nothing checked: a run where every agent SUCCEEDED must not
+# be partial. Gates say `done`, so a caller writing the agent roster reaches for
+# `done` too — and only `ok` was accepted, so five successful agents were counted as
+# failures and the run recorded `partial`. Over-reporting partial is still a false
+# record, and it teaches the next reader that partial is normal. Both words, because
+# both are in use.
+for word in ok done; do
+	rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+	"$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
+		--executed '{"threat_model":{"status":"done"}}' \
+		--agents "[{\"id\":\"2-bugs\",\"status\":\"$word\"}]" >/dev/null 2>&1
+	shown=$("$PY" runlog.py show --run-id "$rid")
+	grep -q '"tier_executed": "full"' <<<"$shown" \
+		&& ok "an agent marked '$word' is a success, not a failure" \
+		|| bad "an agent marked '$word' is a success, not a failure (got: $(grep tier_executed <<<"$shown"))"
+done
+
 # A deliberate skip is one complete row, not a second store to consult.
 sk=$("$PY" runlog.py skipped --reason "docs-only, 4 lines, gitleaks clean")
 "$PY" runlog.py show --run-id "$sk" | grep -q '"outcome": "skipped"' \
