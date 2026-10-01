@@ -180,7 +180,13 @@ def reasons_in(rec):
         if isinstance(v, dict) and v.get("planned") == "skip":
             out.append((f"gate {gate!r} as skip", v.get("reason")))
     for gate, v in (rec.get("executed") or {}).items():
-        if isinstance(v, dict) and v.get("status") in ("skipped", "failed"):
+        # The exact complement of the test cmd_finish uses to DEMAND a reason, so every
+        # status that owes one gets it vetted. Listing statuses here instead went stale
+        # the moment `n/a` was added: cmd_finish demanded an n/a reason, nothing checked
+        # it, and `n/a` became the one status whose reason could cite precedent. Worse,
+        # it is the strongest claim in the vocabulary ("this gate cannot apply here")
+        # and so the one most worth checking.
+        if isinstance(v, dict) and v.get("status") != "done":
             out.append((f"gate {gate!r} as {v.get('status')}", v.get("reason")))
     for e in rec.get("escalations") or []:
         if isinstance(e, dict):
@@ -314,14 +320,21 @@ def cmd_finish(a):
     escalations = parse_json_arg(a.escalations, "escalations") or []
     plan = plan_of(a.run_id)  # one read, shared by everything derived below
     planned = planned_gates(plan)
+    # A non-dict value is malformed, not an account. `{"gate": "done"}` — the natural
+    # typo for the documented `{"gate": {"status": "done"}}` — slipped past every
+    # isinstance guard here and in derive_tier, so it recorded `full` while
+    # review-stats read the gate as dropped: the row and the reader disagreeing about
+    # the same run. Refusing it is one clause; widening three guards is not.
     unexplained = sorted(g for g, v in executed.items()
-                         if isinstance(v, dict) and v.get("status") != "done"
+                         if not isinstance(v, dict)
                          # n/a still needs its why — "there is no PR" is the reason.
-                         and not (v.get("reason") or "").strip())
+                         or (v.get("status") != "done"
+                             and not (v.get("reason") or "").strip()))
     if unexplained:
         sys.exit(
-            "runlog: refusing to finish — these gates are recorded as not done with no "
-            f"reason:\n  {', '.join(unexplained)}\n"
+            "runlog: refusing to finish — these gates carry no usable account (a status "
+            'other than "done" with no reason, or not a {"status":..,"reason":..} object '
+            f"at all):\n  {', '.join(unexplained)}\n"
             "A status says what happened; the reason is the part anyone reading this "
             "later actually needs. Give each one a measurable reason."
         )

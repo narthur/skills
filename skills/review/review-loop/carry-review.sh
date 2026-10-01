@@ -80,9 +80,11 @@ cap() {
 # --verbatim. (No hash quoted: a patch-id covers the file name and surrounding
 # context too, so the value is a property of the fixture, not of the pair of lines.)
 #
-# --verbatim changes exactly that one thing. It still drops the `@@ ... @@` line and
-# the `index <old>..<new>` line, so a rebase that only moved the hunk's offsets still
-# matches — the whole case this feature exists for. On git < 2.39 the flag is
+# For a text diff --verbatim changes exactly that one thing: it still drops the
+# `@@ ... @@` line and the `index <old>..<new>` line, so a rebase that only moved the
+# hunk's offsets still matches — the whole case this feature exists for. A binary diff
+# has neither line; git >= 2.39 hashes the blob oids instead, which is stricter rather
+# than looser (a clean rebase preserves the oids, so the carry still works). On git < 2.39 the flag is
 # unrecognised: rc 129 and empty stdout, so the id is empty and the caller refuses.
 # Fail closed.
 patch_id() {

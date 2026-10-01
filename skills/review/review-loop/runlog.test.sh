@@ -73,6 +73,43 @@ printf '{"run_id":"broke' >> "$REVIEW_LOOP_RUNS"
 "$PY" runlog.py show --run-id "$rid" >/dev/null 2>&1 \
 	&& ok "torn line tolerated" || bad "torn line tolerated"
 
+# A malformed executed entry is not an account. `{"gate":"done"}` — the natural typo
+# for `{"gate":{"status":"done"}}` — passed every isinstance guard and recorded `full`
+# while review-stats.py read the same gate as dropped.
+rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+out=$("$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
+	--executed '{"threat_model":"done"}' 2>&1)
+shown=$("$PY" runlog.py show --run-id "$rid" 2>/dev/null)
+if [ -n "$out" ] && ! grep -q '"tier_executed"' <<<"$shown"; then
+	ok "a non-object executed entry is refused, and nothing is written"
+else
+	bad "a non-object executed entry is refused, and nothing is written"
+fi
+
+# `n/a` was the one status whose reason escaped the precedent ban: cmd_finish demanded
+# a reason for it, nothing vetted that reason, and `n/a` also suppresses both the
+# partial tier and the alarm — so the strongest claim in the vocabulary ("this gate
+# cannot apply here") was the cheapest to make. The same reason must be refused under
+# every status that owes one, not just the two that were listed.
+for st in skipped failed "n/a"; do
+	rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+	out=$("$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
+		--executed "{\"threat_model\":{\"status\":\"$st\",\"reason\":\"matches an existing pattern in the repo\"}}" 2>&1)
+	# Refused BEFORE writing: a rejected reason must leave no finish row behind.
+	shown=$("$PY" runlog.py show --run-id "$rid" 2>/dev/null)
+	if grep -qi precedent <<<"$out" && ! grep -q '"tier_executed"' <<<"$shown"; then
+		ok "a precedent reason is refused under status '$st', and nothing is written"
+	else
+		bad "a precedent reason is refused under status '$st', and nothing is written"
+	fi
+done
+# The complement: a measurable n/a reason is exactly what the status is for.
+rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"n/a","reason":"no attacker-reachable surface in this repo"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$rid" | grep -q '"tier_executed": "full"' \
+	&& ok "a measurable n/a reason records full" || bad "a measurable n/a reason records full"
+
 # Alarm fires on the third non-completion, not the second.
 export REVIEW_LOOP_RUNS="$TMP/alarm.jsonl"
 for _ in 1 2; do
