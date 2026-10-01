@@ -52,14 +52,39 @@ def citations(text, marker=None):
     return pinned, unpinned
 
 
+def resolvable(sha):
+    """Does this sha name a commit in this repo? Distinguishes 'fresh' from 'uncheckable'."""
+    try:
+        p = subprocess.run(["git", "cat-file", "-e", f"{sha}^{{commit}}"],
+                           capture_output=True, text=True, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return p.returncode == 0
+
+
 def stale(pinned):
-    """Those whose cited file moved since the pin, each with the commits that moved it."""
+    """Those whose cited file moved since the pin, each with the commits that moved it.
+
+    Only pins that can actually be checked. `git()` returns "" on failure and an empty
+    log is also "", so an unresolvable sha — a typo, a rebased-away commit, a sha from
+    another repo — used to read as "nothing touched it" and so stayed fresh forever,
+    while still counting as pinned and therefore staying out of `unpinned` too. That is
+    worse than no pin at all: it looks checked and is unwatched. Those come back from
+    `broken()` instead.
+    """
     out = []
     for c in pinned:
+        if not resolvable(c["sha"]):
+            continue
         touched = git("log", "--oneline", f"{c['sha']}..HEAD", "--", c["path"])
         if touched:
             out.append({**c, "commits": touched.splitlines()})
     return out
+
+
+def broken(pinned):
+    """Pins whose sha does not name a commit here, so staleness can never be computed."""
+    return [c for c in pinned if not resolvable(c["sha"])]
 
 
 def _selftest():

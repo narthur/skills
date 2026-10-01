@@ -11,6 +11,16 @@ fails=0
 ok() { echo "  ok  $1"; }
 bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
 
+# Isolated from the first invocation, not from line 133. Every plan() and sem() call below
+# ran against the ambient store, with --dry-run the only thing keeping them out of the real
+# ~/.claude/review-loop/runs.jsonl — and "--dry-run records nothing" is the last check in
+# this file, against a different store. So a --dry-run regression polluted the production
+# record on every test run before the suite said a word. The record already holds run
+# 00b3f14d771e, a test that leaked in exactly this way.
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/plan-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
+trap 'rm -rf "$TMP"' EXIT
+export REVIEW_LOOP_RUNS="$TMP/ambient.jsonl"
+
 # $1 changed_lines, $2 fast_eligible, $3.. plan.py flags -> plan JSON
 plan() {
 	local lines=$1 fast=$2; shift 2
@@ -127,8 +137,6 @@ sys.exit(1 if missing else 0)
 # record somewhere harmless — without the override it writes a junk row into the
 # real store on every test run, which is exactly the pollution the record exists
 # to stay free of.
-TMP=$(mktemp -d "${TMPDIR:-/tmp}/plan-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
-trap 'rm -rf "$TMP"' EXIT
 full=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
 	| REVIEW_LOOP_RUNS="$TMP/runs.jsonl" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null)
 last=$(tail -1 <<<"$full")
@@ -148,16 +156,22 @@ row=$(REVIEW_LOOP_RUNS="$store" "$PY" runlog.py show --run-id "$rid" 2>/dev/null
 "$PY" -c '
 import json, sys
 d = json.load(sys.stdin)
-bad = [k for k, want in (("changed_lines", 900), ("semantic_lines", 10)) if d.get(k) != want]
-if not (d.get("sizing_excluded") or "").strip():
-    bad.append("sizing_excluded")
+bad = [k for k, want in (("changed_lines", 900), ("semantic_lines", 10),
+                         ("agent_cap", 40)) if d.get(k) != want]
+# tier_reason was asserted only from the PRINTOUT above, and plan.py passed no
+# --tier-reason, so the key never existed in the row — the same bug shape in the same
+# block that exists to pin it. Run faafc47dcd29 recorded tier_reason null beside
+# semantic_lines 1508.
+for k in ("sizing_excluded", "tier_reason"):
+    if not (d.get(k) or "").strip():
+        bad.append(k)
 # SystemExit("") still exits 1 — an empty "nothing missing" string reads as failure.
 raise SystemExit(", ".join(bad) if bad else 0)' <<<"$row" \
 	&& ok "the sizing decision reaches the persisted record, not just the printout" \
 	|| bad "the sizing decision reaches the persisted record, not just the printout (missing: $("$PY" -c '
 import json,sys
 d=json.load(sys.stdin)
-print(", ".join([k for k,w in (("changed_lines",900),("semantic_lines",10)) if d.get(k)!=w] + ([] if (d.get("sizing_excluded") or "").strip() else ["sizing_excluded"])))' <<<"$row"))"
+print(", ".join([k for k,w in (("changed_lines",900),("semantic_lines",10),("agent_cap",40)) if d.get(k)!=w] + [k for k in ("sizing_excluded","tier_reason") if not (d.get(k) or "").strip()]))' <<<"$row"))"
 
 # A missing context file is a normal mistake, not a stack trace.
 err=$("$PY" plan.py --context /nonexistent-context.json --model test $BOOLS_OFF 2>&1)
@@ -169,7 +183,7 @@ grep -q "context.sh" <<<"$err" && ok "and says how to fix it" || bad "and says h
 export REVIEW_LOOP_RUNS="$TMP/dryrun.jsonl"
 plan 10 true $BOOLS_OFF >/dev/null
 [ ! -e "$REVIEW_LOOP_RUNS" ] && ok "--dry-run records nothing" || bad "--dry-run records nothing"
-unset REVIEW_LOOP_RUNS
+export REVIEW_LOOP_RUNS="$TMP/ambient.jsonl"
 
 echo
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"

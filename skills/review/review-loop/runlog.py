@@ -383,6 +383,9 @@ def cmd_plan(a):
         "agent_cap": a.agent_cap,
         "semantic_lines": a.semantic_lines,
         "sizing_excluded": a.sizing_excluded,
+        # Recorded, not just printed: plan.py computed this and dropped it on the way to
+        # the record, so the one field saying WHY a tier was chosen was null on every run.
+        "tier_reason": a.tier_reason,
     }
     append(rec)
     print(rec["run_id"])
@@ -809,6 +812,7 @@ def main():
     # the only thing stopping the loop. Cumulative agent invocations, because cycle
     # count stopped being a cost unit the moment fan-out width became variable: one
     # cycle may be 30 agents over 50 files and the next a single agent on a few lines.
+    sp.add_argument("--tier-reason", help="why the plan landed on this floor (vetted like every reason)")
     sp.add_argument("--agent-cap", type=int, default=DEFAULT_AGENT_CAP,
                     help=f"cumulative agent budget for the run (default {DEFAULT_AGENT_CAP}); "
                          "hitting it records `capped`, which permits a push WITH disclosure")

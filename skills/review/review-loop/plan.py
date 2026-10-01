@@ -28,6 +28,10 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+# Imported, not restated: the cap only means anything if the number the plan prints for the
+# orchestrator and the number convergence() measures against are the same one.
+import runlog  # noqa: E402
 
 STRUCTURAL_LINES = 150  # Agent #7's "substantial diff" floor, per SKILL.md
 BIG_FILE_LINES = 800
@@ -206,6 +210,13 @@ def build(ctx, a):
     return {
         "tier_floor": tier,
         "tier_reason": tier_reason,
+        # The budget the loop stops at, in cumulative agent invocations. Cycles are the
+        # wrong unit: one cycle can be a 30-agent fan-out over 50 files and the next a
+        # single agent on a few lines. Printed in the plan because a cap nothing tells the
+        # orchestrator about is a cap that bounds nothing — it was reachable only as an
+        # argparse default, and with 6-10 agents per cycle the real bound stayed
+        # `max_cycles = 3`, which three cycles never exceed. So `capped` was unreachable.
+        "agent_cap": runlog.DEFAULT_AGENT_CAP,
         "changed_lines": changed,
         "semantic_lines": semantic,
         "sizing_excluded": excluded,
@@ -285,6 +296,8 @@ def main():
         "--changed-lines", str(plan["changed_lines"]),
         "--semantic-lines", str(plan["semantic_lines"]),
         "--sizing-excluded", plan["sizing_excluded"] or "",
+        "--tier-reason", plan["tier_reason"] or "",
+        "--agent-cap", str(plan["agent_cap"]),
         "--inputs", json.dumps(plan["inputs"]),
         "--gates", json.dumps(plan["gates"]),
     ], capture_output=True, text=True, check=False)

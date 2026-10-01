@@ -67,14 +67,34 @@ def _validate(f):
 
     An unrecognised cost_recurrence must not fall back to "once": a typo would silently
     buy the cheaper routing, which is the whole failure mode this field exists to close.
+    Absence is refused on the same grounds. Exempting it ran the asymmetry the wrong way —
+    a typo was refused while an omission, which is what a serializer emits for a field the
+    agent never filled in, routed as `once` and bought exactly the cheap routing the
+    refusal exists to deny. SKILL.md Step 8a lists the field as required; this is the only
+    thing that reads it.
     """
     rec = f.get("cost_recurrence")
-    if rec is not None and rec not in RECURRENCE:
+    if rec not in RECURRENCE:
         raise Contradiction(
             f"finding {f.get('id', '?')!r}: cost_recurrence {rec!r} is not one of "
-            f"{', '.join(RECURRENCE)} — a value we cannot read must not default to the cheapest"
+            f"{', '.join(RECURRENCE)} — a value we cannot read must not default to the "
+            "cheapest, and neither may a missing one"
         )
-    if rec in RECURRING and f.get("category") == "comment-accuracy":
+    # A non-string observed_failure took the whole batch down with an AttributeError from
+    # route()'s .strip(), instead of the designed refusal — so the type is checked here,
+    # where a bad finding is refused by name.
+    obs = f.get("observed_failure")
+    if obs is not None and not isinstance(obs, str):
+        raise Contradiction(
+            f"finding {f.get('id', '?')!r}: observed_failure must be the text of the failure "
+            f"you watched, not {type(obs).__name__} — `true` is a claim, not an observation"
+        )
+    if rec in RECURRING and (f.get("category") == "comment-accuracy"
+                             # The comments agent implies the category. Without this, the
+                             # Bands finding refiled as agent '4-comments' with no category
+                             # key escaped the refusal entirely, which is the shape it came
+                             # in as the first time.
+                             or f.get("agent", "").endswith("-comments")):
         raise Contradiction(
             f"finding {f.get('id', '?')!r}: category 'comment-accuracy' with cost_recurrence "
             f"{rec!r} is a contradiction. A cost paid on every use is not a wording problem. "
@@ -138,42 +158,47 @@ def main_bucket(findings):
 
 
 def _selftest():
-    assert route({"agent": "2-bugs", "score": 85})[0] == "auto_fix"
-    assert route({"agent": "2-bugs", "score": 60, "risk": "low"})[0] == "auto_fix"
-    assert route({"agent": "2-bugs", "score": 60, "risk": "high"})[0] == "ask"
-    assert route({"agent": "2-bugs", "score": 60})[0] == "ask"          # missing risk -> ask
-    assert route({"agent": "2-bugs", "score": 40})[0] == "skip"
-    assert route({"agent": "7-structural", "score": 95})[0] == "ask"    # overrides >=80
-    assert route({"agent": "9-intent", "score": 90})[0] == "ask"
-    assert route({"agent": "2-bugs", "score": 90, "always_ask": True})[0] == "ask"
+    assert route({"agent": "2-bugs", "score": 85, "cost_recurrence": "once"})[0] == "auto_fix"
+    assert route({"agent": "2-bugs", "score": 60, "risk": "low", "cost_recurrence": "once"})[0] == "auto_fix"
+    assert route({"agent": "2-bugs", "score": 60, "risk": "high", "cost_recurrence": "once"})[0] == "ask"
+    assert route({"agent": "2-bugs", "score": 60, "cost_recurrence": "once"})[0] == "ask"          # missing risk -> ask
+    assert route({"agent": "2-bugs", "score": 40, "cost_recurrence": "once"})[0] == "skip"
+    assert route({"agent": "7-structural", "score": 95, "cost_recurrence": "once"})[0] == "ask"    # overrides >=80
+    assert route({"agent": "9-intent", "score": 90, "cost_recurrence": "once"})[0] == "ask"
+    assert route({"agent": "2-bugs", "score": 90, "always_ask": True, "cost_recurrence": "once"})[0] == "ask"
     # Always-ask floor: low-value proposals are report-only, not interruptions.
-    assert route({"agent": "7-structural", "score": 0})[0] == "skip"
-    assert route({"agent": "7-structural", "score": 39})[0] == "skip"
-    assert route({"agent": "7-structural", "score": 40})[0] == "ask"
-    assert route({"agent": "9-intent", "score": 28})[0] == "skip"
-    assert route({"agent": "2-bugs", "score": 20, "always_ask": True})[0] == "skip"
+    assert route({"agent": "7-structural", "score": 0, "cost_recurrence": "once"})[0] == "skip"
+    assert route({"agent": "7-structural", "score": 39, "cost_recurrence": "once"})[0] == "skip"
+    assert route({"agent": "7-structural", "score": 40, "cost_recurrence": "once"})[0] == "ask"
+    assert route({"agent": "9-intent", "score": 28, "cost_recurrence": "once"})[0] == "skip"
+    assert route({"agent": "2-bugs", "score": 20, "always_ask": True, "cost_recurrence": "once"})[0] == "skip"
     # Security: no 50-79 band — sub-80 is report-only, never an interruption.
-    assert route({"agent": "5-security", "score": 70, "risk": "low"})[0] == "skip"
-    assert route({"agent": "5-security", "score": 60, "risk": "high"})[0] == "skip"
-    assert route({"agent": "5-security", "score": 80, "risk": "low"})[0] == "auto_fix"
+    assert route({"agent": "5-security", "score": 70, "risk": "low", "cost_recurrence": "once"})[0] == "skip"
+    assert route({"agent": "5-security", "score": 60, "risk": "high", "cost_recurrence": "once"})[0] == "skip"
+    assert route({"agent": "5-security", "score": 80, "risk": "low", "cost_recurrence": "once"})[0] == "auto_fix"
     # Authz always asks above the floor, and is still floored below it.
-    assert route({"agent": "5-security-authz", "score": 100, "risk": "low"})[0] == "ask"
-    assert route({"agent": "5-security-authz", "score": 70})[0] == "skip"
+    assert route({"agent": "5-security-authz", "score": 100, "risk": "low", "cost_recurrence": "once"})[0] == "ask"
+    assert route({"agent": "5-security-authz", "score": 70, "cost_recurrence": "once"})[0] == "skip"
 
     # --- cost_recurrence: a recurring cost is never skipped on score alone.
     assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "per-item"})[0] == "ask"
     assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "per-use"})[0] == "ask"
     assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "once"})[0] == "skip"
-    assert route({"agent": "2-bugs", "score": 20})[0] == "skip"
+    assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "once"})[0] == "skip"
     # It floors, never ceilings: high confidence still auto-fixes.
     assert route({"agent": "2-bugs", "score": 85, "cost_recurrence": "per-item"})[0] == "auto_fix"
     # And it overrides neither always-ask nor the security floor.
     assert route({"agent": "7-structural", "score": 10, "cost_recurrence": "per-item"})[0] == "skip"
     assert route({"agent": "5-security", "score": 70, "cost_recurrence": "per-item"})[0] == "skip"
-    # An unreadable value must NOT fall back to the cheapest routing.
-    for bogus in ("per_item", "peritem", "PER-ITEM", "recurring", ""):
+    # An unreadable value must NOT fall back to the cheapest routing — and neither may a
+    # missing one. Omission was exempt, so a typo was refused while the far likelier
+    # omission bought the cheap routing the refusal exists to deny.
+    for bogus in ("per_item", "peritem", "PER-ITEM", "recurring", "", None):
+        f = {"agent": "2-bugs", "score": 20}
+        if bogus is not None:
+            f["cost_recurrence"] = bogus
         try:
-            route({"agent": "2-bugs", "score": 20, "cost_recurrence": bogus})
+            route(f)
         except Contradiction:
             pass
         else:
@@ -191,18 +216,53 @@ def _selftest():
     # A comment-accuracy finding whose cost really is one-off is perfectly normal.
     assert route({"agent": "4-comments", "score": 30, "category": "comment-accuracy",
                   "cost_recurrence": "once"})[0] == "skip"
-    assert route({"agent": "4-comments", "score": 85, "category": "comment-accuracy"})[0] == "auto_fix"
+    assert route({"agent": "4-comments", "score": 85, "category": "comment-accuracy", "cost_recurrence": "once"})[0] == "auto_fix"
 
     # --- behavioral claims need the failure observed, not a check that passed after.
-    assert route({"agent": "2-bugs", "score": 95, "behavioral": True})[0] == "ask"
+    assert route({"agent": "2-bugs", "score": 95, "behavioral": True, "cost_recurrence": "once"})[0] == "ask"
     assert route({"agent": "2-bugs", "score": 95, "behavioral": True,
-                  "observed_failure": "   "})[0] == "ask"      # whitespace is not evidence
+                  "observed_failure": "   ", "cost_recurrence": "once"})[0] == "ask"      # whitespace is not evidence
     assert route({"agent": "2-bugs", "score": 95, "behavioral": True,
-                  "observed_failure": "node -e showed $ matching before CRLF"})[0] == "auto_fix"
+                  "observed_failure": "node -e showed $ matching before CRLF", "cost_recurrence": "once"})[0] == "auto_fix"
     # Non-behavioral findings are unaffected: a typo fix owes no failing case.
-    assert route({"agent": "4-comments", "score": 95})[0] == "auto_fix"
+    assert route({"agent": "4-comments", "score": 95, "cost_recurrence": "once"})[0] == "auto_fix"
     # The security floor still outranks it.
-    assert route({"agent": "5-security", "score": 70, "behavioral": True})[0] == "skip"
+    assert route({"agent": "5-security", "score": 70, "behavioral": True, "cost_recurrence": "once"})[0] == "skip"
+    # A non-string observed_failure is a refusal by name, not an AttributeError that takes
+    # the whole batch down with a traceback.
+    for bad in (True, 123, ["seen it"]):
+        try:
+            route({"agent": "2-bugs", "score": 95, "behavioral": True,
+                   "cost_recurrence": "once", "observed_failure": bad})
+        except Contradiction:
+            pass
+        else:
+            raise AssertionError(f"observed_failure {bad!r} should be refused")
+
+    # --- the comments agent implies the category, so the Bands shape cannot escape by
+    # --- omitting `category`.
+    for rec in ("per-use", "per-item"):
+        try:
+            route({"agent": "4-comments", "score": 30, "cost_recurrence": rec})
+        except Contradiction:
+            pass
+        else:
+            raise AssertionError(f"4-comments + {rec} with no category should be refused")
+
+    # --- main_bucket: the refusal's blast radius. Dropping just the bad finding would
+    # --- quietly lose the one the agent described incorrectly, which is the one most worth
+    # --- a second look — so the whole batch is refused. Untested until now, so returning an
+    # --- empty batch with exit 0 passed this selftest.
+    clean = [{"agent": "2-bugs", "score": 85, "cost_recurrence": "once"},
+             {"agent": "2-bugs", "score": 20, "cost_recurrence": "once"}]
+    got = main_bucket(clean)
+    assert len(got["auto_fix"]) == 1 and len(got["skip"]) == 1, got
+    try:
+        main_bucket(clean + [{"agent": "2-bugs", "score": 20, "cost_recurrence": "per_item"}])
+    except SystemExit:
+        pass
+    else:
+        raise AssertionError("a contradictory finding must refuse the whole batch")
     print("ok")
 
 

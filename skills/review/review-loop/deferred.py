@@ -56,7 +56,13 @@ def entries(text):
     for n, raw in enumerate(text.splitlines(), 1):
         if MARKER in raw:
             out.append({"line": n, "text": [raw], "pins": []})
-        elif out:
+        elif out and raw.strip() and raw[:1].isspace():
+            # Continuation lines only: indented, non-blank. Appending every following line
+            # swallowed whatever came after the last entry — a footer, an HTML comment, a
+            # hand-added note — into that entry, so a citation down there became its pin.
+            # An unpinned entry then reported as pinned and dropped out of `unpinned`,
+            # inverting the one signal this module exists to surface, and pins.stale()
+            # watched the wrong file.
             out[-1]["text"].append(raw)
     for e in out:
         block = "\n".join(e["text"])
@@ -78,6 +84,8 @@ def report():
         return {"path": p, "exists": False, "entries": 0, "stale": [], "unpinned": []}
     es = entries(text)
     allpins = [c for e in es for c in e["pins"]]
+    def first(e):
+        return {"line": e["line"], "text": e["text"].splitlines()[0]}
     return {
         "path": p,
         "exists": True,
@@ -85,7 +93,15 @@ def report():
         "stale": pins.stale(allpins),
         # An entry with no pin can never be marked stale, so it survives the change
         # that invalidated it. Named, not just counted, because the fix is to pin it.
-        "unpinned": [{"line": e["line"], "text": e["text"].splitlines()[0]} for e in es if not e["pins"]],
+        "unpinned": [first(e) for e in es if not e["pins"]],
+        # A pin whose sha does not resolve here is worse than no pin: it looks checked and
+        # is unwatched, and it stays out of `unpinned` precisely because it has a pin.
+        "broken_pins": pins.broken(allpins),
+        # The Guard line answers "what would catch this if the grounding changes", and
+        # "none, because ..." is an answer. Unanswered is the one state that means the
+        # question was never asked — the same shape as a missing observed_failure, which
+        # this build made mechanical rather than leaving to prose.
+        "unguarded": [first(e) for e in es if "Guard" not in e["text"]],
     }
 
 
@@ -111,6 +127,27 @@ def _selftest():
     # A file with no entries is not an error.
     assert entries("# Deferred findings\n\nnothing yet\n") == []
     assert path().endswith(DEFERRED) or path() == ""
+
+    # Trailing text after the last entry is NOT part of it. Appending every following line
+    # swallowed a footer's citation into the last entry, so an entry with no pin of its own
+    # reported as pinned, dropped out of `unpinned`, and sent pins.stale() after the wrong
+    # file — the module's one signal, inverted.
+    trailing = (
+        "- DEFERRED 2026-10-01 (run abc123abc123): no pin on this one.\n"
+        "  Grounding: nothing uses it.\n"
+        "\n"
+        "<!-- last reviewed [docs/README.md:1 @ abc1234] -->\n"
+    )
+    es = entries(trailing)
+    assert len(es) == 1, es
+    assert es[0]["pins"] == [], f"a footer citation became the entry's pin: {es[0]['pins']}"
+    # An unindented line is not a continuation either, even without a blank line first.
+    es = entries("- DEFERRED x: a.\n  Grounding: b.\nfooter [a/b.ts:1 @ abc1234]\n")
+    assert es[0]["pins"] == [], es[0]["pins"]
+
+    # An unanswered Guard line is reported. "none, because ..." counts as answered.
+    es = entries("- DEFERRED x: a.\n  Grounding: b. [a/b.ts:1 @ abc1234]\n")
+    assert "Guard" not in es[0]["text"]
     print("ok")
 
 
