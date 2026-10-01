@@ -24,22 +24,47 @@ branch — which is "this is broken", not "we stopped looking".
 """
 import argparse
 import json
+import os
 import subprocess
 import sys
 
 # Plain import: the executed script's own directory is sys.path[0], and runlog is the
 # single definition of how convergence is derived. Restating the derivation here is how
 # the two would drift — the mistake this whole field exists to correct.
+import contextlib
+import importlib
+import io
+
 import runlog
 
 
-def decide(convergence, gate_state, unresolved_skip, branch, default_branch, upstream_exists):
+BROKEN_OUTCOMES = ("test-failure", "blocked", "abandoned")
+
+
+def decide(convergence, gate_state, unresolved_skip, branch, default_branch, upstream_exists,
+           outcome=None, undisclosed=None):
     """First failing check wins — mirrors Step 14 'When NOT to auto-push'.
 
     `convergence` is "converged", "capped", "halted", or None/"unknown" when the run
     recorded no cycles. Only "converged" needs no disclosure; everything else — None
     included, so omitting the cycle rows can never buy a silent push — pushes with one.
+
+    `outcome` and `undisclosed` are read from the record. They exist because moving
+    convergence into the record and then making convergence non-blocking left nothing
+    that blocks derived from the record at all — every remaining blocker was an
+    orchestrator-supplied flag, which is the shape `--clean-exit` was retired for.
     """
+    # "Stopped looking" is a disclosure; "it is broken" is a block. Removing --clean-exit
+    # deleted the only channel by which a Step 9 test failure reached this decision, and
+    # the replacement was never added: a run recorded test-failure with a failed gate was
+    # permitted with the reason "converged, evidence gate ok".
+    if outcome in BROKEN_OUTCOMES:
+        return False, f"run recorded {outcome} — broken, not merely unfinished"
+    # The disclosure is the entire consideration for which a capped run is allowed to
+    # push. Unverified, it was prose — and prose instructions to post the summary are the
+    # ones that get skipped, which is why pr-report.py is a script at all.
+    if undisclosed:
+        return False, undisclosed
     if gate_state == "blocked":
         return False, "evidence gate blocked or hit its restart cap"
     if unresolved_skip:
@@ -92,6 +117,35 @@ def _selftest():
     # A blocked gate outranks convergence either way, so an unconverged run cannot push
     # past a real blocker by virtue of being merely unfinished.
     assert decide("capped", "blocked", False, *ok)[0] is False
+    # A recorded broken outcome blocks, and outranks a converged review: the tree is the
+    # problem, not the review's completeness.
+    for bad in ("test-failure", "blocked", "abandoned"):
+        push, reason = decide("converged", "passed", False, *ok, outcome=bad)
+        assert push is False, bad
+        assert bad in reason, reason
+    assert decide("converged", "passed", False, *ok, outcome="clean")[0] is True
+    # An owed-but-unrecorded disclosure blocks, and says what to run.
+    push, reason = decide("capped", "passed", False, *ok, undisclosed="no disclosure recorded")
+    assert push is False and "no disclosure" in reason
+    # main() end to end against a real store — the claim "convergence is READ FROM THE
+    # RECORD" had no test, so defaulting conv to "converged" passed this selftest while
+    # emitting a silent unconverged push.
+    import tempfile
+    with tempfile.TemporaryDirectory() as td:
+        os.environ["REVIEW_LOOP_RUNS"] = os.path.join(td, "runs.jsonl")
+        importlib.reload(runlog)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["--branch", "feat/x", "--default-branch", "main", "--gate-state", "passed"])
+        got = json.loads(out.getvalue())
+        assert got["convergence"] == "unknown", got        # no --run-id is not converged
+        assert got["disclose"] and "UNKNOWN" in got["disclose"], got
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["--run-id", "nosuchrun", "--branch", "feat/x",
+                  "--default-branch", "main", "--gate-state", "passed"])
+        got = json.loads(out.getvalue())
+        assert got["convergence"] == "unknown", got        # absent from the store either
     print("ok")
 
 
@@ -114,8 +168,14 @@ def main(argv):
     if a.run_id:
         run = runlog.load(limit=None).get(a.run_id) or {}
         conv = runlog.convergence(run)
+    head = subprocess.run(["git", "-C", a.repo, "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=False).stdout.strip()
+    # Asked of runlog, not restated here: two definitions of "has this been disclosed"
+    # is the divergence that put "CAPPED at 11 of 8 agents" above a table showing 8.
+    undisclosed = runlog.disclosure_pending(run, head) if a.run_id else None
     push, reason = decide(conv, a.gate_state, a.unresolved_skip,
-                          a.branch, a.default_branch, _upstream_exists(a.repo))
+                          a.branch, a.default_branch, _upstream_exists(a.repo),
+                          outcome=run.get("outcome"), undisclosed=undisclosed)
     print(json.dumps({"push": push, "reason": reason,
                       "convergence": conv or "unknown",
                       "disclose": runlog.disclosure(conv, run)}))

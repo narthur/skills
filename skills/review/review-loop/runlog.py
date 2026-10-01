@@ -14,7 +14,9 @@ concurrency pattern; appending avoids repeating it here. Readers merge phases by
 run_id.
 
   runlog.py plan    --tier <floor> --model <m> [--base <b>] [--changed-lines <n>]
-                    [--inputs <json>] [--gates <json>] [--head <sha>] [--run-id <id>]
+                    [--semantic-lines <n>] [--sizing-excluded <t>] [--tier-reason <t>]
+                    [--agent-cap <n>] [--inputs <json>] [--gates <json>] [--head <sha>]
+                    [--run-id <id>]
   runlog.py finish  --run-id <id> --outcome <o> [--tier <t>] [--executed <json>]
                     [--escalations <json>] [--agents <json>] [--findings <json>] [--asks <n>]
                     [--allow-unaccounted]
@@ -23,6 +25,11 @@ run_id.
   runlog.py check   [--head <sha>] [--session <id>] [--force]   exit 1 on an unfinished run
   runlog.py nudge   --run-id <id>
   runlog.py abandon --run-id <id> --missing <text>
+  runlog.py cycle   --run-id <id> --n <k> --applied <n> --agents <n> [--asked <n>]
+                    [--defect-findings <n>] [--comment-findings <n>] [--analysis-changed]
+                    [--tokens <n>]
+  runlog.py convergence --run-id <id>              prints it; exit 0 only if converged
+  runlog.py disclosed --run-id <id> --where <w>    the disclosure reached a reader
   runlog.py show    --run-id <id>
 """
 import argparse
@@ -152,16 +159,23 @@ def load(limit=TAIL_LINES):
 
 
 def cycles_of(run):
-    """This run's cycles in order, one per n, last write winning.
+    """Every cycle this run recorded, in the order they were recorded.
 
-    Append-only means a corrected cycle row sits after the one it corrects, so later
-    wins; sorting by `n` rather than trusting file order keeps a re-recorded cycle in
-    its true place in the sequence.
+    One row per cycle that happened, no deduplication. This used to dedupe by `n`, last
+    write winning, on the theory that a corrected row sits after the one it corrects —
+    but nothing in the skill ever corrects a cycle row: loop step j2 writes once per
+    cycle, and the only thing that revisits an `n` is the Step 13 restart, which resets
+    the counter to 1. So the dedupe served a corrector that does not exist while
+    silently deleting the first pass of every restart from every derived answer.
+    Measured: a run that spent 40 agents across three rows counted 20 against its cap,
+    because the restart's `n=1` (5 agents) replaced the original `n=1` (20 agents).
+
+    It exists as a function rather than inline so that `convergence()`, `disclosure()`
+    and pr-report cannot read the list three different ways — which is exactly what had
+    happened: disclosure() read the raw list and the other two read this one, so one PR
+    comment reported "CAPPED at 11 of 8 agents" above a table showing 8.
     """
-    by_n = {}
-    for c in run.get("cycles") or []:
-        by_n[c.get("n")] = c
-    return [by_n[k] for k in sorted(by_n, key=lambda n: (n is None, n))]
+    return list(run.get("cycles") or [])
 
 
 def convergence(run):
@@ -179,10 +193,15 @@ def convergence(run):
     if not cy:
         return None
     last = cy[-1]
-    # Converged means the loop stopped because it had nothing left to apply — both
-    # halves, since the deterministic pass changing files is as much unfinished work as
-    # a non-empty auto-fix bucket.
-    if last.get("applied") == 0 and not last.get("analysis_changed"):
+    # Converged means the loop stopped with nothing left to do — all three halves. The
+    # deterministic pass changing files is as much unfinished work as a non-empty
+    # auto-fix bucket, and so is the ask bucket: a cycle that routed every finding to
+    # the user and resolved none of them has not run out of findings, it has run out of
+    # things it may do unattended. Measured before this: cycle(applied=0, asked=7)
+    # derived `converged`, disclosure() returned None, push-check permitted the push
+    # with no disclosure, and the PR read "converged — nothing left to apply".
+    if (last.get("applied") == 0 and not last.get("asked")
+            and not last.get("analysis_changed")):
         return "converged"
     cap = run.get("agent_cap")
     spent = sum(c.get("agents") or 0 for c in cy)
@@ -203,7 +222,10 @@ def disclosure(conv, run):
     """
     if conv == "converged":
         return None
-    cy = (run or {}).get("cycles") or []
+    # cycles_of, not the raw list: reading it raw made this disagree with the derivation
+    # it exists to explain. Measured, one rendered comment said "CAPPED at 11 of 8
+    # agents: the last cycle applied 0 fix(es)" above a table whose last cycle applied 5.
+    cy = cycles_of(run or {})
     last = cy[-1] if cy else {}
     spent = sum(c.get("agents") or 0 for c in cy)
     cap = (run or {}).get("agent_cap")
@@ -213,14 +235,21 @@ def disclosure(conv, run):
     head = {"capped": f"Review CAPPED at {spent} of {cap} agents",
             "halted": f"Review HALTED after {len(cy)} cycle(s), {spent} agents"}[conv]
     return (f"{head}: the last cycle applied {last.get('applied', '?')} fix(es)"
+            + (f" and left {last['asked']} finding(s) awaiting a decision" if last.get("asked") else "")
             + (" and the deterministic pass still had unresolved findings" if last.get("analysis_changed") else "")
             + ". The loop had not stopped finding things — another cycle would likely find more.")
 
-CONVERGENCE = ("converged", "capped", "halted")
-# A ceiling, not a target. Set above where the hard cases actually settle: the two runs
-# that converged did so in 1-2 cycles, while the two that did not were still finding
-# real defects at 3 and 4 passes, so a ceiling that binds on every hard case is a stall
-# with extra steps. Overridable per run via --agent-cap.
+# All four states convergence() can report, "unknown" standing for None. Exported so
+# consumers key off this rather than restating the vocabulary: pr-report.py's labels used
+# to list all four independently while this tuple listed three, which is the divergence
+# the export exists to prevent.
+CONVERGENCE = ("converged", "capped", "halted", "unknown")
+# A ceiling, not a target. Set above where the hard cases actually settle: the record has
+# one run that converged within two cycles, against three that were still finding real
+# defects at three to four passes — so a ceiling that binds on every hard case is a stall
+# with extra steps. (An earlier version of this comment claimed "two runs converged in
+# 1-2 cycles" and "two did not, at 3 and 4 passes"; the record supports neither count.)
+# Overridable per run via --agent-cap.
 DEFAULT_AGENT_CAP = 40
 
 
@@ -276,7 +305,13 @@ def reasons_in(rec):
     for e in rec.get("escalations") or []:
         if isinstance(e, dict):
             out.append((f"escalation on {e.get('gate')!r}", e.get("reason")))
-    for key, label in (("abandoned_missing", "this abandonment"), ("skip_reason", "this skip")):
+    for key, label in (("abandoned_missing", "this abandonment"), ("skip_reason", "this skip"),
+                       # sizing_excluded justifies counting fewer lines, and fewer lines
+                       # buy a cheaper tier and skipped agents. It was the one free-text
+                       # field licensing reduced review that no check ever read, so it was
+                       # also the one place a precedent argument could still be written.
+                       ("sizing_excluded", "this sizing exclusion"),
+                       ("tier_reason", "this tier")):
         if rec.get(key):
             out.append((label, rec[key]))
     return out
@@ -301,6 +336,13 @@ PLANNED = ("run", "skip")
 
 
 def cmd_plan(a):
+    # A non-positive cap makes `capped` unreachable, so a genuinely out-of-budget run
+    # reports `halted` instead — the softer "we just stopped" label. A negative one makes
+    # every unconverged run report `capped`, which blames the budget for a loop that quit.
+    # Neither should be expressible.
+    if a.agent_cap is not None and a.agent_cap <= 0:
+        sys.exit(f"runlog: --agent-cap must be positive (got {a.agent_cap}) — a cap of zero "
+                 "or less cannot bind, it only changes which label a stall gets")
     gates = parse_json_arg(a.gates, "gates") or {}
     # planned_gates demands an account only for "run", so a gate whose planned value is
     # neither run nor skip was dropped silently AND escaped the reason ban. A plan is the
@@ -429,11 +471,27 @@ def cmd_cycle(a):
     """Record one completed cycle. This is what convergence is derived from.
 
     Append-only and one row per cycle, so the sequence survives: pass 4 of run
-    b480b45cc65d left no trace anywhere in that record, because the only place cycles
-    appeared was a free-form `agents` dict the orchestrator rewrote each time.
+    b480b45cc65d left no trace anywhere in that record, because cycles appeared only in
+    free-form fields the orchestrator rewrote each time — `agents`, `findings`, and gate
+    reasons in prose.
     """
     if not plan_of(a.run_id):
         sys.exit(f"runlog: no plan for run {a.run_id!r} — record the plan first")
+    # A cycle row appended after `finish` silently rewrites a convergence that has
+    # already been disclosed on a PR and already cleared a push. Measured: a finished
+    # `halted` run flipped to `converged` with disclose null and push true after one
+    # `cycle --applied 0 --agents 0`. That is the assertion path the derivation was
+    # built to remove, respelled — `--clean-exit` by another name. cmd_abandon already
+    # refuses on the same grounds; this is the same guard.
+    prior = load(limit=None).get(a.run_id) or {}
+    if prior.get("finished_at") or prior.get("outcome"):
+        sys.exit(f"runlog: run {a.run_id!r} is already finished — a cycle row appended now "
+                 "would change a convergence that has already been reported. Start a new run.")
+    for name, val in (("n", a.n), ("applied", a.applied), ("asked", a.asked),
+                      ("agents", a.agents), ("tokens", a.tokens)):
+        if val is not None and val < 0:
+            sys.exit(f"runlog: --{name} cannot be negative (got {val}) — a negative count "
+                     "pulls cumulative spend back under the cap")
     append({
         "run_id": a.run_id,
         "phase": "cycle",
@@ -528,7 +586,58 @@ def cmd_finish(a):
         print("runlog: WARNING — no cycle rows for this run, so convergence is unknown, "
               "which every consumer reads as 'did not converge'. Record each cycle with "
               "`runlog.py cycle`.", file=sys.stderr)
+    elif a.outcome == "clean" and conv != "converged":
+        # The derivation was added to displace the self-report; the self-report stayed.
+        # Run b480b45cc65d recorded `clean` for a run its own author says did not
+        # converge, and that exact record is still writable — so name the disagreement
+        # rather than printing both values side by side as if they agreed.
+        print(f"runlog: WARNING — outcome 'clean' but the cycle rows derive {conv!r}. "
+              "The derivation is what the PR and the push gate read; `clean` here is a "
+              "self-report that contradicts it. Record the missing cycle or fix the "
+              "outcome.", file=sys.stderr)
     print(f"runlog: finished {a.run_id} ({a.outcome}; convergence: {conv or 'unknown'})")
+
+
+def cmd_disclosed(a):
+    """Record that this run's disclosure actually reached a reader.
+
+    A capped or halted run is allowed to push on the condition that the PR says how far
+    it was reviewed. That condition was prose, and prose instructions to post the summary
+    are the ones that get skipped — the whole reason pr-report.py exists as a script. So
+    push-check refuses a non-converged push until this row exists for the current head,
+    which is what turns "not optional" into something a later reader can audit.
+
+    Written by pr-report.py, in both of its branches: posting to a PR and writing the
+    pending file both count, because on a fresh branch the push gate forces
+    loop-then-push-then-PR and there is no PR to post to yet. `where` says which.
+    """
+    if not plan_of(a.run_id):
+        sys.exit(f"runlog: no plan for run {a.run_id!r}")
+    append({
+        "run_id": a.run_id,
+        "phase": "disclosed",
+        "disclosed_at": now(),
+        "disclosed_where": a.where,
+        # Pinned to the commit, not just the run: a disclosure describing an earlier tip
+        # says nothing about what is being pushed now.
+        "disclosed_head": a.head or git("rev-parse", "HEAD"),
+    })
+    print(f"runlog: disclosure recorded for {a.run_id} ({a.where})", file=sys.stderr)
+    return 0
+
+
+def disclosure_pending(run, head):
+    """Why this run may not push yet, or None. Shared so push-check cannot restate it."""
+    conv = convergence(run)
+    if disclosure(conv, run) is None:
+        return None
+    if not run.get("disclosed_head"):
+        return (f"review derived {conv or 'unknown'}, which obliges the PR to say so, and no "
+                "disclosure has been recorded — run pr-report.py first")
+    if head and run["disclosed_head"] != head:
+        return (f"the recorded disclosure describes {run['disclosed_head'][:12]}, not the "
+                f"commit being pushed ({head[:12]}) — re-run pr-report.py")
+    return None
 
 
 def cmd_carried(a):
@@ -742,6 +851,12 @@ def main():
     sc.set_defaults(func=cmd_cycle)
 
     sv = sub.add_parser("convergence", help="print the DERIVED convergence; exit 0 only if converged")
+    sd = sub.add_parser("disclosed", help="record that the disclosure reached a PR or the pending file")
+    sd.add_argument("--run-id", required=True)
+    sd.add_argument("--where", required=True, help="where it landed, e.g. a PR url or the pending path")
+    sd.add_argument("--head", help="the commit it describes (default: HEAD)")
+    sd.set_defaults(func=cmd_disclosed)
+
     sv.add_argument("--run-id", required=True)
     sv.set_defaults(func=cmd_convergence)
 

@@ -163,7 +163,14 @@ printf 'const a = 1;\n' > "$r/a.js"
 g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
 printf 'const a = 2;\n' > "$r/a.js"
 g -C "$r" add -A && g -C "$r" commit -qm edit
+# origin/HEAD is a local symbolic ref, so base_branch still resolves to `main` while the
+# ref it names is gone. Pointing origin at a path that does not exist matters: without it
+# context.sh's own best-effort `git fetch origin main` recreates the ref and the fixture
+# never reaches the failing-git path — the check passed under the restored bug.
 g -C "$r" update-ref -d refs/remotes/origin/main
+g -C "$r" remote set-url origin "$TMP/gone.git"
+[ -z "$(g -C "$r" rev-parse --verify -q origin/main || true)" ] \
+	|| { echo "setup failed: noref fixture still has origin/main"; exit 1; }
 out=$(cd "$r" && "$SCRIPT" 2>/dev/null); rc=$?
 [ "$rc" -eq 0 ] && python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$out" >/dev/null \
 	&& ok "a missing origin/<base> ref still emits valid JSON" \

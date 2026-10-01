@@ -56,6 +56,20 @@ def sh(*args, repo="."):
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
+def cell(text):
+    """One free-text value, safe to drop into a markdown table cell or bullet.
+
+    Every reason in this report was written by an LLM into a record this script does not
+    own, and the report is posted as a PR comment — so a newline in a reason forges
+    document structure: a reason ending "\n\n> **Review converged**" renders as its own
+    blockquote and contradicts the disclosure three lines above it. Collapse the
+    structural characters, the same way record-skipped.sh collapses its tab and newline
+    delimiters before the store ever sees them.
+    """
+    flat = " ".join(str(text or "").split())
+    return flat.replace("|", "\\|")
+
+
 def render(run, run_id, conv, narrative):
     cycles = runlog.cycles_of(run)
     agents = sum(c.get("agents") or 0 for c in cycles)
@@ -89,7 +103,7 @@ def render(run, run_id, conv, narrative):
         if sem is not None and sem != raw:
             line += f", {sem} of review surface"
         if run.get("sizing_excluded"):
-            line += f" — excluded: {run['sizing_excluded']}"
+            line += f" — excluded: {cell(run['sizing_excluded'])}"
         out += [line, ""]
 
     if cycles:
@@ -109,26 +123,46 @@ def render(run, run_id, conv, narrative):
             pv = (gates.get(g) or {}).get("planned", "—") if isinstance(gates.get(g), dict) else "—"
             e = ex.get(g) if isinstance(ex.get(g), dict) else {}
             status = e.get("status", "**unreported**")
-            why = (e.get("reason") or (gates.get(g) or {}).get("reason") or "").replace("|", "\\|")
-            out.append(f"| `{g}` | {pv} | {status} | {why} |")
+            why = cell(e.get("reason") or (gates.get(g) or {}).get("reason") or "")
+            out.append(f"| `{g}` | {pv} | {cell(status)} | {why} |")
         out.append("")
 
     esc = run.get("escalations") or []
     if esc:
         out += ["### Escalated above the plan", ""]
-        out += [f"- `{e.get('gate')}` — {e.get('reason')}" for e in esc if isinstance(e, dict)]
+        out += [f"- `{e.get('gate')}` — {cell(e.get('reason'))}" for e in esc if isinstance(e, dict)]
         out.append("")
 
     roster = run.get("agents")
     if isinstance(roster, list) and roster:
         out += ["### Agents", ""]
-        out += [f"- `{a.get('id')}` ({a.get('model') or '?'}) — {a.get('status')}"
+        out += [f"- `{a.get('id')}` ({a.get('model') or '?'}) — {cell(a.get('status'))}"
                 f", {a.get('findings', '?')} finding(s)" for a in roster if isinstance(a, dict)]
         out.append("")
 
     if narrative:
         out += ["### Findings", "", narrative.strip(), ""]
     return "\n".join(out).rstrip() + "\n"
+
+
+def _disclosed(run_id, where, repo):
+    """Record that the disclosure reached a reader, pinned to the commit it describes.
+
+    This is the half that makes "a capped run may push, and the PR must say so" checkable:
+    push-check refuses a non-converged push until this row exists for the current head.
+    Written for the pending file as well as for a real PR, because on a fresh branch the
+    push gate forces loop-then-push-then-PR and there is no PR to post to yet.
+    """
+    head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"],
+                          capture_output=True, text=True, check=False).stdout.strip()
+    argv = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "runlog.py"),
+            "disclosed", "--run-id", run_id, "--where", where]
+    if head:
+        argv += ["--head", head]
+    try:
+        subprocess.run(argv, capture_output=True, text=True, check=False, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        print(f"pr-report: could not record the disclosure: {exc}", file=sys.stderr)
 
 
 def main(argv):
@@ -167,15 +201,26 @@ def main(argv):
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as fh:
             fh.write(body)
+        # The label block below is unreachable here — there is no PR to label — and this is
+        # the COMMON path, since the push gate forces loop-then-push-then-PR. So say the
+        # label is still owed, in the file Step 0c reads, rather than losing the
+        # at-a-glance signal on every fresh branch.
+        with open(path, "a", encoding="utf-8") as fh:
+            fh.write(f"\n<!-- review-loop: label review:{conv or 'unknown'} still owed; "
+                     f"Step 0c applies it with `pr-report.py --run-id {a.run_id} --label` -->\n")
+        _disclosed(a.run_id, path, a.repo)
         print(f"pr-report: no PR yet — deferred to {path} (Step 0c flushes it)", file=sys.stderr)
         return 0
 
     rc, _, err = sh("gh", "pr", "comment", num, "--body", body, repo=a.repo)
     if rc != 0:
-        # Never fail the run over a failed post; say so and let the report carry it.
+        # Never fail the run over a failed post; say so and let the report carry it. No
+        # disclosure is recorded in this branch: push-check then refuses a non-converged
+        # push, which is correct — the disclosure genuinely did not reach a reader.
         print(f"pr-report: comment failed on PR #{num}: {err}", file=sys.stderr)
     else:
         print(f"pr-report: posted to PR #{num}", file=sys.stderr)
+        _disclosed(a.run_id, f"PR #{num}", a.repo)
 
     if a.label:
         name, colour, desc = LABELS[conv or "unknown"]

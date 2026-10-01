@@ -144,12 +144,106 @@ r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 out=$("$PY" runlog.py finish --run-id "$r" --outcome clean --tier full --executed '{"threat_model":{"status":"done"}}' 2>&1)
 grep -q 'no cycle rows' <<<"$out" && ok "finish warns when convergence is unknowable" || bad "finish warns when convergence is unknowable"
 
-# A corrected cycle row supersedes the one it corrects, rather than double-counting.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 5 6; cy "$r" 1 0 2
+# Every recorded cycle counts against the budget, including a repeated `n`. Step 13 and
+# 13.5 restart the loop from cycle 1, so an `n` repeats on any run that restarts — and
+# deduping by `n` made the restart's row REPLACE the original, deleting its agents from
+# the only number the cap is measured against. Measured before the fix: 40 agents spent
+# across three rows counted 20 against a cap of 40.
+#
+# The previous check here asserted "a re-recorded cycle supersedes, last write winning"
+# by testing the raw row count (2 either way) and a convergence that read `converged`
+# under both behaviours, so it discriminated nothing.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" --agent-cap 10)
+cy "$r" 1 4 6; cy "$r" 2 2 3; cy "$r" 1 1 4   # restart repeats n=1; 13 agents of a 10 cap
 n=$("$PY" runlog.py show --run-id "$r" | "$PY" -c 'import json,sys; print(len(json.load(sys.stdin).get("cycles") or []))')
-[ "$(conv "$r")" = "converged" ] && [ "$n" = "2" ] \
-	&& ok "a re-recorded cycle supersedes, last write winning" || bad "a re-recorded cycle supersedes, last write winning (conv=$(conv "$r") rows=$n)"
+[ "$n" = "3" ] && ok "a restart's repeated cycle number is kept, not collapsed" \
+	|| bad "a restart's repeated cycle number is kept, not collapsed (rows=$n)"
+[ "$(conv "$r")" = "capped" ] && ok "and its agents count against the cap (13 of 10 = capped)" \
+	|| bad "and its agents count against the cap (got: $(conv "$r"))"
+"$PY" runlog.py show --run-id "$r" | "$PY" -c '
+import json, sys
+sys.path.insert(0, ".")
+import runlog
+run = json.load(sys.stdin)
+spent = sum(c.get("agents") or 0 for c in runlog.cycles_of(run))
+assert spent == 13, f"cycles_of dropped a row: {spent} agents, expected 13"
+# The disclosure must quote the same spend as the derivation it explains: reading the raw
+# list here while convergence() read the deduped one put "CAPPED at 11 of 8 agents" above
+# a table showing 8.
+assert "13 of 10" in runlog.disclosure("capped", run), runlog.disclosure("capped", run)
+' && ok "and the disclosure quotes the same spend as the derivation" \
+	|| bad "and the disclosure quotes the same spend as the derivation"
+
+# An ask-bucket-only cycle has not run out of findings. It applied nothing, so the old
+# test (`applied == 0`) read it as converged, which bought a push with no disclosure.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 0 --asked 7 --agents 6 >/dev/null 2>&1
+[ "$(conv "$r")" = "halted" ] && ok "a cycle that only asked has not converged" \
+	|| bad "a cycle that only asked has not converged (got: $(conv "$r"))"
+"$PY" -c '
+import sys; sys.path.insert(0, ".")
+import runlog
+d = runlog.disclosure("halted", {"cycles": [{"n": 1, "applied": 0, "asked": 7, "agents": 6}]})
+assert "7 finding(s) awaiting a decision" in d, d
+' && ok "and the disclosure names the findings left undecided" \
+	|| bad "and the disclosure names the findings left undecided"
+
+# A cycle row appended after `finish` rewrites a convergence that has already been
+# disclosed on a PR and already cleared a push — the assertion path the derivation
+# replaced, respelled as `cycle --applied 0 --agents 0`.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 4 6
+"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
+	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
+before=$(conv "$r")
+out=$("$PY" runlog.py cycle --run-id "$r" --n 2 --applied 0 --agents 0 2>&1)
+grep -q 'already finished' <<<"$out" && ok "a cycle row after finish is refused" \
+	|| bad "a cycle row after finish is refused (got: $out)"
+[ "$(conv "$r")" = "$before" ] && ok "and the reported convergence is unchanged ($before)" \
+	|| bad "and the reported convergence is unchanged (was $before, now $(conv "$r"))"
+
+# A negative count pulls cumulative spend back under a real cap. Needs its own run: on a
+# finished one the post-finish guard fires first and the check passes for the wrong reason.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+out=$("$PY" runlog.py cycle --run-id "$r" --n 3 --applied 1 --agents -100 2>&1)
+grep -q 'cannot be negative' <<<"$out" && ok "a negative agent count is refused" \
+	|| bad "a negative agent count is refused (got: $out)"
+
+# A cap that cannot bind only changes which label a stall gets: zero makes `capped`
+# unreachable, negative makes every unconverged run read `capped`.
+for bad_cap in 0 -1; do
+	out=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" --agent-cap "$bad_cap" 2>&1)
+	grep -q 'must be positive' <<<"$out" && ok "--agent-cap $bad_cap is refused" \
+		|| bad "--agent-cap $bad_cap is refused (got: $out)"
+done
+
+# The derivation displaced the self-reported outcome; the self-report stayed. When they
+# disagree, say so — run b480b45cc65d recorded `clean` for a run that did not converge.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 5 6
+out=$("$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"}}' 2>&1)
+grep -q "outcome 'clean' but the cycle rows derive" <<<"$out" \
+	&& ok "finish names a self-report that contradicts the derivation" \
+	|| bad "finish names a self-report that contradicts the derivation (got: $out)"
+
+# The disclosure obligation is what a capped run pushes ON, so it has to be checkable.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 5 6
+"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
+	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
+pend() { "$PY" -c '
+import json, sys; sys.path.insert(0, ".")
+import runlog
+print(runlog.disclosure_pending(runlog.load(limit=None)["'"$1"'"], "'"$2"'") or "CLEAR")
+'; }
+[ "$(pend "$r" aaaa111)" != "CLEAR" ] && ok "an undisclosed non-converged run is not clear to push" \
+	|| bad "an undisclosed non-converged run is not clear to push"
+"$PY" runlog.py disclosed --run-id "$r" --where "pending file" --head aaaa111 >/dev/null 2>&1
+[ "$(pend "$r" aaaa111)" = "CLEAR" ] && ok "and is clear once the disclosure is recorded" \
+	|| bad "and is clear once the disclosure is recorded (got: $(pend "$r" aaaa111))"
+[ "$(pend "$r" bbbb222)" != "CLEAR" ] && ok "but only for the commit it describes" \
+	|| bad "but only for the commit it describes"
 
 # A cycle for a run that was never planned is a row with nothing to attach to.
 out=$("$PY" runlog.py cycle --run-id deadbeefdead --n 1 --applied 0 --agents 1 2>&1)
