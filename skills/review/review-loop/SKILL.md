@@ -496,6 +496,19 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    the PR summary must say, verbatim, about how far the review got. Omitting it turns a disclosed
    push into a silent one, which is worse than the stall it replaced.
 
+   Then publish the disclosure — **from the record, not from memory**:
+
+   ```bash
+   printf '%s\n' "<your findings narrative>" \
+     | python3 ~/.claude/skills/review-loop/pr-report.py --run-id <run_id> --post --label
+   ```
+
+   It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
+   numbers and the roster from the run record, appends your narrative verbatim, labels the PR
+   `review:<convergence>`, and defers to the pending-report file by itself when there is no PR yet.
+   **When `disclose` is non-null this step is not optional** — a capped run may push only because it
+   says so, and a capped push that says nothing is worse than one that stalls.
+
    Push only on `push: true` (`git push`, or `git push -u origin <branch>` when `reason` says there is no upstream yet). On
    `false`, surface `reason` and end the report with `Next step: <reason>; push when ready.` If the
    push itself fails, surface the error verbatim and continue — don't retry, don't force.

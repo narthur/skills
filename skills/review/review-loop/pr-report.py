@@ -23,7 +23,6 @@ gate forces loop-then-push-then-PR — writes .git/info/review-loop-pending-repo
 for Step 0c to flush. Deferred, never dropped.
 """
 import argparse
-import json
 import os
 import subprocess
 import sys
@@ -73,11 +72,16 @@ def render(run, run_id, conv, narrative):
 
     tier = run.get("tier_executed") or "unrecorded"
     floor = run.get("tier_floor") or "unrecorded"
-    out += [f"- **Outcome** `{run.get('outcome') or 'unrecorded'}` · **convergence** `{conv or 'unknown'}`"
-            f" · **tier** `{tier}` (floor `{floor}`)",
-            f"- **Run** `{run_id}` · orchestrator `{run.get('orchestrator_model') or '?'}`"
-            f" · {len(cycles)} cycle(s) · {agents} agent(s)"
-            + (f" · ~{tokens:,} subagent tokens" if tokens else ""), ""]
+    # Built as named locals rather than implicit concatenation inside the list: a
+    # missing comma there silently merges two bullets into one instead of failing.
+    outcome_line = (f"- **Outcome** `{run.get('outcome') or 'unrecorded'}`"
+                    f" · **convergence** `{conv or 'unknown'}`"
+                    f" · **tier** `{tier}` (floor `{floor}`)")
+    run_line = (f"- **Run** `{run_id}` · orchestrator `{run.get('orchestrator_model') or '?'}`"
+                f" · {len(cycles)} cycle(s) · {agents} agent(s)")
+    if tokens:
+        run_line += f" · ~{tokens:,} subagent tokens"
+    out += [outcome_line, run_line, ""]
 
     raw, sem = run.get("changed_lines"), run.get("semantic_lines")
     if raw is not None:

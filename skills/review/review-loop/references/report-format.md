@@ -18,6 +18,31 @@ Then:
 
 ### Post the summary comment to the PR
 
+**Use the script. Do not hand-render this.**
+
+```bash
+printf '%s\n' "<your findings narrative>" \
+  | python3 ~/.claude/skills/review-loop/pr-report.py --run-id <run_id> --post --label
+```
+
+`pr-report.py` reads the run record and renders the factual half itself — convergence,
+the disclosure verbatim, every gate with planned-vs-actual and its reason, the cycle
+sequence, both sizing numbers with what was excluded, the agent roster, token spend —
+then appends your narrative from stdin unchanged. It also applies the
+`review:converged|capped|halted|unknown` label.
+
+This exists because hand-rendering this block is the most-dropped step in the skill: it
+is in the friction log, and one run's summary had to be volunteered by its author
+because nothing produced it. A script cannot forget a gate, cannot state a convergence
+the record contradicts, and cannot lose a cycle. **Your job is the narrative — what the
+agents actually found — which is the one part no script can derive.**
+
+With no PR it writes the pending file by itself (see below), so there is nothing extra
+to remember on a fresh branch. If the post fails it says so and continues; never retry.
+
+The format it produces is documented below so you know what it covers and what your
+narrative needs to add. Hand-render it only if the script is unavailable.
+
 When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review. This includes fast-path and fast-path re-entry runs (Step 3b): a single-reviewer run still posts its summary, marked as a fast-path cycle, along with the user's approval if they chose to downgrade a diff that wasn't eligible.
 
 ```bash
