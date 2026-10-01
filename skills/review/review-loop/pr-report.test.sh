@@ -33,6 +33,25 @@ grep -qF 'convergence** `capped`' <<<"$out" && ok "the derived convergence is st
 grep -q '900 raw' <<<"$out" && grep -q '120 of review surface' <<<"$out" && grep -q '780 line(s) in lockfiles' <<<"$out" \
 	&& ok "raw size, review surface and the exclusion all appear" || bad "raw size, review surface and the exclusion all appear"
 # Comment-accuracy counted apart from defects, or a run looks more productive than it was.
+# Asserted on the CELL, not the header: `grep -q comment-accuracy` matched the hard-coded
+# table header whenever any cycle existed, so it passed while the recorded 3 went nowhere.
+# Five mutations — dropping comment_findings, defect_findings, asked or subagent_tokens at
+# the recording end, and blanking the comment-accuracy cell at the rendering end — all
+# passed the whole suite, i.e. the feature could be deleted at both ends with tests green.
+row1=$(grep -E '^\| 1 \|' <<<"$out")
+check_cells() {
+	"$PY" - "$row1" <<'PYCELL'
+import sys
+cells = [c.strip() for c in sys.argv[1].strip().strip("|").split("|")]
+# | # | applied | asked | defects | comment-accuracy | agents | analysis |
+want = {"#": "1", "applied": "6", "defects": "4", "comment-accuracy": "3", "agents": "6"}
+got = dict(zip(("#", "applied", "asked", "defects", "comment-accuracy", "agents", "analysis"), cells))
+wrong = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
+raise SystemExit(f"cycle-1 row: {wrong}" if wrong else 0)
+PYCELL
+}
+check_cells && ok "the cycle-1 row carries the recorded defect and comment-accuracy counts" \
+	|| bad "the cycle-1 row carries the recorded defect and comment-accuracy counts ($(check_cells 2>&1))"
 grep -q 'comment-accuracy' <<<"$out" && ok "comment-accuracy findings are a separate column" || bad "comment-accuracy findings are a separate column"
 # Every cycle, including the one the old free-form field lost.
 rows=$(awk '/^\| [0-9]+ \|/' <<<"$out" | wc -l | tr -d ' ')

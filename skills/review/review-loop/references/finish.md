@@ -43,14 +43,21 @@ PR already exists.
 ~/.claude/skills/review-loop/record-reviewed.sh
 ```
 
-On a **clean loop exit** only (auto-fix bucket empty, tests green, no unresolved high-risk
-findings), and **before** the push decision — so both this run's auto-push and any later *manual*
-push of the same HEAD pass the gate.
+On **any exit where `push-check` says `push: true`**, and **before** the push decision — so both
+this run's auto-push and any later *manual* push of the same HEAD pass the gate.
 
-Skip it on a **cycle-limit** or **test-failure** exit: that tree is not a converged, reviewed
-state, so it should not be waved through a later push. (The gate itself is
-`~/.git-hooks/review-gate.sh`; it blocks pushing commits you authored whose tip is not recorded
-here, bypassable with `REVIEW_GATE_BYPASS=1`.)
+That includes a `capped` or `halted` run. This used to read "clean exit only", which stranded
+exactly the commits the disclosure mechanism exists to let through: `push-check` authorises the
+push, the gate accepts only a recorded tip, and nothing was allowed to record it. A capped run
+**was** reviewed — often more thoroughly than a converged one — and how far is the PR comment's job
+to say, which is why `push-check` refuses until the disclosure is recorded. Filing it with
+`record-skipped.sh` instead would be a lie in the other direction: that store means "judged beneath
+the loop", and using it here corrupts the skipped-vs-reviewed ratio `review-stats.py` reports.
+
+Still skip it when `push-check` says `push: false` — a recorded `test-failure`, `blocked` or
+`abandoned` outcome is a broken tree, not an unfinished review, and it should not be waved through
+a later push. (The gate itself is `~/.git-hooks/review-gate.sh`; it blocks pushing commits you
+authored whose tip is not recorded here, bypassable with `REVIEW_GATE_BYPASS=1`.)
 
 ### The honesty rule
 
@@ -105,9 +112,12 @@ the error verbatim in the final report and continue — do not retry, do not for
 
 ### When NOT to auto-push — the spec `push-check.py` encodes
 
-- **Tests failed mid-loop** (Step 9 short-circuit). The branch is in a known-broken state; do not
-  propagate it.
-- **Cycle limit reached with unaddressed ≥80 findings.** The loop did not converge.
+- **The run recorded `test-failure`, `blocked` or `abandoned`.** The branch is in a known-broken
+  state; do not propagate it. Read from the record's `outcome`, so a Step 9 short-circuit reaches
+  the decision even though it jumps out of the loop before the cycle row is written.
+- **A non-converged run whose disclosure has not been recorded.** `pr-report.py` writes the
+  `disclosed` marker; until it exists for this head, the push that the disclosure is the entire
+  consideration for is refused. Run `pr-report.py` first.
 - **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That is
   an unresolved ambiguity they may still want to think about; let them push when ready.
 - **The current or default branch name is unknown.** Fail closed rather than skip the

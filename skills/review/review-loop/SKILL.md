@@ -82,11 +82,11 @@ test -f .git/info/review-loop-pending-report.md && gh pr view --json number -q .
 
 Nothing pending, or still no PR → continue (leave the file in place). Both present → **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
 
-## Step 2a: Learnings Staleness Sweep (triggered)
+## Step 2a: Cheap record checks (always), then the learnings sweep (triggered)
 
-When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the relevance-based sweep **once here, before the review agents**, so the whole run uses the slimmed file — then skip it for the rest of the run. Otherwise skip entirely. Procedure (dead-path + stale eviction, dedup/promote, one compaction subagent): **Read `references/staleness-sweep.md`**.
+The two checks below run on **every** run. They used to sit under the triggered sweep, whose own opening says to skip the step entirely when compaction is not due — true on ~95% of runs, and on every run where a deferred finding could wake up. Re-surfacing is the only thing keeping a deferral from being silently permanent, so it cannot live behind an unrelated trigger.
 
-Also run two cheap no-LLM checks here:
+Two cheap no-LLM checks, always:
 
 ```bash
 python3 ~/.claude/skills/review-loop/deferred.py
@@ -106,7 +106,14 @@ when nobody remembers it exists.
   stale entry stale.
 - **`unpinned[]` is a defect in the record**, not a finding. An entry with no `[file:line @ sha]`
   can never be marked stale, so it will survive the change that invalidated it. Pin it or delete it.
-- Nothing stale and nothing unpinned → continue; this costs one `git log` per entry.
+- **`broken_pins[]` is worse than unpinned.** The sha does not name a commit in this repo — a typo,
+  a rebased-away commit, one copied from elsewhere — so staleness can never be computed for it,
+  while the entry still *looks* pinned and therefore stays out of `unpinned[]`. Re-pin to a sha that
+  resolves.
+- **`unguarded[]` is the question never asked.** The `Guard:` line records what would now fail if the
+  grounding broke, and "none, because …" is a valid answer; a missing line means nobody considered
+  it. Add the line.
+- All four empty → continue; this costs one `git log` per entry.
 
 **To defer a finding** (Step 8a routes it here; never auto-apply a finding you are deferring),
 append to `<git-common-dir>/info/review-loop-deferred.md`:
@@ -128,6 +135,10 @@ record the answer on the `Guard:` line either way — including "none, because �
 knows it was considered rather than forgotten.
 
 `references/security-review.md` vendors Anthropic's `/security-review` prompt, which is compiled into the Claude Code binary and so updates silently whenever Claude Code does. On `drift: true`, note it in the Step 14 report and offer once to diff (`--extract`) and reconcile — never block the run, and never auto-adopt: some departures are deliberate.
+
+### Learnings staleness sweep — triggered, not every run
+
+When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the relevance-based sweep **once here, before the review agents**, so the whole run uses the slimmed file — then skip it for the rest of the run. Otherwise skip this subsection entirely. Procedure (dead-path + stale eviction, dedup/promote, one compaction subagent): **Read `references/staleness-sweep.md`**.
 
 ## Step 2b: Threat model — bootstrap, staleness, update
 
@@ -173,8 +184,10 @@ The point: make the honest lightweight path as cheap as the dishonest shortcut w
 ```
 cycle = 1
 max_cycles = 3
+agent_cap = <the plan's agent_cap>   # cumulative agent budget for the whole RUN
+agents_spent = 0                     # running sum of the --agents you record at j2
 
-while cycle <= max_cycles:
+while cycle <= max_cycles and agents_spent < agent_cap:
     a. Run the code-analysis pass (Step 4a below): the code-analysis skill (--diff --fix) plus the project linter --fix if detected. Stage what changed; collect the deterministic tool findings.
     b. Run the parallel review subagents (Step 5) over this cycle's REVIEW SCOPE (see below). Each returns findings + suggested fixes. In cycle 1 only, and only if Step 4b (run once, before the loop) established a reviewable intent, also spawn Agent #9 (intent reconciliation).
        REVIEW SCOPE:
@@ -194,16 +207,25 @@ while cycle <= max_cycles:
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
     j. Append captured learnings to .git/info/review-loop-learnings.md (Step 11), deduping against existing entries.
-    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --agents ..` (Step 10).
-        EVERY cycle, including a zero-fix one — convergence is derived from these rows, and a run
-        with none of them reads as "did not converge" at Step 14.
-    k. cycle += 1
+    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents ..`
+        (Step 10). EVERY cycle, including a zero-fix one — convergence is derived from these rows,
+        and a run with none of them reads as "did not converge" at Step 14. Pass `--asked`: a cycle
+        that applied nothing but routed findings to the user has NOT converged, and omitting the
+        count is what made such a run read as converged with no disclosure.
+    k. agents_spent += <the --agents you just recorded>; cycle += 1
 
-If cycle > max_cycles:
-    Report: "Reached cycle limit (3). Remaining findings below."
-    The last cycle's row (applied > 0) is what makes this derivable as `capped`/`halted` rather
-    than being asserted. This no longer blocks the push — Step 14 pushes with the `disclose` line
-    the checker emits. Stranding the commits only moves the decision back to the user.
+If the loop exits with work still outstanding:
+    Report which bound you hit — the cycle limit or the agent budget — plus the
+    remaining findings. Cycles are the wrong unit to bound on by themselves: one
+    cycle can be a 30-agent fan-out over 50 files and the next a single agent on
+    a few lines. `convergence` is derived from the cycle rows either way, not
+    from this report: spending the budget derives `capped`, stopping for any
+    other reason derives `halted`, and both push with a disclosure.
+    The last cycle's row (outstanding work: applied > 0, asked > 0, or the analysis pass
+    still changing files) is what makes this derivable rather than asserted. Not converging
+    no longer blocks the push — Step 14 pushes with the `disclose` line the checker emits,
+    and records the reviewed sha on any `push: true`. Stranding the commits only moves the
+    decision back to the user.
 ```
 
 On a clean loop exit, run the manual-testing evidence gate (Step 13) before the final report/auto-push (Step 14). If the gate's testing uncovers a real issue, fix + commit + restart the loop from cycle 1 (see Step 13).
@@ -356,8 +378,8 @@ echo '<findings-json>' | python3 ~/.claude/skills/review-loop/bucket.py
 
 **Four fields beyond the score, each closing a measured miscalibration:**
 
-- **`cost_recurrence`: `"once"` | `"per-use"` | `"per-item"`.** Is the consequence paid once, or every time the system is used / per item it handles? Answer it about the *consequence*, never about the size of the fix. A recurring cost is never skipped on a low score — it floors to ask, because you are reading a diff and the diff cannot show you how often the operation runs. This exists because a cache-key change that re-rendered every prior artifact on each new opt-in was filed as a wording nit: one line, one file, soften the prose. The real cost was ~70 minutes of CI per rollout. An unrecognised value is **refused**, not defaulted — a typo must not buy the cheaper routing.
-- **`category`.** Set `"comment-accuracy"` for "this comment claims more than the code does". Counted apart from defects in the record and the report, because it is legitimate work but not defect-finding, and merging them makes a run look more productive than it was. **`"comment-accuracy"` together with a recurring `cost_recurrence` is refused as a contradiction** — a cost paid on every use is not a wording problem, and that pairing is precisely the mistake above. Decide which it is.
+- **`cost_recurrence`: `"once"` | `"per-use"` | `"per-item"`.** Is the consequence paid once, or every time the system is used / per item it handles? Answer it about the *consequence*, never about the size of the fix. A recurring cost is never skipped on a low score — it floors to ask, because you are reading a diff and the diff cannot show you how often the operation runs. This exists because a cache-key change that re-rendered every prior artifact on each new opt-in was filed as a wording nit: one line, one file, soften the prose. The real cost was ~70 minutes of CI per rollout. The field is **required**, and an unrecognised value is **refused** rather than defaulted — neither a typo nor an omission may buy the cheaper routing. Omission was exempt at first, which ran the asymmetry backwards: mistyping `per_item` was refused while leaving the field out, which is what a serializer emits for a field you never filled in, routed as `once`.
+- **`category`.** Set `"comment-accuracy"` for "this comment claims more than the code does". Counted apart from defects in the record and the report, because it is legitimate work but not defect-finding, and merging them makes a run look more productive than it was. **`"comment-accuracy"` together with a recurring `cost_recurrence` is refused as a contradiction** — a cost paid on every use is not a wording problem, and that pairing is precisely the mistake above. Decide which it is. The comments agent implies the category: a finding from `4-comments` with a recurring cost is refused whether or not you set `category`, since omitting the key is how the original mistake was filed.
 - **`behavioral`: bool** — does the finding claim the program behaves wrongly, as opposed to being unclear, duplicated or badly named?
 - **`observed_failure`: string** — for a `behavioral` finding, *the failure you watched happen before the fix existed*. A behavioral claim without one never auto-applies. One run "fixed" CRLF handling with a regex that already worked, and its verification, run only afterwards, passed exactly as it would have without the fix. **Construct the failing case and watch it fail first; a check that never saw the failure cannot tell a fix from a no-op.**
 
@@ -503,13 +525,17 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody
    is there to ask.
 
-1. **Reconcile the PR description, then post the report as a PR comment.** Clean exit with a PR
-   only. Skip the reconcile on a cycle-limit or test-failure exit. Clean exit with **no PR yet** →
-   both are *deferred* to `.git/info/review-loop-pending-report.md`, and Step 0c flushes them.
-   The fast path and fast-path re-entry are included: a one-reviewer run still posts (or defers)
-   its summary, labelled as a fast-path cycle.
+1. **Reconcile the PR description — clean exit only. Post the report on every terminal exit.**
+   The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
+   for a real reason: describing an unconverged tree as if it were final launders unfinished work
+   into intent. *Posting* is the opposite — the less converged the run, the more the comment is
+   load-bearing, and step 3 below refuses the push until it exists. With **no PR yet** both defer to
+   `.git/info/review-loop-pending-report.md`, and Step 0c flushes them. The fast path and fast-path
+   re-entry are included: a one-reviewer run still posts (or defers) its summary, labelled as a
+   fast-path cycle.
 
-2. **Record the reviewed commit** — clean exit only, **before** the push decision:
+2. **Record the reviewed commit** — on **any** exit where `push-check` says `push: true`, **before**
+   the push decision:
 
    ```bash
    ~/.claude/skills/review-loop/record-reviewed.sh
@@ -519,6 +545,15 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    hand-call it to clear the pre-push gate on a change the loop didn't examine — re-run the Step 3b
    fast path, or state the judgment with `record-skipped.sh "<reason>"`, which clears the gate
    while recording a *distinct* state that can't masquerade as a review.
+
+   **It is not "clean exit only".** That reading is what stranded commits: `push-check` authorises a
+   capped or halted push, the pre-push hook accepts only a tip listed in `reviewed-shas` or
+   `skipped-shas`, and so the capped push the disclosure mechanism exists to permit was blocked at
+   the hook. The two ways through were both wrong — `record-skipped.sh`, which would file a fully
+   reviewed capped run as "judged beneath the loop" and corrupt the ratio `review-stats.py` reports,
+   or `REVIEW_GATE_BYPASS=1`. The skipped-shas store records this happening twice: *"run
+   29e0ce969725 hit its 3-cycle cap still applying 11 fixes, so it never converged and the tip was
+   never stamped."* A capped run **was** reviewed; how far is the PR's job to say, not this store's.
 
 3. **Decide the push with the checker**, never by re-deriving the checklist:
 
@@ -540,6 +575,11 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    the PR summary must say, verbatim, about how far the review got. Omitting it turns a disclosed
    push into a silent one, which is worse than the stall it replaced.
 
+   **A recorded `test-failure`, `blocked` or `abandoned` outcome does block**, and outranks a
+   converged review: that is "the tree is broken", not "we stopped looking". Removing `--clean-exit`
+   deleted the only channel by which a Step 9 test failure reached this decision, so for a while a
+   known-broken tree pushed with the reason "converged, evidence gate ok".
+
    Then publish the disclosure — **from the record, not from memory**:
 
    ```bash
@@ -550,8 +590,13 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
    numbers and the roster from the run record, appends your narrative verbatim, labels the PR
    `review:<convergence>`, and defers to the pending-report file by itself when there is no PR yet.
-   **When `disclose` is non-null this step is not optional** — a capped run may push only because it
-   says so, and a capped push that says nothing is worse than one that stalls.
+
+   **When `disclose` is non-null this is not optional, and it is no longer on your honour.**
+   `pr-report.py` records a `disclosed` marker pinned to the commit it describes — for the pending
+   file as well as for a real PR, since on a fresh branch the push gate forces
+   loop-then-push-then-PR — and `push-check` refuses a non-converged push until that marker exists
+   for the current head. So the order is **pr-report, then push-check, then push**. A capped run may
+   push only because it says so; this is what makes "it says so" checkable rather than exhorted.
 
    Push only on `push: true` (`git push`, or `git push -u origin <branch>` when `reason` says there is no upstream yet). On
    `false`, surface `reason` and end the report with `Next step: <reason>; push when ready.` If the

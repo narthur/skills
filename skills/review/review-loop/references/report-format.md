@@ -110,6 +110,12 @@ Remaining <50 findings (low confidence, not surfaced):
 
 ## Backfilling a deferred report (Step 0c)
 
+The deferred file ends with an HTML comment naming the `review:<convergence>` label still owed. The
+label block in `pr-report.py` sits after the no-PR branch returns, so on a fresh branch — the common
+case, since the push gate forces loop-then-push-then-PR — the at-a-glance signal is never applied by
+the deferring run. Re-running `pr-report.py --run-id <id> --post --label` once the PR exists is
+therefore preferred over pasting the file by hand: it posts the body *and* applies the label.
+
 Reached when `.git/info/review-loop-pending-report.md` exists **and** a PR now exists for the
 branch. (Pending file but still no PR → leave it in place and continue the run.)
 
