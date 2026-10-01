@@ -44,6 +44,48 @@ done
 [ "$skipped" -eq 5 ] && ok "fast path skips all 5 conditional agents" || bad "fast path skips all 5 conditional agents"
 [ "$(gate security_review <<<"$p")" = "skip" ] && ok "fast path folds in the security finder" || bad "fast path folds in the security finder"
 
+# --- semantic sizing drives the thresholds, not the raw count. A 900-line lockfile
+# --- regeneration with a 10-line real edit must be sized as 10, or every dependency
+# --- bump drags a 6-agent fan-out over a file nobody reads.
+sem() {
+	local raw=$1 semantic=$2 fast=$3; shift 3
+	printf '{"changed_lines":%s,"semantic_lines":%s,"sizing_excluded":"890 line(s) in lockfiles or generated files","fast_path_eligible_by_size":%s,"base_branch":"","learnings_entries":0,"learnings_compaction_due":false}' \
+		"$raw" "$semantic" "$fast" | "$PY" plan.py --model test --dry-run "$@" 2>/dev/null
+}
+p=$(sem 900 10 true $BOOLS_OFF)
+[ "$(gate agent_7_structural <<<"$p")" = "skip" ] && ok "a 900-raw/10-semantic diff is under the structural floor" 	|| bad "a 900-raw/10-semantic diff is under the structural floor"
+[ "$(tier <<<"$p")" = "fast" ] && ok "and is fast-path eligible on the semantic count" || bad "and is fast-path eligible on the semantic count"
+# The tier reason must carry BOTH numbers and what was dropped — a smaller count that
+# buys a cheaper review is exactly the decision that must not go unexplained. (On the
+# fast path the gate reasons say "fast path runs no conditional agents"; the sizing
+# explanation lives on the tier.)
+tr=$("$PY" -c 'import json,sys; print(json.load(sys.stdin)["tier_reason"])' <<<"$p")
+if grep -q 'review surface' <<<"$tr" && grep -q '900 raw' <<<"$tr" && grep -q 'excluded' <<<"$tr"; then
+	ok "the tier reason gives semantic, raw, and what was excluded"
+else
+	bad "the tier reason gives semantic, raw, and what was excluded (got: $tr)"
+fi
+# Both counts reach the record, so a later reader can audit the sizing call itself.
+"$PY" -c 'import json,sys; d=json.load(sys.stdin); raise SystemExit(0 if d["changed_lines"]==900 and d["semantic_lines"]==10 else 1)' <<<"$p" && ok "the plan records raw and semantic separately" || bad "the plan records raw and semantic separately"
+# The inverse: raw small but semantic large cannot happen, but semantic must still be
+# what forces full — a 900-semantic diff is full regardless of what raw says.
+p=$(sem 900 900 false $BOOLS_OFF)
+[ "$(gate agent_7_structural <<<"$p")" = "run" ] && ok "a 900-semantic diff runs #7" || bad "a 900-semantic diff runs #7"
+# The pair above is NOT enough on its own: with fast_path_eligible_by_size true, #7 is
+# skipped because the fast path runs no conditional agents, so those checks pass even if
+# plan.py ignores semantic_lines entirely. This is the discriminating case — fast path
+# OFF (logic touched), raw over the 150 floor, semantic under it. Only a plan that sizes
+# on semantic_lines skips #7 here.
+p=$(sem 900 10 false --logic yes --behavioral-goal no --runtime-change no --attacker-reachable no)
+[ "$(gate agent_7_structural <<<"$p")" = "skip" ] && ok "off the fast path, #7 is gated on semantic lines not raw" \
+	|| bad "off the fast path, #7 is gated on semantic lines not raw"
+[ "$(gate agent_8_observability <<<"$p")" = "skip" ] && ok "and #8 follows it" || bad "and #8 follows it"
+# Fallback: a context.sh predating semantic sizing has no semantic_lines field, and the
+# plan must then size on raw rather than treating a missing field as zero.
+p=$(plan 900 false $BOOLS_OFF)
+[ "$(gate agent_7_structural <<<"$p")" = "run" ] && ok "no semantic_lines field falls back to raw" || bad "no semantic_lines field falls back to raw"
+[ "$(tier <<<"$p")" = "full" ] && ok "and the fallback still forces full" || bad "and the fallback still forces full"
+
 # --- #7/#8 substantial threshold, both sides of the boundary
 p=$(plan 149 false $BOOLS_OFF)
 [ "$(gate agent_7_structural <<<"$p")" = "skip" ] && ok "149 lines is under the structural floor" || bad "149 lines is under the structural floor"

@@ -98,6 +98,15 @@ def biggest_changed_file(base):
 
 def build(ctx, a):
     changed = ctx.get("changed_lines") or 0
+    # Every threshold below is about how much there is to REVIEW, so they key on the
+    # semantic count — raw minus whitespace-only lines, lockfiles, and files the repo
+    # declares linguist-generated. `changed` stays the raw number in the record so both
+    # are visible and the exclusion is auditable rather than just a smaller number.
+    # Falls back to raw for a context.sh predating semantic sizing.
+    semantic = ctx.get("semantic_lines")
+    if semantic is None:
+        semantic = changed
+    excluded = ctx.get("sizing_excluded")
     base = ctx.get("base_branch")
     gates = {}
 
@@ -105,12 +114,14 @@ def build(ctx, a):
     fast_ok = bool(ctx.get("fast_path_eligible_by_size")) and not a.logic
     if fast_ok:
         tier = "fast"
-        tier_reason = f"{changed} changed lines and no program logic touched"
+        tier_reason = (f"{semantic} lines of review surface and no program logic touched"
+                       + (f" ({changed} raw; excluded {excluded})" if excluded else ""))
     else:
         tier = "full"
         why = []
         if not ctx.get("fast_path_eligible_by_size"):
-            why.append(f"{changed} changed lines (fast path is <30)")
+            why.append(f"{semantic} lines of review surface (fast path is <30)"
+                       + (f"; {changed} raw, excluded {excluded}" if excluded else ""))
         if a.logic:
             why.append("diff touches program logic")
         tier_reason = "; ".join(why) or "default"
@@ -159,11 +170,11 @@ def build(ctx, a):
             gates[aid] = gate("skip", "fast path runs no conditional agents")
     else:
         # Only pay the per-file scan when the line count alone hasn't decided it.
-        big_file = 0 if changed >= STRUCTURAL_LINES else biggest_changed_file(base)
-        substantial = changed >= STRUCTURAL_LINES or big_file >= BIG_FILE_LINES
+        big_file = 0 if semantic >= STRUCTURAL_LINES else biggest_changed_file(base)
+        substantial = semantic >= STRUCTURAL_LINES or big_file >= BIG_FILE_LINES
         gates["agent_7_structural"] = gate(
             "run" if substantial else "skip",
-            f"{changed} changed lines"
+            f"{semantic} lines of review surface"
             + (f", largest changed file {big_file} lines" if big_file else "")
             + ("" if substantial else f" — under both floors ({STRUCTURAL_LINES}/{BIG_FILE_LINES})"))
         gates["agent_8_observability"] = gate(
@@ -196,6 +207,8 @@ def build(ctx, a):
         "tier_floor": tier,
         "tier_reason": tier_reason,
         "changed_lines": changed,
+        "semantic_lines": semantic,
+        "sizing_excluded": excluded,
         "base_branch": base,
         "inputs": {
             "logic": a.logic,
