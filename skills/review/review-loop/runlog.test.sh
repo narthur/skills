@@ -77,8 +77,11 @@ printf '{"run_id":"broke' >> "$REVIEW_LOOP_RUNS"
 # enter the record. `planned_gates` demands an account only for "run", so a third value
 # was dropped silently AND escaped the reason ban — the same stale-list shape as `n/a`.
 for pv in deferred "" maybe; do
+	# A MEASURABLE reason, deliberately: with a banned one, reject_banned does the
+	# refusing and this assertion passes with the planned-value guard deleted. That is
+	# how the first version of this check was hollow.
 	out=$("$PY" runlog.py plan --tier full --model m \
-		--gates "{\"threat_model\":{\"planned\":\"$pv\",\"reason\":\"matches an existing pattern\"}}" 2>&1)
+		--gates "{\"threat_model\":{\"planned\":\"$pv\",\"reason\":\"2 stale claims, 40 changed lines\"}}" 2>&1)
 	# Refused, and no row written: a bad plan leaves nothing behind to be finished.
 	if ! grep -qE '^[0-9a-f]{12}$' <<<"$(tail -1 <<<"$out")"; then
 		ok "a gate planned '$pv' is refused, not recorded"
