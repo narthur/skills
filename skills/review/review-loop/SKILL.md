@@ -28,8 +28,10 @@ It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* de
 - `test_cmd`, `lint_cmd`, `lint_fix` — detected commands (Step 3); `null` test_cmd → warn once per Step 3
 - `learnings` — contents of the learnings file, or `null` (Step 2)
 - `learnings_entries`, `learnings_compaction_due`, `today` — entry count, whether the staleness sweep should run (Step 2a), and today's date for the sweep's age math
-- `diff_stat`, `changed_lines` — branch diff size
-- `fast_path_eligible_by_size` — `true` if the diff is under ~30 changed lines (the *size* half of Step 3b's gate; you still judge whether logic was touched)
+- `diff_stat`, `changed_lines` — branch diff size, raw
+- `semantic_lines` — the raw count minus whitespace-only changes, lockfiles, and files the repo declares `linguist-generated`. This is the **review surface**, and it is what every size threshold in this skill keys on. A pure rename already counts 0 raw, so it needs no special handling.
+- `sizing_excluded` — what was dropped from the raw count and how much. Quote it whenever you cite a size: under-counting buys a cheaper review, so an unexplained smaller number is the silent-skip problem one level down.
+- `fast_path_eligible_by_size` — `true` if there is a diff at all and its *semantic* size is under ~30 lines (the *size* half of Step 3b's gate; you still judge whether logic was touched)
 
 Workspace detection and Steps 1–3 are documented in `references/context-fallback.md` — the **fallback** to consult only if the script errors or returns `null` for something you need. Don't re-run their bash by hand when the JSON already has the answer.
 
@@ -107,9 +109,9 @@ Every claim is **OBSERVED** (verified, carries `[file:line @ sha]`) or **INFERRE
 
 ## Step 3b: Trivial-diff fast path
 
-Before entering the main loop, check the diff size. Step 0's `context.sh` already reports this — `fast_path_eligible_by_size` is the `< ~30 changed lines` test, and `diff_stat` shows the breakdown (fall back to `git diff --stat origin/<base_branch>...HEAD` if you don't have the JSON). If **all** of these hold, skip the 6-way fan-out and run a **single combined reviewer** instead:
+Before entering the main loop, check the diff size. Step 0's `context.sh` already reports this — `fast_path_eligible_by_size` is the `< ~30 semantic lines` test, and `diff_stat` shows the breakdown (fall back to `git diff --stat origin/<base_branch>...HEAD` if you don't have the JSON). If **all** of these hold, skip the 6-way fan-out and run a **single combined reviewer** instead:
 
-- `fast_path_eligible_by_size` is true (fewer than ~30 changed lines), and
+- `fast_path_eligible_by_size` is true (fewer than ~30 lines of review surface — a 400-line lockfile regeneration or a whole-file reformat can qualify, and `sizing_excluded` says why), and
 - no single hunk touches program logic — the diff is confined to docs, comments, config/manifest values, dependency-version bumps, or string/copy edits.
 
 When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
