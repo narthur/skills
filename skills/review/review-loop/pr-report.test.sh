@@ -1,0 +1,90 @@
+#!/bin/bash
+# pr-report.py renders the review disclosure from the record. Its failure mode is a
+# report that looks complete while omitting the thing a reader needed — a dropped gate,
+# a cap that went unmentioned, a cycle that left no trace. Every check below is about
+# something that must APPEAR, not about formatting.
+#   ./pr-report.test.sh
+set -uo pipefail
+cd "$(dirname "$0")" || exit 1
+PY=$(command -v python3.14 || command -v python3)
+fails=0
+ok() { echo "  ok  $1"; }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/pr-report-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
+trap 'rm -rf "$TMP"' EXIT
+[ "$TMP" != "/" ] && [ -d "$TMP" ] || { echo "setup failed: bad temp dir"; exit 1; }
+export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
+G='{"threat_model":{"planned":"run","reason":"2 stale claims"},"pr_report":{"planned":"skip","reason":"no PR"}}'
+
+plan() { "$PY" runlog.py plan --tier full --model claude-opus-5 --gates "$G" "$@" 2>/dev/null | tail -1; }
+
+# --- a capped run must lead with the disclosure, verbatim and unmissable
+rid=$(plan --agent-cap 8 --changed-lines 900 --semantic-lines 120 --sizing-excluded "780 line(s) in lockfiles")
+"$PY" runlog.py cycle --run-id "$rid" --n 1 --applied 6 --agents 6 --defect-findings 4 --comment-findings 3 >/dev/null 2>&1
+"$PY" runlog.py cycle --run-id "$rid" --n 2 --applied 3 --agents 3 --analysis-changed >/dev/null 2>&1
+out=$("$PY" pr-report.py --run-id "$rid" </dev/null)
+grep -q 'CAPPED' <<<"$out" && ok "a capped run says CAPPED" || bad "a capped run says CAPPED"
+# The disclosure has to be ABOVE the tables. Burying it makes the push silent in effect.
+[ "$(grep -n 'CAPPED' <<<"$out" | cut -d: -f1)" -lt "$(grep -n '^### Cycles' <<<"$out" | cut -d: -f1)" ] \
+	&& ok "and says it before any table" || bad "and says it before any table"
+grep -qF 'convergence** `capped`' <<<"$out" && ok "the derived convergence is stated" || bad "the derived convergence is stated"
+# Both sizing numbers and the exclusion: a cheaper review must arrive with its receipt.
+grep -q '900 raw' <<<"$out" && grep -q '120 of review surface' <<<"$out" && grep -q '780 line(s) in lockfiles' <<<"$out" \
+	&& ok "raw size, review surface and the exclusion all appear" || bad "raw size, review surface and the exclusion all appear"
+# Comment-accuracy counted apart from defects, or a run looks more productive than it was.
+grep -q 'comment-accuracy' <<<"$out" && ok "comment-accuracy findings are a separate column" || bad "comment-accuracy findings are a separate column"
+# Every cycle, including the one the old free-form field lost.
+rows=$(awk '/^\| [0-9]+ \|/' <<<"$out" | wc -l | tr -d ' ')
+[ "$rows" = "2" ] && ok "every cycle gets a row" || bad "every cycle gets a row (got: $rows)"
+
+# --- a converged run must NOT cry wolf
+rid2=$(plan)
+"$PY" runlog.py cycle --run-id "$rid2" --n 1 --applied 0 --agents 2 >/dev/null 2>&1
+out2=$("$PY" pr-report.py --run-id "$rid2" </dev/null)
+grep -qE 'CAPPED|HALTED|UNKNOWN' <<<"$out2" && bad "a converged run claims no shortfall" || ok "a converged run claims no shortfall"
+grep -q 'converged' <<<"$out2" && ok "and says it converged" || bad "and says it converged"
+
+# --- THE VISIBILITY CASE: a planned gate with nothing reported must be called out.
+# --- An in-flight/abandoned run has no executed map, which is exactly when a reader
+# --- most needs to see that a gate went unaccounted rather than an empty table.
+rid3=$(plan)
+out3=$("$PY" pr-report.py --run-id "$rid3" </dev/null)
+grep -q 'unreported' <<<"$out3" && ok "a planned gate with no status reads as unreported" || bad "a planned gate with no status reads as unreported"
+grep -q 'UNKNOWN' <<<"$out3" && ok "and a run with no cycles discloses unknown completeness" || bad "and a run with no cycles discloses unknown completeness"
+
+# --- the narrative is the orchestrator's and must survive verbatim
+rid4=$(plan)
+"$PY" runlog.py cycle --run-id "$rid4" --n 1 --applied 0 --agents 1 >/dev/null 2>&1
+out4=$(printf 'Three regressions came from earlier fixes.\n' | "$PY" pr-report.py --run-id "$rid4")
+grep -q 'Three regressions came from earlier fixes.' <<<"$out4" \
+	&& ok "the orchestrator's findings text is passed through" || bad "the orchestrator's findings text is passed through"
+
+# --- a table cell cannot break the table
+rid5=$(plan)
+"$PY" runlog.py cycle --run-id "$rid5" --n 1 --applied 0 --agents 1 >/dev/null 2>&1
+"$PY" runlog.py finish --run-id "$rid5" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done","reason":"a | pipe | in the reason"}}' >/dev/null 2>&1
+out5=$("$PY" pr-report.py --run-id "$rid5" </dev/null)
+grep -q 'a \\| pipe' <<<"$out5" && ok "a pipe in a reason is escaped, not table-breaking" || bad "a pipe in a reason is escaped, not table-breaking"
+
+# --- an unknown run id is an error, not an empty report that looks like a clean one
+"$PY" pr-report.py --run-id deadbeefdead </dev/null >/dev/null 2>&1 \
+	&& bad "an unknown run id fails loudly" || ok "an unknown run id fails loudly"
+
+# --- no PR: defer to the pending file rather than dropping the report
+repo="$TMP/repo"; mkdir -p "$repo"
+git -c init.defaultBranch=main init -q "$repo"
+rid6=$(plan)
+"$PY" runlog.py cycle --run-id "$rid6" --n 1 --applied 0 --agents 1 >/dev/null 2>&1
+# PATH without gh: `gh pr view` cannot succeed, which is the no-PR branch.
+nogh="$TMP/nogh"; mkdir -p "$nogh"
+for t in git python3 sed awk; do src=$(command -v "$t" 2>/dev/null) && ln -sf "$src" "$nogh/$t"; done
+(cd "$repo" && PATH="$nogh" "$PY" "$OLDPWD/pr-report.py" --run-id "$rid6" --post </dev/null) >/dev/null 2>&1
+pend="$repo/.git/info/review-loop-pending-report.md"
+[ -s "$pend" ] && ok "with no PR the report is deferred to the pending file" || bad "with no PR the report is deferred to the pending file"
+grep -q 'review-loop:run=' "$pend" 2>/dev/null && ok "and the deferred file names its run" || bad "and the deferred file names its run"
+
+echo
+[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+exit "$fails"

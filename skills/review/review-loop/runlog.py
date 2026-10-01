@@ -194,6 +194,28 @@ def convergence(run):
     return "halted"
 
 
+def disclosure(conv, run):
+    """The line a PR must carry when the loop did not converge. None if it did.
+
+    This is the whole point of letting a capped run push: the branch ships, and the PR
+    says how far to trust it. A silent capped push would be strictly worse than the
+    stall it replaces.
+    """
+    if conv == "converged":
+        return None
+    cy = (run or {}).get("cycles") or []
+    last = cy[-1] if cy else {}
+    spent = sum(c.get("agents") or 0 for c in cy)
+    cap = (run or {}).get("agent_cap")
+    if conv is None:
+        return ("Review completeness UNKNOWN: this run recorded no cycles, so nothing can say "
+                "whether the loop still had findings when it stopped. Treat as unreviewed.")
+    head = {"capped": f"Review CAPPED at {spent} of {cap} agents",
+            "halted": f"Review HALTED after {len(cy)} cycle(s), {spent} agents"}[conv]
+    return (f"{head}: the last cycle applied {last.get('applied', '?')} fix(es)"
+            + (" and the deterministic pass still had unresolved findings" if last.get("analysis_changed") else "")
+            + ". The loop had not stopped finding things — another cycle would likely find more.")
+
 CONVERGENCE = ("converged", "capped", "halted")
 # A ceiling, not a target. Set above where the hard cases actually settle: the two runs
 # that converged did so in 1-2 cycles, while the two that did not were still finding

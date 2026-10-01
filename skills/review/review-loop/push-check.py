@@ -59,29 +59,6 @@ def decide(convergence, gate_state, unresolved_skip, branch, default_branch, ups
     return True, f"{convergence or 'unknown'} (review not finished), evidence gate ok, {where}"
 
 
-def disclosure(convergence, run):
-    """The line a PR must carry when the loop did not converge. None if it did.
-
-    This is the whole point of letting a capped run push: the branch ships, and the PR
-    says how far to trust it. A silent capped push would be strictly worse than the
-    stall it replaces.
-    """
-    if convergence == "converged":
-        return None
-    cy = (run or {}).get("cycles") or []
-    last = cy[-1] if cy else {}
-    spent = sum(c.get("agents") or 0 for c in cy)
-    cap = (run or {}).get("agent_cap")
-    if convergence is None:
-        return ("Review completeness UNKNOWN: this run recorded no cycles, so nothing can say "
-                "whether the loop still had findings when it stopped. Treat as unreviewed.")
-    head = {"capped": f"Review CAPPED at {spent} of {cap} agents",
-            "halted": f"Review HALTED after {len(cy)} cycle(s), {spent} agents"}[convergence]
-    return (f"{head}: the last cycle applied {last.get('applied', '?')} fix(es)"
-            + (" and the deterministic pass still had unresolved findings" if last.get("analysis_changed") else "")
-            + ". The loop had not stopped finding things — another cycle would likely find more.")
-
-
 def _upstream_exists(repo):
     r = subprocess.run(["git", "-C", repo, "rev-parse", "--abbrev-ref", "@{upstream}"],
                        capture_output=True, text=True, check=False)
@@ -93,16 +70,16 @@ def _selftest():
     # Converged pushes with no disclosure.
     assert decide("converged", "passed", False, *ok)[0] is True
     assert decide("converged", "skipped", False, *ok)[0] is True
-    assert disclosure("converged", {}) is None
+    assert runlog.disclosure("converged", {}) is None
     # Not converging no longer BLOCKS — it obliges a disclosure. This is the behaviour
     # change: a cap that strands commits just hands the decision back to a human.
     for c in ("capped", "halted", None):
         push, reason = decide(c, "passed", False, *ok)
         assert push is True, c
         assert "not finished" in reason, reason
-        assert disclosure(c, {"agent_cap": 8, "cycles": [{"n": 1, "applied": 3, "agents": 9}]})
+        assert runlog.disclosure(c, {"agent_cap": 8, "cycles": [{"n": 1, "applied": 3, "agents": 9}]})
     # Unknown convergence must still disclose — omitting cycle rows cannot buy silence.
-    assert "UNKNOWN" in disclosure(None, {})
+    assert "UNKNOWN" in runlog.disclosure(None, {})
     # What genuinely blocks is a different question: broken, not unfinished.
     assert decide("converged", "blocked", False, *ok)[0] is False           # gate blocked
     assert decide("converged", "passed", True, *ok)[0] is False             # unresolved skip
@@ -141,7 +118,7 @@ def main(argv):
                           a.branch, a.default_branch, _upstream_exists(a.repo))
     print(json.dumps({"push": push, "reason": reason,
                       "convergence": conv or "unknown",
-                      "disclose": disclosure(conv, run)}))
+                      "disclose": runlog.disclosure(conv, run)}))
     return 0
 
 
