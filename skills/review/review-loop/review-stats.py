@@ -129,6 +129,33 @@ def cmd_report(runs, repo):
     tally("session kind", "session_kind")
     tally("orchestrator model", "orchestrator_model")
 
+    # Convergence and spend, derived from the cycle rows. This is the only place the
+    # agent cap's number can be chosen with evidence rather than guessed: the default
+    # is a guess until we know how often runs converge, exhaust the budget, or just
+    # stop. Derived here via runlog rather than read from a field, for the same reason
+    # push-check derives it — a self-reported outcome is what this record replaced.
+    conv = collections.Counter(runlog.convergence(r) or "unknown" for r in fin)
+    if conv:
+        print("\nconvergence: " + "  ".join(f"{k}={v}" for k, v in conv.most_common()))
+
+    # Agents is the cap's unit because it is derivable; tokens are the real cost.
+    # Reporting both is what lets the proxy be checked against actual spend before the
+    # cap moves to a token or weighted basis — the stated reason tokens are recorded.
+    cyc = [c for r in runs for c in runlog.cycles_of(r)]
+    ag = sum(c.get("agents") or 0 for c in cyc)
+    tok = sum(c.get("subagent_tokens") or 0 for c in cyc)
+    if cyc:
+        bits = [f"cycles: {len(cyc)}", f"agents: {ag}"]
+        if len(fin):
+            bits.append(f"mean agents/run: {ag / len(fin):.1f}")
+        if tok and ag:
+            bits.append(f"mean tokens/agent: {tok / ag:,.0f}")
+        elif not tok:
+            # Absence is the finding: the cap cannot move off its agent-count proxy
+            # until something records what the agents actually cost.
+            bits.append("tokens: none recorded")
+        print("\n" + "  ".join(bits))
+
     drops = collections.Counter()
     by_model = collections.defaultdict(collections.Counter)
     by_kind = collections.defaultdict(collections.Counter)

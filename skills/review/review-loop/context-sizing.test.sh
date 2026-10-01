@@ -38,18 +38,61 @@ newrepo() {
 # field <repo> <key>
 field() { (cd "$1" && "$SCRIPT" 2>/dev/null) | python3 -c 'import json,sys;print(json.load(sys.stdin).get(sys.argv[1]))' "$2"; }
 
-# --- whitespace-only reformatting is not review surface, but IS reported
+# --- whitespace-only reformatting is not review surface, but IS reported.
+# --- Deliberately a .js file: this fixture used to reindent a .py file, where
+# --- indentation IS syntax, so it was asserting the bug the next case now pins.
 r=$(newrepo ws)
-printf 'def f(x):\n    if x:\n        return 1\n' > "$r/a.py"
+printf 'function f(x) {\n  if (x) {\n    return 1;\n  }\n}\n' > "$r/a.js"
 g -C "$r" add -A && g -C "$r" commit -qm add
 g -C "$r" push -q origin main
-printf 'def f(x):\n        if x:\n                return 1\n' > "$r/a.py"
+printf 'function f(x) {\n      if (x) {\n          return 1;\n      }\n}\n' > "$r/a.js"
 g -C "$r" add -A && g -C "$r" commit -qm reindent
 raw=$(field "$r" changed_lines); sem=$(field "$r" semantic_lines); exc=$(field "$r" sizing_excluded)
 [ "$raw" -gt 0 ] && ok "a reindent still has a raw line count ($raw)" || bad "a reindent still has a raw line count (got: $raw)"
 [ "$sem" = "0" ] && ok "a reindent has no semantic lines" || bad "a reindent has no semantic lines (got: $sem)"
 [ "$(field "$r" fast_path_eligible_by_size)" = "True" ] && ok "a reindent is fast-path eligible" || bad "a reindent is fast-path eligible"
 grep -q 'whitespace-only' <<<"$exc" && ok "and the exclusion is reported, not silent" || bad "and the exclusion is reported, not silent (got: $exc)"
+
+# --- THE OTHER CASE THAT MUST NOT BE EXCLUDED: where indentation IS syntax, a diff made
+# --- entirely of whitespace can move a call out of a guard. `git diff -w` scores that 0,
+# --- which read as "0 lines of review surface", took the fast path, and skipped the
+# --- security review along with agents #7-#11. Measured before the fix: semantic 0.
+for ext in py yaml; do
+	r=$(newrepo "dedent-$ext")
+	case $ext in
+		py)   before='if user.is_test:\n    stripe.charge(user, amount)\n'
+		      after='if user.is_test:\n    pass\nstripe.charge(user, amount)\n' ;;
+		yaml) before='prod:\n  debug: true\n'
+		      after='prod:\n  pass: 1\ndebug: true\n' ;;
+	esac
+	printf "$before" > "$r/a.$ext"
+	g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+	printf "$after" > "$r/a.$ext"
+	g -C "$r" add -A && g -C "$r" commit -qm dedent
+	sem=$(field "$r" semantic_lines); raw=$(field "$r" changed_lines)
+	[ "$sem" -gt 0 ] && ok ".$ext: an indentation change that moves control flow counts ($sem)" \
+		|| bad ".$ext: an indentation change that moves control flow counts (got: $sem of $raw raw)"
+	[ "$sem" = "$raw" ] && ok ".$ext: and counts in full, not discounted as whitespace" \
+		|| bad ".$ext: and counts in full, not discounted as whitespace (sem $sem, raw $raw)"
+done
+
+# --- Run from a subdirectory, the two counts must still measure the same tree. A `.`
+# --- pathspec made semantic_lines subtree-scoped while changed_lines stayed repo-wide,
+# --- and the shortfall was reported as excluded lockfiles that did not exist: measured,
+# --- a 501-line change read as semantic 1 from `docs/` and took the fast path.
+r=$(newrepo subdir)
+mkdir -p "$r/docs" "$r/src"
+printf 'x\n' > "$r/docs/a.md"; printf 'y\n' > "$r/src/b.js"
+g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+python3 -c "import io; io.open('$r/src/b.js','w').write(''.join(f'const v{i} = {i};\n' for i in range(50)))"
+printf 'x\nmore\n' > "$r/docs/a.md"
+g -C "$r" add -A && g -C "$r" commit -qm edit
+root_sem=$(field "$r" semantic_lines)
+sub_sem=$(cd "$r/docs" && "$SCRIPT" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["semantic_lines"])')
+[ "$sub_sem" = "$root_sem" ] && ok "sizing from a subdirectory matches the repo root ($sub_sem)" \
+	|| bad "sizing from a subdirectory matches the repo root (root $root_sem, docs/ $sub_sem)"
+[ "$sub_sem" -ge 50 ] && ok "and still sees the whole change from there" \
+	|| bad "and still sees the whole change from there (got: $sub_sem)"
 
 # --- a lockfile regeneration is excluded; the real edit beside it is not
 r=$(newrepo lock)
@@ -64,6 +107,11 @@ raw=$(field "$r" changed_lines); sem=$(field "$r" semantic_lines)
 [ "$raw" -gt 300 ] && ok "a lockfile bump has a large raw count ($raw)" || bad "a lockfile bump has a large raw count (got: $raw)"
 [ "$sem" -le 4 ] && ok "but only the real edit counts semantically ($sem)" || bad "but only the real edit counts semantically (got: $sem)"
 grep -q 'lockfile' <<<"$(field "$r" sizing_excluded)" && ok "and the lockfile exclusion is reported" || bad "and the lockfile exclusion is reported"
+# The only fixture whose raw and semantic counts straddle the 30-line threshold, so it is
+# the only one that can tell keying on semantic from keying on raw. Without it, mutating
+# `semantic < 30` to `changed < 30` passed the entire suite.
+[ "$(field "$r" fast_path_eligible_by_size)" = "True" ] && ok "and the fast path keys on semantic, not raw" \
+	|| bad "and the fast path keys on semantic, not raw (raw $raw, sem $sem)"
 
 # --- THE CASE THAT MUST NOT BE EXCLUDED: real logic, no whitespace trick
 r=$(newrepo real)
@@ -103,6 +151,23 @@ out=$(cd "$plain" && "$SCRIPT" 2>/dev/null); rc=$?
 	&& ok "no base branch still emits valid JSON" || bad "no base branch still emits valid JSON"
 [ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["semantic_lines"])' <<<"$out")" = "0" ] \
 	&& ok "and zeroes the sizing fields" || bad "and zeroes the sizing fields"
+
+# --- a base branch that resolves while `origin/<base>` is absent locally: a single-branch
+# --- clone, a pruned ref, or a best-effort fetch that failed (offline, expired auth, VPN).
+# --- Under `pipefail` both awk's own 0 and the `|| echo 0` fallback fired, making the
+# --- count the string "0\\n0"; int() refused it, context.sh exited 1 with no stdout, and
+# --- because Step 1 redirects into review-loop-context.json the redirect had already
+# --- truncated the previous valid file to 0 bytes.
+r=$(newrepo noref)
+printf 'const a = 1;\n' > "$r/a.js"
+g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+printf 'const a = 2;\n' > "$r/a.js"
+g -C "$r" add -A && g -C "$r" commit -qm edit
+g -C "$r" update-ref -d refs/remotes/origin/main
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null); rc=$?
+[ "$rc" -eq 0 ] && python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$out" >/dev/null \
+	&& ok "a missing origin/<base> ref still emits valid JSON" \
+	|| bad "a missing origin/<base> ref still emits valid JSON (rc=$rc)"
 
 echo
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"

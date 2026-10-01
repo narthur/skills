@@ -41,44 +41,103 @@ poetry.lock uv.lock Pipfile.lock Gemfile.lock composer.lock go.sum mix.lock pubs
 if [ -n "$base_branch" ]; then
   range="origin/$base_branch...HEAD"
   diffstat=$(git diff --stat "$range" 2>/dev/null || true)
+  # No `|| echo 0` here: awk already prints 0 on empty input, and under `pipefail` a
+  # failing git made BOTH fire — awk's 0 plus the fallback's 0 — so the value became the
+  # string "0\n0", which int() refused. context.sh then exited 1 with no stdout, and
+  # because Step 1 redirects into review-loop-context.json the redirect had already
+  # truncated the previous valid file to 0 bytes. Reachable whenever `origin/<base>` is
+  # absent locally: a single-branch clone, a pruned ref, or a best-effort fetch that
+  # failed (offline, expired auth, VPN).
   changed_lines=$(git diff --numstat "$range" 2>/dev/null \
-    | awk '{a+=$1; d+=$2} END {print a+d+0}' || echo 0)
+    | awk '{a+=$1; d+=$2} END {print a+d+0}')
 
   # Exclude pathspec: lockfiles, plus whatever .gitattributes marks linguist-generated —
   # the one declarative, repo-owned marker for generated files. Guessing from path names
   # would silently drop hand-written code that happens to live under `dist/`.
-  set -- "$range" -- .
-  for f in $LOCKFILES; do set -- "$@" ":(exclude,glob)**/$f" ":(exclude)$f"; done
+  # No positive pathspec: an exclude-only list already means "everything but these". A
+  # `.` here was repo-relative only when run from the repo root — from a subdirectory it
+  # scoped the semantic count to that subtree while changed_lines stayed repo-wide, and
+  # the shortfall was then reported as excluded lockfiles that did not exist. Measured:
+  # 501 changed lines read as semantic 1 from `docs/`, taking the fast path.
+  set -- "$range" --
+  for f in $LOCKFILES; do set -- "$@" ":(exclude,glob)**/$f" ":(exclude,literal)$f"; done
   gen=$(git diff --name-only "$range" 2>/dev/null \
     | git check-attr --stdin linguist-generated 2>/dev/null \
     | sed -n 's/: linguist-generated: set$//p' || true)
   while IFS= read -r g; do
     [ -n "$g" ] || continue
-    set -- "$@" ":(exclude)$g"
+    # literal: a generated path holding glob metacharacters (`app/[id]/page.tsx`, routine
+    # in Next.js and SvelteKit) would otherwise exclude more files than the one named.
+    set -- "$@" ":(exclude,literal)$g"
   done <<EOF
 $gen
 EOF
 
-  # -w drops whitespace-only changes: a reindent or a formatter run is not review
-  # surface. (A pure rename already counts 0 in --numstat, so it needs no handling.)
-  semantic_lines=$(git diff -w --numstat "$@" 2>/dev/null \
-    | awk '{a+=$1; d+=$2} END {print a+d+0}' || echo 0)
+  # Semantic size, measured per file. `-w` is right for a formatter run, and WRONG where
+  # indentation is syntax: a one-line dedent moving a call out of an `if user.is_test:`
+  # guard is a control-flow change that `-w` scores 0. That read as "0 lines of review
+  # surface", took the fast path, and skipped the security review along with agents
+  # #7-#11. So `-w` applies only to files where whitespace cannot carry meaning; for the
+  # rest the raw count stands. (A pure rename already counts 0 in --numstat, so it needs
+  # no handling.)
+  sizing=$(GEN="$gen" RAW_TOTAL="$changed_lines" python3 -c '
+import os, subprocess, sys
 
-  # Say what was dropped and by how much. A sizing decision nobody can audit is the
-  # silent-skip problem one level down: a smaller number buys a cheaper review.
-  kept_raw=$(git diff --numstat "$@" 2>/dev/null | awk '{a+=$1; d+=$2} END {print a+d+0}' || echo 0)
-  sizing_excluded=$(GEN="$gen" python3 -c '
-import os, sys
-raw, kept, sem = (int(x) for x in sys.argv[1:4])
+# Indentation is syntax in these, so a whitespace-blind diff can hide control flow.
+INDENT = {".py", ".pyi", ".yml", ".yaml", ".hs", ".nim", ".elm", ".coffee", ".sass",
+          ".styl", ".slim", ".haml", ".pug", ".jade", ".cr"}
+INDENT_NAMES = {"Makefile", "makefile", "GNUmakefile"}
+
+
+def per_file(*flags):
+    out = subprocess.run(["git", "diff", "--numstat", *flags, *sys.argv[1:]],
+                         capture_output=True, text=True).stdout
+    acc = {}
+    for line in out.splitlines():
+        parts = line.split("\t")
+        if len(parts) == 3:
+            # Binary files report "-" for both counts.
+            a, d = (0 if x == "-" else int(x) for x in parts[:2])
+            acc[parts[2]] = a + d
+    return acc
+
+
+def indent_sensitive(path):
+    name = path.rsplit("/", 1)[-1]
+    dot = name.rfind(".")
+    return name in INDENT_NAMES or (dot > 0 and name[dot:] in INDENT)
+
+
+raw, blind = per_file(), per_file("-w")
+kept = sum(raw.values())
+semantic = sum(raw[f] if indent_sensitive(f) else blind.get(f, 0) for f in raw)
+
+# Say what was dropped and by how much. A sizing decision nobody can audit is the
+# silent-skip problem one level down: a smaller number buys a cheaper review.
+raw_total = int(os.environ.get("RAW_TOTAL") or 0)
 gen = [g for g in os.environ.get("GEN", "").splitlines() if g.strip()]
 out = []
-if raw - kept:
-    out.append(f"{raw - kept} line(s) in lockfiles or generated files")
-if kept - sem:
-    out.append(f"{kept - sem} whitespace-only line(s)")
+if raw_total - kept > 0:
+    out.append(f"{raw_total - kept} line(s) in lockfiles or generated files")
+if kept - semantic > 0:
+    out.append(f"{kept - semantic} whitespace-only line(s), indentation-sensitive files excepted")
 if gen:
     out.append("generated per .gitattributes: " + ", ".join(gen))
-print("; ".join(out))' "$changed_lines" "$kept_raw" "$semantic_lines" 2>/dev/null || true)
+print(kept)
+print(semantic)
+print("; ".join(out))
+' "$@" 2>/dev/null) || sizing=""
+  kept_raw=$(printf '%s\n' "$sizing" | sed -n 1p)
+  semantic_lines=$(printf '%s\n' "$sizing" | sed -n 2p)
+  sizing_excluded=$(printf '%s\n' "$sizing" | sed -n 3p)
+  # Fail toward MORE review. A helper that produced nothing used to leave semantic_lines
+  # empty, which every downstream threshold read as 0 — the smallest possible number
+  # buying the cheapest possible review. Fall back to the raw count instead.
+  case "$kept_raw" in ''|*[!0-9]*) kept_raw=$changed_lines ;; esac
+  case "$semantic_lines" in
+    ''|*[!0-9]*) semantic_lines=$changed_lines
+                 sizing_excluded="sizing helper produced no count; using the raw total" ;;
+  esac
 fi
 
 BASE_BRANCH="$base_branch" LEARNINGS="$learnings" \
