@@ -319,7 +319,12 @@ def reasons_in(rec):
 
 def reject_banned(reasons):
     for where, text in reasons:
-        low = (text or "").lower()
+        # Whitespace-normalised, not just lowercased. Matching raw text let three of five
+        # phrasings through: "matches  an   existing pattern", the same phrase broken by a
+        # newline, and the same with a tab. A newline mid-phrase is not an evasion attempt,
+        # it is what writing a reason long enough to wrap produces — so the substring check
+        # was failing on the ordinary case, not only the adversarial one.
+        low = " ".join((text or "").lower().split())
         for phrase in BANNED_REASON:
             if phrase in low:
                 sys.exit(

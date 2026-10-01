@@ -12,6 +12,8 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/review-loop-test.XXXXXX") || { echo "mktemp fai
 trap 'rm -rf "$TMP"' EXIT
 export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 fails=0
+NL=$'\n'
+TAB=$'\t'
 ok() { echo "  ok  $1"; }
 bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
 
@@ -244,6 +246,19 @@ print(runlog.disclosure_pending(runlog.load(limit=None)["'"$1"'"], "'"$2"'") or 
 	|| bad "and is clear once the disclosure is recorded (got: $(pend "$r" aaaa111))"
 [ "$(pend "$r" bbbb222)" != "CLEAR" ] && ok "but only for the commit it describes" \
 	|| bad "but only for the commit it describes"
+
+# The precedent ban matched raw text, so whitespace walked straight through it: a reason
+# long enough to wrap carries a newline mid-phrase, which is the ordinary case rather than
+# an evasion. Three of these five phrasings used to be recorded.
+for variant in "matches  an   existing    pattern" "matches${NL}an existing pattern" \
+	"matches an existing${TAB}pattern" "MATCHES AN EXISTING PATTERN" "matches an existing pattern"; do
+	out=$("$PY" runlog.py skipped --reason "$variant" --model m 2>&1 | head -1)
+	grep -q refusing <<<"$out" && ok "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n\t' '  ' | cut -c1-32)" \
+		|| bad "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n\t' '  ' | cut -c1-32) (got: $out)"
+done
+# And a measurable reason still records.
+out=$("$PY" runlog.py skipped --reason "12 lines and no logic touched" --model m 2>&1 | head -1)
+grep -q refusing <<<"$out" && bad "a measurable reason still records" || ok "a measurable reason still records"
 
 # A cycle for a run that was never planned is a row with nothing to attach to.
 out=$("$PY" runlog.py cycle --run-id deadbeefdead --n 1 --applied 0 --agents 1 2>&1)
