@@ -257,9 +257,12 @@ def unaccounted(planned, executed, escalations):
 # vocabulary here rather than by reading each writer's body.
 OUTCOMES = ("clean", "cycle-limit", "test-failure", "blocked", "abandoned", "skipped", "carried")
 TIERS = ("skipped", "carried", "fast", "full", "partial")
-# Written by their own subcommands, never claimed at `finish` — a run cannot
-# award itself either one. The `finish` choices below subtract these, so the
-# vocabulary above stays the single definition rather than a stale copy of it.
+# Outcomes written by their own subcommands, never claimed as an outcome at
+# `finish` — a run cannot award itself either one. `--outcome` below subtracts both,
+# so the vocabulary above stays the single definition rather than a stale copy of
+# it. `--tier skipped` stays valid: a run may report that it executed the skipped
+# tier. Only `carried` is off-limits as a tier. review-stats.py also reads this to
+# keep both out of its cadence count.
 SUBCOMMAND_STATES = ("skipped", "carried")
 TIER_RANK = {"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}
 

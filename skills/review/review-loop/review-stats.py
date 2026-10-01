@@ -22,7 +22,7 @@ import sys
 # one that drifts is the one nobody is looking at. A plain import works because
 # Python puts the executed script's own directory at sys.path[0], and runlog.py
 # sits beside this file.
-import runlog  # noqa: E402
+import runlog
 
 ALARM_THRESHOLD = 3
 ALARM_WINDOW = 50
@@ -51,7 +51,12 @@ def is_abandoned(run, current_session=None):
         # run from one in flight somewhere else, and guessing here would report
         # exactly the falsehood that deriving-on-read exists to avoid.
         return False
-    return run.get("session_id") != current_session
+    # A row that never named a session is unknown, not dead — the same conclusion
+    # this function already reaches for a reader that never named one. Guessing here
+    # reported every headless run (session_id null) as abandoned, and three of those
+    # in 50 tripped the alarm at Step 0 of every later run. runlog.unfinished()
+    # handles the mirror case the same careful way.
+    return bool(run.get("session_id")) and run["session_id"] != current_session
 
 
 def dropped_gates(run):
@@ -94,17 +99,25 @@ def cmd_report(runs, repo):
         return 0
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
     lost = [r for r in runs if is_abandoned(r, here)]
-    # A `carried` row is bookkeeping — a rebase moved an existing record onto a new
-    # sha — not a review pass. It has an outcome, so it would otherwise count as
-    # `finished` and inflate the cadence signal these numbers exist to report: a
-    # branch rebased ten times would read as ten more reviews than were run.
-    carried = [r for r in runs if r.get("outcome") == "carried"]
-    fin = [r for r in runs
-           if r.get("outcome") and r.get("outcome") != "carried" and not is_abandoned(r, here)]
-    open_n = len(runs) - len(fin) - len(lost) - len(carried)
+    # Both of runlog's SUBCOMMAND_STATES are bookkeeping, not review passes: `carried`
+    # is a rebase moving an existing record onto a new sha, `skipped` is a change
+    # judged beneath the loop. Each has an outcome, so each would otherwise count as
+    # `finished` and inflate the one number here that reports review cadence — a
+    # branch rebased ten times would read as ten more reviews than were run. Taken
+    # from runlog rather than restated, so the two definitions cannot drift.
+    book = [r for r in runs if r.get("outcome") in runlog.SUBCOMMAND_STATES]
+    fin = [r for r in runs if r.get("outcome")
+           and r["outcome"] not in runlog.SUBCOMMAND_STATES and not is_abandoned(r, here)]
+    open_n = len(runs) - len(fin) - len(lost) - len(book)
     label = "open (unknown — run from the session that owns them)" if not here else "in flight (this session)"
-    print(f"runs: {len(runs)}  finished: {len(fin)}  abandoned: {len(lost)}  {label}: {open_n}"
-          + (f"  carried (rebase bookkeeping, not a review): {len(carried)}" if carried else ""))
+    tail = "".join(f"  {name} ({what}, not a review): {n}"
+                   for name, what, n in (
+                       ("skipped", "judged beneath the loop",
+                        sum(1 for r in book if r.get("outcome") == "skipped")),
+                       ("carried", "rebase bookkeeping",
+                        sum(1 for r in book if r.get("outcome") == "carried")))
+                   if n)
+    print(f"runs: {len(runs)}  finished: {len(fin)}  abandoned: {len(lost)}  {label}: {open_n}" + tail)
 
     def tally(label, key):
         c = collections.Counter(r.get(key) or "(unset)" for r in runs)

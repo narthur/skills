@@ -12,7 +12,7 @@
 # the clean-rebase case and nothing else, which is the point: a rebase that
 # changed anything still owes a review.
 #
-# The carry is gated on `git patch-id --stable`, which compares the patch itself.
+# The carry is gated on `git patch-id --verbatim`, which compares the patch bytes.
 # That is the right gate rather than a convenient one:
 #   - a clean rebase reproduces the same patch, so the record carries
 #   - a rebase that resolved a conflict produces a DIFFERENT patch, so it does not,
@@ -61,8 +61,16 @@ cap() {
 	tail -n 500 "$1" > "$1.tmp" && mv "$1.tmp" "$1"
 }
 
+# --verbatim, NOT --stable (they cannot be combined). --stable strips whitespace
+# before hashing, so two commits differing only in indentation share an id — and in
+# Python, YAML and shell, indentation is semantics. Measured on git 2.50.1:
+# `rm -rf /tmp/junk` and `rm -rf / tmp/junk` both hash to 172d8390 under --stable
+# and differ under --verbatim. --verbatim still ignores hunk headers and blob index
+# lines, so a rebase that only moved the hunk's line numbers still matches, which is
+# the whole case this feature exists for. On git < 2.39 --verbatim is rejected, the
+# id comes back empty, and the caller refuses to carry — fail closed.
 patch_id() {
-	git diff-tree -p --no-commit-id "$1" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1
+	git diff-tree -p --no-commit-id "$1" 2>/dev/null | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1
 }
 
 # Nothing recorded anywhere means nothing can carry. This runs on every rebase and
@@ -117,22 +125,20 @@ while read -r old new _rest; do
 	# way round, a missing python or a runlog error would silently mark a sha
 	# reviewed with nothing in the record to say why — the same ordering mistake
 	# record-skipped.sh already had to correct.
-	if [ -f "$RUNLOG" ]; then
-		py=$(command -v python3.14 || command -v python3 || true)
-		# No python is the same outcome as a failed write: no audit row. Treating it
-		# as "fine, carry on" was the half of this the reorder missed — the store got
-		# its entry and nothing recorded why, which is what the comment above says
-		# can no longer happen.
-		if [ -z "$py" ]; then
-			echo "review-gate: no python to record the carry of ${old:0:12}; leaving the gate state alone" >&2
-			continue
-		fi
-		"$py" "$RUNLOG" carried --from "$old" --to "$new" --how "$how" \
-			--by "patch-id, $mode" >/dev/null 2>&1 || {
-			echo "review-gate: could not record the carry of ${old:0:12}; leaving the gate state alone" >&2
-			continue
-		}
+	# No python, or no runlog.py beside this script, is the same outcome as a failed
+	# write: no audit row. Both were once "fine, carry on" — the store got its entry
+	# and nothing recorded why, which is what the comment above says can no longer
+	# happen. One branch for all three so a fourth cannot be added past it.
+	py=$(command -v python3.14 || command -v python3 || true)
+	if [ ! -f "$RUNLOG" ] || [ -z "$py" ]; then
+		echo "review-gate: cannot record the carry of ${old:0:12} (no runlog); leaving the gate state alone" >&2
+		continue
 	fi
+	"$py" "$RUNLOG" carried --from "$old" --to "$new" --how "$how" \
+		--by "patch-id, $mode" >/dev/null 2>&1 || {
+		echo "review-gate: could not record the carry of ${old:0:12}; leaving the gate state alone" >&2
+		continue
+	}
 
 	if [ "$how" = reviewed ]; then
 		printf '%s\n' "$new" >> "$REVIEWED"

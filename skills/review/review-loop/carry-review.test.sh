@@ -92,12 +92,17 @@ root_old=$(o rev-parse HEAD)
 echo "COMPLETELY DIFFERENT CONTENT" > "$orphan/a.txt"; o add -A; o commit -q --amend --no-edit -m root
 root_new=$(o rev-parse HEAD)
 [ "$root_old" != "$root_new" ] || bad "the root amend rewrote the sha"
-# Confirm the premise rather than assuming it: both sides really are empty.
-rp_old=$(o diff-tree -p --no-commit-id "$root_old" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1)
-rp_new=$(o diff-tree -p --no-commit-id "$root_new" 2>/dev/null | git patch-id --stable 2>/dev/null | cut -d' ' -f1)
-[ -z "$rp_old" ] && [ -z "$rp_new" ] \
-	&& ok "a root commit yields no patch-id on either side" \
-	|| ok "root commits do produce patch-ids here; the both-empty case is moot on this git"
+# Confirm the premise rather than assuming it. Mirror the script's own flag — with
+# --stable here and --verbatim there, this would report on ids the script never
+# computes. Printed as a note, not an `ok`: both outcomes are acceptable, so it is
+# not an assertion and must not inflate the pass count.
+rp_old=$(o diff-tree -p --no-commit-id "$root_old" 2>/dev/null | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1)
+rp_new=$(o diff-tree -p --no-commit-id "$root_new" 2>/dev/null | git patch-id --verbatim 2>/dev/null | cut -d' ' -f1)
+if [ -z "$rp_old" ] && [ -z "$rp_new" ]; then
+	echo "  note  a root commit yields no patch-id on either side — the both-empty case is live"
+else
+	echo "  note  root commits do produce patch-ids on this git; the both-empty case is moot here"
+fi
 printf '%s\n' "$root_old" > "$REVIEWED"
 (cd "$orphan" && printf '%s %s\n' "$root_old" "$root_new" | "$SCRIPT" amend 2>/dev/null)
 grep -qxF "$root_new" "$REVIEWED" \
@@ -192,17 +197,59 @@ nopath="$TMP/nopy"; mkdir -p "$nopath"
 for t in git grep awk sed cut head tail wc date sort mv rm basename dirname cat tr env; do
 	src=$(command -v "$t" 2>/dev/null) && ln -sf "$src" "$nopath/$t"
 done
-# Prove the fixture is sound before trusting what it shows: the script must get
-# far enough to say something.
-[ -n "$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | PATH="$nopath" "$SCRIPT" rebase 2>&1)" ] \
-	|| bad "the no-python fixture is broken — the script died before reaching the check"
+# No separate fixture-soundness probe: the message grep below IS the proof the
+# script reached the check, and it cannot be satisfied by incidental stderr. A
+# probe asserting merely that something was printed passed when `sort` was
+# dropped from the fake PATH and the script died long before the python block.
 : > "$REVIEWED"; printf '%s\n' "$feat_old" > "$REVIEWED"
 out=$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | PATH="$nopath" "$SCRIPT" rebase 2>&1)
 grep -qxF "$feat_new" "$REVIEWED" \
 	&& bad "with no python, the gate store must not change" \
 	|| ok "with no python, the gate store does not change"
-grep -q "no python to record" <<<"$out" \
+grep -q "cannot record the carry" <<<"$out" \
 	&& ok "and it says so rather than failing silently" || bad "and it says so rather than failing silently"
+
+# --- no runlog.py beside the script: the other half of the same hole. The audit
+# --- block used to be wrapped in `if [ -f "$RUNLOG" ]`, so a partial install that
+# --- shipped the shell scripts without the python ones stamped every carry with no
+# --- audit row at all — and ensure-husky-gate.sh points the hook at this directory
+# --- precisely so the two can be shipped apart.
+lonely="$TMP/lonely"; mkdir -p "$lonely"; cp "$SCRIPT" "$lonely/carry-review.sh"
+[ ! -e "$lonely/runlog.py" ] || { echo "setup failed: runlog.py must not be beside the copy"; exit 1; }
+: > "$REVIEWED"; printf '%s\n' "$feat_old" > "$REVIEWED"
+out=$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | "$lonely/carry-review.sh" rebase 2>&1)
+grep -qxF "$feat_new" "$REVIEWED" \
+	&& bad "with no runlog.py, the gate store must not change" \
+	|| ok "with no runlog.py, the gate store does not change"
+grep -q "cannot record the carry" <<<"$out" \
+	&& ok "and it says why" || bad "and it says why"
+
+# --- whitespace is not cosmetic: patch-id --stable strips it before hashing, so an
+# --- indentation-only rewrite shared an id with the reviewed original and carried a
+# --- stamp onto code the loop never saw. In Python that changes which block a
+# --- statement runs in. --verbatim separates them.
+ws="$TMP/ws"; mkdir -p "$ws"; (
+	cd "$ws" && git init -q . && git config user.email t@t && git config user.name t
+	printf 'def f(x):\n    if x:\n        a()\n' > m.py && git add -A && git commit -qm base
+	printf 'def f(x):\n    if x:\n        a()\n    b()\n' > m.py && git commit -qam outside
+) >/dev/null 2>&1
+ws_old=$(cd "$ws" && git rev-parse HEAD)
+(cd "$ws" && git reset -q --hard HEAD~1 && printf 'def f(x):
+    if x:
+        a()
+        b()
+' > m.py && git commit -qam inside) >/dev/null 2>&1
+ws_new=$(cd "$ws" && git rev-parse HEAD)
+# Sanity: the two commits really are indentation-only variants of each other, or
+# this proves nothing about whitespace.
+[ "$ws_old" != "$ws_new" ] || { echo "setup failed: the two whitespace commits are identical"; exit 1; }
+: > "$REVIEWED"; printf '%s
+' "$ws_old" > "$REVIEWED"
+(cd "$ws" && printf '%s %s
+' "$ws_old" "$ws_new" | "$SCRIPT" amend >/dev/null 2>&1)
+grep -qxF "$ws_new" "$REVIEWED" \
+	&& bad "an indentation-only rewrite must not carry a reviewed stamp" \
+	|| ok "an indentation-only rewrite does not carry a reviewed stamp"
 
 # Outside a work tree it must do nothing rather than error.
 out=$(cd "$TMP" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>&1); rc=$?
