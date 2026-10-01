@@ -86,11 +86,46 @@ Nothing pending, or still no PR → continue (leave the file in place). Both pre
 
 When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the relevance-based sweep **once here, before the review agents**, so the whole run uses the slimmed file — then skip it for the rest of the run. Otherwise skip entirely. Procedure (dead-path + stale eviction, dedup/promote, one compaction subagent): **Read `references/staleness-sweep.md`**.
 
-Also run the vendored-prompt drift check here (cheap, no LLM):
+Also run two cheap no-LLM checks here:
 
 ```bash
+python3 ~/.claude/skills/review-loop/deferred.py
 python3 ~/.claude/skills/review-loop/upstream-check.py
 ```
+
+**`deferred.py` — findings whose grounding may have expired.** A reachability deferral is a
+grounded judgment, not a dodge: the review happened, the finding is real, and the only claim is
+that nothing exercises it *today*. The hazard is that such a deferral is right when written and
+silently permanent afterwards. "No async Sketch exists, so two draws cannot overlap" stops being
+true the moment someone writes the second Sketch — which is exactly when the finding matters and
+when nobody remembers it exists.
+
+- **`stale[]` is a worklist.** Each entry's cited file has moved, so re-read the grounding. It
+  either still holds (re-pin to the current sha), no longer holds (the finding is live — route it
+  into this run as a cycle-1 finding), or the code is gone (delete the entry). Do not leave a
+  stale entry stale.
+- **`unpinned[]` is a defect in the record**, not a finding. An entry with no `[file:line @ sha]`
+  can never be marked stale, so it will survive the change that invalidated it. Pin it or delete it.
+- Nothing stale and nothing unpinned → continue; this costs one `git log` per entry.
+
+**To defer a finding** (Step 8a routes it here; never auto-apply a finding you are deferring),
+append to `<git-common-dir>/info/review-loop-deferred.md`:
+
+```
+- DEFERRED <date> (run <run_id>): <the finding, stated as the defect it is>
+  Grounding: <the specific fact that makes it unreachable today>. [<file>:<line> @ <sha>]
+  Guard: <the assertion that now fails if the grounding breaks, or why none was cheap>
+```
+
+The pin goes on the file whose change would invalidate the grounding — the type, the interface,
+the registry — not on the code that would break.
+
+**Add a guard when one is cheap.** *Cheap* means expressible as an assertion inside an existing
+test or check, with no new file and no new dependency. If it is cheap, just add it: a tripwire that
+fails the moment the grounding breaks beats a note that something should be re-read. If it is not
+cheap, weigh how bad the defect would be against the cost of adding and maintaining the guard, and
+record the answer on the `Guard:` line either way — including "none, because …", so the next reader
+knows it was considered rather than forgotten.
 
 `references/security-review.md` vendors Anthropic's `/security-review` prompt, which is compiled into the Claude Code binary and so updates silently whenever Claude Code does. On `drift: true`, note it in the Step 14 report and offer once to diff (`--extract`) and reconcile — never block the run, and never auto-adopt: some departures are deliberate.
 
