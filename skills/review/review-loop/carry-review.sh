@@ -6,11 +6,14 @@
 # legitimately earned.
 #
 # How much does that actually cost? Of the eight rows in skipped-shas citing a
-# rebase, exactly ONE is a pure rename this would have carried; the other seven
-# describe real work done during the rebase — conflict resolutions, a re-unioned
-# pnpm override, a two-line port — whose patch-ids provably differ. So this fixes
-# the clean-rebase case and nothing else, which is the point: a rebase that
-# changed anything still owes a review.
+# rebase, exactly ONE would have carried: 2026-09-27, a conflict-free rebase onto an
+# unrelated commit, whose row says "no content changed between the reviewed tip and
+# this one". The other seven record content that differs from the reviewed tip — four
+# conflict resolutions, a re-unioned pnpm override, a two-line port, a lockfile-only
+# delta — so their patch-ids differ. This fixes the clean-rebase case and nothing
+# else, which is the point: a rebase that changed anything still owes a review. (Not
+# a rename — no row mentions one, and a rename is the one shape that could never
+# carry, since patch-id covers the file names.)
 #
 # The carry is gated on `git patch-id --verbatim`, which compares the patch bytes.
 # That is the right gate rather than a convenient one:
@@ -43,10 +46,13 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 # has actually landed, and never fires at all after an abort — so wait for it.
 if [ "${1:-}" = "amend" ]; then
 	for d in rebase-merge rebase-apply; do
-		# --path-format=absolute: plain --git-path is relative to the CWD. Git runs
-		# hooks from the work-tree root, so that resolves correctly here — the flag
-		# is a one-word hedge against a caller (a test, a manual run) that cd'd first.
-		p=$(git rev-parse --path-format=absolute --git-path "$d" 2>/dev/null) || continue
+		# Plain --git-path, no --path-format: the path it returns is relative to the
+		# CWD, so it resolves from wherever the caller stands — measured from a
+		# subdirectory and in a linked worktree. --path-format=absolute added nothing
+		# and needed git >= 2.31; below that rev-parse fails, `|| continue` skips this
+		# guard entirely, and a mid-rebase amend carries a record for a sha the rebase
+		# may still discard.
+		p=$(git rev-parse --git-path "$d" 2>/dev/null) || continue
 		[ -e "$p" ] && exit 0
 	done
 fi
@@ -64,8 +70,9 @@ cap() {
 # --verbatim, NOT --stable (they cannot be combined). --stable strips whitespace
 # before hashing, so two commits differing only in indentation share an id — and in
 # Python, YAML and shell, indentation is semantics. Measured on git 2.50.1:
-# `rm -rf /tmp/junk` and `rm -rf / tmp/junk` both hash to 172d8390 under --stable
-# and differ under --verbatim. --verbatim still ignores hunk headers and blob index
+# `rm -rf /tmp/junk` and `rm -rf / tmp/junk` collide under --stable and differ under
+# --verbatim. (No hash quoted: a patch-id covers the file name and surrounding
+# context too, so the value is a property of the fixture, not of the pair of lines.) --verbatim still ignores hunk headers and blob index
 # lines, so a rebase that only moved the hunk's line numbers still matches, which is
 # the whole case this feature exists for. On git < 2.39 --verbatim is rejected, the
 # id comes back empty, and the caller refuses to carry — fail closed.
