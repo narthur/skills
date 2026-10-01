@@ -83,8 +83,12 @@ cap() {
 # For a text diff --verbatim changes exactly that one thing: it still drops the
 # `@@ ... @@` line and the `index <old>..<new>` line, so a rebase that only moved the
 # hunk's offsets still matches — the whole case this feature exists for. A binary diff
-# has neither line; git >= 2.39 hashes the blob oids instead, which is stricter rather
-# than looser (a clean rebase preserves the oids, so the carry still works). On git < 2.39 the flag is
+# has no `@@` line, and its `index` line is NOT dropped: git >= 2.39 hashes the pre- and
+# post-image blob oids out of it. That is stricter rather than looser — a clean rebase
+# preserves both oids, so the carry still works. (Measured: rewriting only the oids in
+# a binary diff's index line changes the id; doing the same to a text diff does not.)
+#
+# On git < 2.39 the flag is
 # unrecognised: rc 129 and empty stdout, so the id is empty and the caller refuses.
 # Fail closed.
 patch_id() {

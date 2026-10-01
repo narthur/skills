@@ -177,8 +177,12 @@ def reasons_in(rec):
     """Every free-text reason a record carries, with a label for the error."""
     out = []
     for gate, v in (rec.get("gates") or {}).items():
-        if isinstance(v, dict) and v.get("planned") == "skip":
-            out.append((f"gate {gate!r} as skip", v.get("reason")))
+        # Complement rather than a list of values, matching the executed loop below.
+        # cmd_plan's PLANNED check makes this currently equivalent to `== "skip"`, so it
+        # is consistency and not load-bearing — if that check is ever relaxed, this one
+        # does not have to be found and changed too.
+        if isinstance(v, dict) and v.get("planned") != "run":
+            out.append((f"gate {gate!r} as {v.get('planned')}", v.get("reason")))
     for gate, v in (rec.get("executed") or {}).items():
         # The exact complement of the test cmd_finish uses to DEMAND a reason, so every
         # status that owes one gets it vetted. Listing statuses here instead went stale
@@ -212,7 +216,29 @@ def reject_banned(reasons):
                 )
 
 
+PLANNED = ("run", "skip")
+
+
 def cmd_plan(a):
+    gates = parse_json_arg(a.gates, "gates") or {}
+    # planned_gates demands an account only for "run", so a gate whose planned value is
+    # neither run nor skip was dropped silently AND escaped the reason ban. A plan is the
+    # artifact the whole record is derived from; refuse a malformed one here rather than
+    # teaching every consumer a third value it has never seen.
+    bad_plan = sorted(g for g, v in gates.items()
+                      if not isinstance(v, dict) or v.get("planned") not in PLANNED)
+    if bad_plan:
+        sys.exit(
+            "runlog: refusing to plan — these gates are not "
+            f"{{\"planned\": \"run\"|\"skip\", \"reason\": ...}}:\n  {', '.join(bad_plan)}"
+        )
+    unexplained = sorted(g for g, v in gates.items() if not (v.get("reason") or "").strip())
+    if unexplained:
+        sys.exit(
+            "runlog: refusing to plan — these gates carry no reason:\n  "
+            f"{', '.join(unexplained)}\nA gate's reason is what a later run is "
+            "measured against; an unexplained plan cannot be iterated on."
+        )
     rec = {
         "run_id": a.run_id or uuid.uuid4().hex[:12],
         "phase": "plan",
@@ -229,7 +255,7 @@ def cmd_plan(a):
         "session_id": os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID"),
         "tier_floor": a.tier,
         "inputs": parse_json_arg(a.inputs, "inputs") or {},
-        "gates": parse_json_arg(a.gates, "gates") or {},
+        "gates": gates,
         "changed_lines": a.changed_lines,
     }
     append(rec)

@@ -73,6 +73,30 @@ printf '{"run_id":"broke' >> "$REVIEW_LOOP_RUNS"
 "$PY" runlog.py show --run-id "$rid" >/dev/null 2>&1 \
 	&& ok "torn line tolerated" || bad "torn line tolerated"
 
+# A plan is the artifact everything else is derived from, so a malformed one must not
+# enter the record. `planned_gates` demands an account only for "run", so a third value
+# was dropped silently AND escaped the reason ban — the same stale-list shape as `n/a`.
+for pv in deferred "" maybe; do
+	out=$("$PY" runlog.py plan --tier full --model m \
+		--gates "{\"threat_model\":{\"planned\":\"$pv\",\"reason\":\"matches an existing pattern\"}}" 2>&1)
+	# Refused, and no row written: a bad plan leaves nothing behind to be finished.
+	if ! grep -qE '^[0-9a-f]{12}$' <<<"$(tail -1 <<<"$out")"; then
+		ok "a gate planned '$pv' is refused, not recorded"
+	else
+		bad "a gate planned '$pv' is refused, not recorded"
+	fi
+done
+# The ban now applies to a planned skip's reason whatever the value is called.
+out=$("$PY" runlog.py plan --tier full --model m \
+	--gates '{"t":{"planned":"skip","reason":"matches an existing pattern"}}' 2>&1)
+grep -qi precedent <<<"$out" && ok "a planned skip's reason is still vetted" || bad "a planned skip's reason is still vetted"
+# An unexplained plan cannot be iterated on, which is the whole purpose of the record.
+out=$("$PY" runlog.py plan --tier full --model m --gates '{"t":{"planned":"skip"}}' 2>&1)
+grep -q 'no reason' <<<"$out" && ok "a gate with no reason is refused at plan time" || bad "a gate with no reason is refused at plan time"
+# And the legitimate plan every real run writes still works.
+rid=$("$PY" runlog.py plan --tier full --model m --gates '{"t":{"planned":"skip","reason":"12 entries, under the 40 threshold"}}' 2>&1 | tail -1)
+[[ "$rid" =~ ^[0-9a-f]{12}$ ]] && ok "a well-formed plan still records" || bad "a well-formed plan still records (got: $rid)"
+
 # A malformed executed entry is not an account. `{"gate":"done"}` — the natural typo
 # for `{"gate":{"status":"done"}}` — passed every isinstance guard and recorded `full`
 # while review-stats.py read the same gate as dropped.
