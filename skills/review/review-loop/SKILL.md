@@ -153,16 +153,22 @@ while cycle <= max_cycles:
        - 50-79 + low-risk                 → auto-fix (no ask)
        - 50-79 + high-risk                → ask-user
        - <50                              → skip
-    e. If auto-fix bucket is empty AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → EXIT LOOP (clean).
+    e. If auto-fix bucket is empty AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → record the cycle (step j2, `--applied 0`, no `--analysis-changed`) and EXIT LOOP (clean). That zero-fix row IS the proof of convergence; skipping it because the loop is ending makes the run indistinguishable from one that ran out of budget.
     f. Apply auto-fix bucket via Edit (Step 7).
     g. If ask-user bucket is non-empty, batch them into one AskUserQuestion (Step 8b). Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
     j. Append captured learnings to .git/info/review-loop-learnings.md (Step 11), deduping against existing entries.
+    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --agents ..` (Step 10).
+        EVERY cycle, including a zero-fix one — convergence is derived from these rows, and a run
+        with none of them reads as "did not converge" at Step 14.
     k. cycle += 1
 
 If cycle > max_cycles:
     Report: "Reached cycle limit (3). Remaining findings below."
+    The last cycle's row (applied > 0) is what makes this derivable as `capped`/`halted` rather
+    than being asserted. This no longer blocks the push — Step 14 pushes with the `disclose` line
+    the checker emits. Stranding the commits only moves the decision back to the user.
 ```
 
 On a clean loop exit, run the manual-testing evidence gate (Step 13) before the final report/auto-push (Step 14). If the gate's testing uncovers a real issue, fix + commit + restart the loop from cycle 1 (see Step 13).
@@ -355,6 +361,26 @@ Summary should mention the agent categories whose findings drove the cycle (e.g.
 
 After committing, record this commit's sha (`git rev-parse HEAD`) as the previous-cycle marker so the next cycle's review scope (Step 4 loop, step b) diffs against it. If the cycle made no commit (nothing to fix), the marker stays where it was.
 
+**Then record the cycle in the run record — every cycle, including the one that applied nothing:**
+
+```bash
+python3 ~/.claude/skills/review-loop/runlog.py cycle --run-id <run_id> --n <N> \
+  --applied <fixes applied> --asked <ask-bucket items> \
+  --defect-findings <n> --comment-findings <n> \
+  --agents <agents spawned this cycle> [--tokens <observed subagent tokens>] \
+  [--analysis-changed]
+```
+
+This is the only thing that answers "was the review finished, or did we stop?" — Step 14's push
+checker derives convergence from these rows rather than being told, and **a run with no cycle rows
+reads as *did not converge*.** The zero-fix cycle is the most important one to record, because it is
+the row that proves the loop ran out of findings rather than out of budget.
+
+Two counts, not one: a finding that a comment claims more than the code does is legitimate work but
+it is not defect-finding, and counting them together makes a run look more productive than it was.
+`--agents` is the cap's unit; `--tokens` is recorded but never enforced, so the proxy can be checked
+against real spend later.
+
 ## Step 11: Capture Learnings
 
 On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
@@ -453,10 +479,22 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
 3. **Decide the push with the checker**, never by re-deriving the checklist:
 
    ```bash
-   python3 ~/.claude/skills/review-loop/push-check.py --clean-exit \
+   python3 ~/.claude/skills/review-loop/push-check.py --run-id <run_id> \
      --gate-state <passed|skipped|blocked> [--unresolved-skip] \
      --branch <current> --default-branch <default>
    ```
+
+   **You do not tell it whether the loop converged — it reads that from the record.** There is no
+   `--clean-exit` any more: the one question this script exists to answer used to be answered by
+   the orchestrator asserting a flag, which is how a run recorded `clean` while its own author
+   reported it had not converged. Convergence is derived from the `cycle` rows you recorded at
+   Step 10, so **a run with no cycle rows reads as "did not converge"** — recording them is how the
+   honest path stays the cheap one.
+
+   **Not converging does not block the push.** A cap that strands commits only hands the decision
+   back to the user. A `capped` or `halted` run pushes and the output carries `disclose` — the line
+   the PR summary must say, verbatim, about how far the review got. Omitting it turns a disclosed
+   push into a silent one, which is worse than the stall it replaced.
 
    Push only on `push: true` (`git push`, or `git push -u origin <branch>` when `reason` says there is no upstream yet). On
    `false`, surface `reason` and end the report with `Next step: <reason>; push when ready.` If the

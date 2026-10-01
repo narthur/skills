@@ -100,6 +100,62 @@ grep -q 'no reason' <<<"$out" && ok "a gate with no reason is refused at plan ti
 rid=$("$PY" runlog.py plan --tier full --model m --gates '{"t":{"planned":"skip","reason":"12 entries, under the 40 threshold"}}' 2>&1 | tail -1)
 [[ "$rid" =~ ^[0-9a-f]{12}$ ]] && ok "a well-formed plan still records" || bad "a well-formed plan still records (got: $rid)"
 
+# --- cycle rows and derived convergence. The whole point: push-check used to be TOLD
+# --- whether the loop converged, and a real run recorded `clean` while its own author
+# --- reported it had not. Convergence must be a fact about recorded cycles.
+export REVIEW_LOOP_RUNS="$TMP/cycles.jsonl"
+cy() { "$PY" runlog.py cycle --run-id "$1" --n "$2" --applied "$3" --agents "$4" "${@:5}" >/dev/null 2>&1; }
+conv() { "$PY" runlog.py convergence --run-id "$1" 2>/dev/null; }
+
+# Cycle rows ACCUMULATE. load() merges phases with .update(), which would leave only the
+# last cycle and destroy the sequence everything here is derived from.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 5 6; cy "$r" 2 3 3; cy "$r" 3 0 2
+n=$("$PY" runlog.py show --run-id "$r" | "$PY" -c 'import json,sys; print(len(json.load(sys.stdin).get("cycles") or []))')
+[ "$n" = "3" ] && ok "three cycle rows survive as three" || bad "three cycle rows survive as three (got: $n)"
+[ "$(conv "$r")" = "converged" ] && ok "a final zero-fix cycle derives converged" || bad "a final zero-fix cycle derives converged (got: $(conv "$r"))"
+"$PY" runlog.py convergence --run-id "$r" >/dev/null 2>&1 && ok "and exits 0" || bad "and exits 0"
+
+# Still applying fixes, budget left over: neither converged nor capped.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 5 6; cy "$r" 2 3 3
+[ "$(conv "$r")" = "halted" ] && ok "fixes still landing with budget left derives halted" || bad "fixes still landing with budget left derives halted (got: $(conv "$r"))"
+
+# Over the recorded agent cap with work outstanding.
+r=$("$PY" runlog.py plan --tier full --model m --agent-cap 8 --gates "$GATES")
+cy "$r" 1 5 6; cy "$r" 2 3 3
+[ "$(conv "$r")" = "capped" ] && ok "over the agent cap with work outstanding derives capped" || bad "over the agent cap with work outstanding derives capped (got: $(conv "$r"))"
+
+# Converged outranks capped: nothing left to apply is finished, however much it cost.
+r=$("$PY" runlog.py plan --tier full --model m --agent-cap 8 --gates "$GATES")
+cy "$r" 1 9 9; cy "$r" 2 0 1
+[ "$(conv "$r")" = "converged" ] && ok "converged outranks capped" || bad "converged outranks capped (got: $(conv "$r"))"
+
+# The deterministic pass still having work is as unfinished as a non-empty fix bucket.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 0 2 --analysis-changed
+[ "$(conv "$r")" != "converged" ] && ok "analysis-changed blocks convergence at zero fixes" || bad "analysis-changed blocks convergence at zero fixes"
+
+# NO cycle rows must read as not-converged, or omitting them buys a silent clean push.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+[ "$(conv "$r")" = "unknown" ] && ok "no cycle rows reads as unknown, never converged" || bad "no cycle rows reads as unknown, never converged (got: $(conv "$r"))"
+"$PY" runlog.py convergence --run-id "$r" >/dev/null 2>&1 && bad "unknown must not exit 0" || ok "and unknown does not exit 0"
+# finish must SAY so, where it can still be fixed, rather than letting the gate refuse later.
+out=$("$PY" runlog.py finish --run-id "$r" --outcome clean --tier full --executed '{"threat_model":{"status":"done"}}' 2>&1)
+grep -q 'no cycle rows' <<<"$out" && ok "finish warns when convergence is unknowable" || bad "finish warns when convergence is unknowable"
+
+# A corrected cycle row supersedes the one it corrects, rather than double-counting.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 5 6; cy "$r" 1 0 2
+n=$("$PY" runlog.py show --run-id "$r" | "$PY" -c 'import json,sys; print(len(json.load(sys.stdin).get("cycles") or []))')
+[ "$(conv "$r")" = "converged" ] && [ "$n" = "2" ] \
+	&& ok "a re-recorded cycle supersedes, last write winning" || bad "a re-recorded cycle supersedes, last write winning (conv=$(conv "$r") rows=$n)"
+
+# A cycle for a run that was never planned is a row with nothing to attach to.
+out=$("$PY" runlog.py cycle --run-id deadbeefdead --n 1 --applied 0 --agents 1 2>&1)
+grep -q 'no plan' <<<"$out" && ok "a cycle without a plan is refused" || bad "a cycle without a plan is refused"
+export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
+
 # A malformed executed entry is not an account. `{"gate":"done"}` — the natural typo
 # for `{"gate":{"status":"done"}}` — passed every isinstance guard and recorded `full`
 # while review-stats.py read the same gate as dropped.

@@ -137,10 +137,69 @@ def load(limit=TAIL_LINES):
                 rid = rec.get("run_id")
                 if not rid:
                     continue
-                runs.setdefault(rid, {}).update(rec)
+                run = runs.setdefault(rid, {})
+                # Cycle rows ACCUMULATE; every other phase merges. A run has one plan
+                # and one finish, so `.update()` is right for those — but it would make
+                # each cycle clobber the last, leaving only the final one and destroying
+                # the sequence convergence is derived from.
+                if rec.get("phase") == "cycle":
+                    run.setdefault("cycles", []).append(rec)
+                else:
+                    run.update(rec)
     except FileNotFoundError:
         pass
     return runs
+
+
+def cycles_of(run):
+    """This run's cycles in order, one per n, last write winning.
+
+    Append-only means a corrected cycle row sits after the one it corrects, so later
+    wins; sorting by `n` rather than trusting file order keeps a re-recorded cycle in
+    its true place in the sequence.
+    """
+    by_n = {}
+    for c in run.get("cycles") or []:
+        by_n[c.get("n")] = c
+    return [by_n[k] for k in sorted(by_n, key=lambda n: (n is None, n))]
+
+
+def convergence(run):
+    """Why the loop stopped: ran out of findings, out of budget, or neither.
+
+    Derived, never accepted. `push-check.py` used to take `--clean-exit` as a flag, so
+    the one safety question — was this finished being reviewed — was answered by the
+    orchestrator asserting it. Run b480b45cc65d recorded outcome `clean` for a run its
+    own author reported as not converged, which is exactly what that allows.
+
+    Returns None when there are no cycle rows: unknown, not converged. Every consumer
+    must treat None as "did not converge", so omitting the rows can never buy a push.
+    """
+    cy = cycles_of(run)
+    if not cy:
+        return None
+    last = cy[-1]
+    # Converged means the loop stopped because it had nothing left to apply — both
+    # halves, since the deterministic pass changing files is as much unfinished work as
+    # a non-empty auto-fix bucket.
+    if last.get("applied") == 0 and not last.get("analysis_changed"):
+        return "converged"
+    cap = run.get("agent_cap")
+    spent = sum(c.get("agents") or 0 for c in cy)
+    if cap and spent >= cap:
+        return "capped"
+    # Stopped with work outstanding and budget left: an operator interrupt, a test
+    # failure, or a run that simply stopped. The Bands run was this and had no value
+    # that described it.
+    return "halted"
+
+
+CONVERGENCE = ("converged", "capped", "halted")
+# A ceiling, not a target. Set above where the hard cases actually settle: the two runs
+# that converged did so in 1-2 cycles, while the two that did not were still finding
+# real defects at 3 and 4 passes, so a ceiling that binds on every hard case is a stall
+# with extra steps. Overridable per run via --agent-cap.
+DEFAULT_AGENT_CAP = 40
 
 
 def parse_json_arg(raw, what):
@@ -257,6 +316,7 @@ def cmd_plan(a):
         "inputs": parse_json_arg(a.inputs, "inputs") or {},
         "gates": gates,
         "changed_lines": a.changed_lines,
+        "agent_cap": a.agent_cap,
         "semantic_lines": a.semantic_lines,
         "sizing_excluded": a.sizing_excluded,
     }
@@ -343,6 +403,50 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     return claimed
 
 
+def cmd_cycle(a):
+    """Record one completed cycle. This is what convergence is derived from.
+
+    Append-only and one row per cycle, so the sequence survives: pass 4 of run
+    b480b45cc65d left no trace anywhere in that record, because the only place cycles
+    appeared was a free-form `agents` dict the orchestrator rewrote each time.
+    """
+    if not plan_of(a.run_id):
+        sys.exit(f"runlog: no plan for run {a.run_id!r} — record the plan first")
+    append({
+        "run_id": a.run_id,
+        "phase": "cycle",
+        "n": a.n,
+        "closed_at": now(),
+        "applied": a.applied,
+        "asked": a.asked,
+        # Separated on purpose: a third of the Bands findings were "this comment claims
+        # more than the code does". Legitimate work, but not defect-finding, and
+        # counting them together made the run look more productive than it was.
+        "defect_findings": a.defect_findings,
+        "comment_findings": a.comment_findings,
+        "analysis_changed": bool(a.analysis_changed),
+        "agents": a.agents,
+        # Recorded, never enforced. Agent count is the cap's unit because it is
+        # derivable; tokens are the real cost. Logging both lets the proxy be checked
+        # against actual spend before the cap moves to a token or weighted basis.
+        "subagent_tokens": a.tokens,
+    })
+    print(f"runlog: cycle {a.n} of {a.run_id} ({a.applied} applied, {a.agents} agents)",
+          file=sys.stderr)
+    return 0
+
+
+def cmd_convergence(a):
+    """Print the derived convergence, for shell consumers. Exit 0 only if converged."""
+    run = load(limit=None).get(a.run_id)
+    if not run:
+        print("unknown", file=sys.stderr)
+        return 2
+    c = convergence(run)
+    print(c or "unknown")
+    return 0 if c == "converged" else 1
+
+
 def cmd_finish(a):
     executed = parse_json_arg(a.executed, "executed") or {}
     escalations = parse_json_arg(a.escalations, "escalations") or []
@@ -395,7 +499,14 @@ def cmd_finish(a):
         "head_at_finish": git("rev-parse", "HEAD"),
     }
     append(rec)
-    print(f"runlog: finished {a.run_id} ({a.outcome})")
+    # Say it at finish, where it can still be fixed, rather than letting the push gate
+    # refuse later on a run that may well have converged.
+    conv = convergence(load(limit=None).get(a.run_id) or {})
+    if conv is None:
+        print("runlog: WARNING — no cycle rows for this run, so convergence is unknown, "
+              "which every consumer reads as 'did not converge'. Record each cycle with "
+              "`runlog.py cycle`.", file=sys.stderr)
+    print(f"runlog: finished {a.run_id} ({a.outcome}; convergence: {conv or 'unknown'})")
 
 
 def cmd_carried(a):
@@ -563,6 +674,13 @@ def main():
     # check whether a cheaper review was bought by a defensible exclusion. A real run
     # (b480b45cc65d) recorded `semantic_lines: None` while its own gate reason cited
     # "1377 lines of review surface".
+    # The cap bounds COST, not completeness — those were conflated when max_cycles was
+    # the only thing stopping the loop. Cumulative agent invocations, because cycle
+    # count stopped being a cost unit the moment fan-out width became variable: one
+    # cycle may be 30 agents over 50 files and the next a single agent on a few lines.
+    sp.add_argument("--agent-cap", type=int, default=DEFAULT_AGENT_CAP,
+                    help=f"cumulative agent budget for the run (default {DEFAULT_AGENT_CAP}); "
+                         "hitting it records `capped`, which permits a push WITH disclosure")
     sp.add_argument("--semantic-lines", type=int,
                     help="raw minus whitespace-only, lockfiles and declared-generated files")
     sp.add_argument("--sizing-excluded", help="what was dropped from the raw count, and how much")
@@ -586,6 +704,24 @@ def main():
     sf.add_argument("--allow-unaccounted", action="store_true",
                     help="record planned gates that went unrun, marking the run partial")
     sf.set_defaults(func=cmd_finish)
+
+    sc = sub.add_parser("cycle", help="record one completed cycle (convergence is derived from these)")
+    sc.add_argument("--run-id", required=True)
+    sc.add_argument("--n", type=int, required=True, help="cycle number, 1-based")
+    sc.add_argument("--applied", type=int, required=True, help="fixes applied this cycle")
+    sc.add_argument("--asked", type=int, default=0, help="ask-bucket items put to the user")
+    sc.add_argument("--defect-findings", type=int, default=0)
+    sc.add_argument("--comment-findings", type=int, default=0,
+                    help="'this comment claims more than the code does' — counted apart from defects")
+    sc.add_argument("--analysis-changed", action="store_true",
+                    help="the Step 4a deterministic pass changed files or left unresolved findings")
+    sc.add_argument("--agents", type=int, required=True, help="agents spawned this cycle")
+    sc.add_argument("--tokens", type=int, help="observed subagent tokens, recorded not enforced")
+    sc.set_defaults(func=cmd_cycle)
+
+    sv = sub.add_parser("convergence", help="print the DERIVED convergence; exit 0 only if converged")
+    sv.add_argument("--run-id", required=True)
+    sv.set_defaults(func=cmd_convergence)
 
     sy = sub.add_parser("carried")
     sy.add_argument("--from", dest="frm", required=True, help="the rewritten-away sha")

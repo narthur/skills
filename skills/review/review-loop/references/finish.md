@@ -75,18 +75,26 @@ beneath the loop is a legitimate call; making that call *silently look like a re
 ## 3. The push decision
 
 ```bash
-python3 ~/.claude/skills/review-loop/push-check.py --clean-exit \
+python3 ~/.claude/skills/review-loop/push-check.py --run-id <run_id> \
   --gate-state <passed|skipped|blocked> [--unresolved-skip] \
   --branch <current> --default-branch <default>
 ```
 
-Pass the loop-state flags you know (omit `--clean-exit` if the loop did not converge). It checks
-the git facts itself — is this the default branch, is an upstream configured — and emits
-`{push, reason}`. **Push only when `push` is true.** When false, surface `reason` in the report and
-stop.
+Pass the gate state and the branch names. **Do not pass convergence — it is read from the record**,
+derived from the `cycle` rows recorded at Step 10. `--clean-exit` is gone: it let the orchestrator
+assert the answer to the only question here, and a run did record `clean` while not having
+converged. A run with no cycle rows derives as *unknown*, which every consumer treats as "did not
+converge", so there is no way to buy a silent push by leaving the rows out.
 
-Use the checker rather than re-deriving the checklist: pushing to the wrong branch or a
-non-converged tree is the costly mistake, and a script cannot talk itself into it.
+It checks the git facts itself — is this the default branch, is an upstream configured — and emits
+`{push, reason, convergence, disclose}`. **Push only when `push` is true.**
+
+`disclose` is non-null whenever the loop did not converge. **Put it in the PR summary verbatim.**
+A capped run is allowed to push precisely because it says so; a capped run that pushes silently is
+worse than one that stalls.
+
+Use the checker rather than re-deriving the checklist: pushing to the wrong branch is the costly
+mistake, and a script cannot talk itself into it.
 
 When it says push:
 
