@@ -607,9 +607,33 @@ grep -q '"phase": "nudge"' <<<"$shown" \
 	&& ok "run recorded as nudged" || bad "run recorded as nudged"
 
 # Abandonment is derived, not written: another session's open run reads as lost.
-CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$TMP/hook.jsonl" "$PY" review-stats.py \
+#
+# Its own store, and the owning session named explicitly. This assertion used to read
+# $TMP/hook.jsonl, whose run names no session — and a row that never named one is
+# deliberately NOT derived abandoned (see review-stats.is_abandoned, whose comment records
+# that guessing there reported every headless run as abandoned and tripped the Step 0
+# alarm on every later run). It passed anyway, because the author's shell always exports
+# CLAUDE_CODE_SESSION_ID and so the row got an owner by accident. On the first CI runner
+# that ever ran this file, nothing exported one and the assertion went red.
+#
+# It cannot share the hook's run either: `runlog.py check` defaults --session to
+# $CLAUDE_CODE_SESSION_ID, so a run owned by some other session is filtered out and the
+# hook rightly declines to block on it.
+owned="$TMP/owned.jsonl"
+CLAUDE_CODE_SESSION_ID=owning-session REVIEW_LOOP_RUNS="$owned" \
+	"$PY" runlog.py plan --tier full --model m --gates "$GATES" >/dev/null
+CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$owned" "$PY" review-stats.py \
 	| grep -q "abandoned: 1" && ok "open run from another session reads as abandoned" \
 	|| bad "open run from another session reads as abandoned"
+# ...and the documented converse, which nothing asserted: a row that never named a
+# session is unknown rather than dead. That is the behaviour to keep, so it needs a test
+# or the next reader will "fix" it — this is the case the assertion above was silently
+# exercising until CI exposed it.
+env -u CLAUDE_CODE_SESSION_ID -u AO_SESSION_ID REVIEW_LOOP_RUNS="$TMP/anon.jsonl" \
+	"$PY" runlog.py plan --tier full --model m --gates "$GATES" >/dev/null
+CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$TMP/anon.jsonl" "$PY" review-stats.py \
+	| grep -q "abandoned: 0" && ok "a run that named no session is not derived abandoned" \
+	|| bad "a run that named no session is not derived abandoned"
 
 rep=$(REVIEW_LOOP_RUNS="$TMP/alarm.jsonl" "$PY" review-stats.py)
 grep -q "gates planned but not completed:" <<<"$rep" \

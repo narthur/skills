@@ -8,13 +8,19 @@ entry's date on a re-match (the freshness signal the Step 2a sweep depends on �
 easy for the LLM to forget), and enforce the ~50 cap by evicting oldest
 non-PATTERN entries (dismissed one-offs first, then accepted).
 
-  learn.py add   <file> --section dismissed|accepted "<entry text, no date>"
+  learn.py add   <file> "<entry text, no date>" --section dismissed|accepted
   learn.py bump  <file> "<substring of the matched entry>"
   learn.py prune <file> [--cap 50]
   learn.py --selftest
 
 Entry line: "- YYYY-MM-DD: <text>"; "PATTERN:" in the text marks a durable entry
 (never auto-pruned). Sections: "## Dismissed", "## Accepted patterns".
+
+Note the argument order: --section goes AFTER the text, not between the file and the
+text. argparse before 3.13 cannot match a positional that follows an option when the
+positionals are nargs="?", so `add <file> --section dismissed "<text>"` — which is what
+this usage line and SKILL.md both showed until now — fails on 3.12 with "unrecognized
+arguments". It worked on the author's 3.14 and broke on the first CI runner.
 """
 import argparse
 import datetime
@@ -119,7 +125,12 @@ def _selftest():
             except SystemExit as e:
                 assert "no learnings file" in str(e.code)
         assert not os.path.exists(f)
-        main(["add", f, "--section", "dismissed", "first"])
+        # Positionals contiguous, option last. argparse before 3.13 cannot match a
+        # positional that follows an option when the positionals are nargs="?" — on
+        # 3.12 this exact call with --section in the middle fails with "unrecognized
+        # arguments: first". The runner is 3.12 and the author's machine is 3.14, so
+        # this passed here and went red there.
+        main(["add", f, "first", "--section", "dismissed"])
         with open(f) as fh:
             written = fh.read().splitlines()
         assert written == SKELETON[:4] + [f"- {today()}: first"] + SKELETON[4:]

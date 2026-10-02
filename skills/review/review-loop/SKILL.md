@@ -466,7 +466,7 @@ On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (t
 Do the edits with `learn.py` — you judge match/novelty/section; the script does the dated surgery:
 
 - Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring>"` (bumps its date to today — the freshness signal Step 2a depends on).
-- Novel entry → `learn.py add <file> --section dismissed|accepted "<text, no date>"` (stamps today's date; creates the file/sections if missing).
+- Novel entry → `learn.py add <file> "<text, no date>" --section dismissed|accepted` (stamps today's date; creates the file/sections if missing). `--section` goes after the text: argparse before 3.13 rejects a positional that follows an option here, so the other order fails on Python 3.12.
 - Cap fallback → `learn.py prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).
 
 For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping, and the cap/split fallbacks, **Read `references/learnings-format.md`**. When in doubt whether an entry is worth writing, don't — the file's value is being scannable, not exhaustive.
