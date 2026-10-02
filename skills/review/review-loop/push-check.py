@@ -214,11 +214,10 @@ def _selftest():
         # wired" shape that removing --clean-exit left behind.
         import runlog as rl
         gates = {"t": {"planned": "run", "reason": "2 stale claims"}}
-        os.chdir(td)
         subprocess.run(["git", "init", "-q", "."], cwd=td, check=False)
         rid = "pcselftest01"
         rl.STORE = os.environ["REVIEW_LOOP_RUNS"]
-        rl.append({"run_id": rid, "phase": "plan", "repo": rl.repo_id(), "gates": gates,
+        rl.append({"run_id": rid, "phase": "plan", "repo": td, "gates": gates,
                    "agent_cap": 40, "planned_at": rl.now()})
         rl.append({"run_id": rid, "phase": "cycle", "n": 1, "applied": 3, "agents": 5})
         rl.append({"run_id": rid, "phase": "finish", "outcome": "test-failure",
@@ -233,7 +232,7 @@ def _selftest():
 
         # And the report check: no report anywhere -> refused, naming pr-report.
         rid2 = "pcselftest02"
-        rl.append({"run_id": rid2, "phase": "plan", "repo": rl.repo_id(), "gates": gates,
+        rl.append({"run_id": rid2, "phase": "plan", "repo": td, "gates": gates,
                    "agent_cap": 8, "planned_at": rl.now()})
         rl.append({"run_id": rid2, "phase": "cycle", "n": 1, "applied": 3, "agents": 9})
         rl.append({"run_id": rid2, "phase": "finish", "outcome": "cycle-limit",

@@ -199,16 +199,38 @@ out=$(cd "$r" && "$SCRIPT" 2>/dev/null); rc=$?
 
 # --- an indentation-sensitive file whose extension is not the LAST one, or is uppercase,
 # --- or is a make fragment: all previously fell through to -w and scored 0.
-r=$(newrepo indentnames)
-printf 'prod:\\n  debug: true\\n  public: true\\n' > "$r/values.yml.j2"
-printf 'all:\\n\\tcc -o x x.c\\n\\tstrip x\\n' > "$r/Makefile.am"
-g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
-printf 'prod:\\n  debug: true\\npublic: true\\n' > "$r/values.yml.j2"
-printf 'all:\\n\\tcc -o x x.c\\nstrip x\\n' > "$r/Makefile.am"
-g -C "$r" add -A && g -C "$r" commit -qm dedent
-sem=$(field "$r" semantic_lines); raw=$(field "$r" changed_lines)
-[ "$sem" = "$raw" ] && ok "a templated .yml.j2 and a Makefile.am count in full ($sem of $raw)" \
-	|| bad "a templated .yml.j2 and a Makefile.am count in full (sem $sem, raw $raw)"
+# One repo per file so a failure names the rule that broke: the suffix walk (.yml.j2), the
+# make-name table (Makefile.am), and the case fold (Up.PY) are three separate branches.
+# printf '%b' and a real tab, deliberately: the previous version used doubled backslashes
+# inside a generated patch and wrote LITERAL "\n" text — 22 bytes, no newlines, no
+# indentation at all — so two of the three branches had no test and deleting either left
+# every suite green.
+TAB=$'\t'
+for case in yml.j2 Makefile.am Up.PY; do
+	r=$(newrepo "indent-$case")
+	case $case in
+		yml.j2)      f="values.yml.j2"
+		             before='prod:\n  debug: true\n  public: true\n'
+		             after='prod:\n  debug: true\npublic: true\n' ;;
+		Makefile.am) f="Makefile.am"
+		             before="all:\n${TAB}cc -o x x.c\n${TAB}strip x\n"
+		             after="all:\n${TAB}cc -o x x.c\nstrip x\n" ;;
+		Up.PY)       f="Up.PY"
+		             before='if t:\n    log(u)\n    charge(u)\n'
+		             after='if t:\n    log(u)\ncharge(u)\n' ;;
+	esac
+	printf '%b' "$before" > "$r/$f"
+	g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+	printf '%b' "$after" > "$r/$f"
+	g -C "$r" add -A && g -C "$r" commit -qm dedent
+	# Prove the fixture is what it claims: whitespace-only, so -w alone would score it 0.
+	blind=$(g -C "$r" diff -w --numstat origin/main...HEAD | awk '{a+=$1; d+=$2} END {print a+d+0}')
+	[ "$blind" = "0" ] || bad "FIXTURE $f: not whitespace-only (-w counts $blind)"
+	sem=$(field "$r" semantic_lines); raw=$(field "$r" changed_lines)
+	[ "$sem" = "$raw" ] && [ "$sem" -gt 0 ] \
+		&& ok "$f counts in full, not discounted as whitespace ($sem)" \
+		|| bad "$f counts in full, not discounted as whitespace (sem $sem, raw $raw)"
+done
 
 # --- the fail-toward-MORE-review fallback. With the sizing helper producing nothing,
 # --- semantic_lines must fall back to the raw count, NOT to 0 — 0 is the smallest possible
@@ -242,6 +264,9 @@ if python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$out" >/dev/nu
 	[ "$sem" = "$raw" ] && [ "$sem" -gt 0 ] \
 		&& ok "a failed sizing helper falls back to the raw count, not 0 ($sem)" \
 		|| bad "a failed sizing helper falls back to the raw count, not 0 (sem $sem, raw $raw)"
+	grep -q 'sizing helper produced no count' <<<"$out" \
+		&& ok "and says the count came from the raw total" \
+		|| bad "and says the count came from the raw total (got: $(python3 -c 'import json,sys; print(json.load(sys.stdin)["sizing_excluded"])' <<<"$out"))"
 else
 	# The stub could not keep the outer python working; say so rather than passing silently.
 	bad "a failed sizing helper falls back to the raw count, not 0 (fixture could not run)"

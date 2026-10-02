@@ -50,8 +50,9 @@ forge=$("$PY" runlog.py plan --tier full --model claude-opus-5 --gates "$G" --ag
 fout=$("$PY" pr-report.py --run-id "$forge" </dev/null)
 [ "$(grep -c '^> ' <<<"$fout")" = "1" ] && ok "a newline in a reason cannot forge a second blockquote" \
 	|| bad "a newline in a reason cannot forge a second blockquote (got $(grep -c '^> ' <<<"$fout") blockquotes)"
-grep -q 'CAPPED' <<<"$(grep '^> ' <<<"$fout")" && ok "and the one blockquote is the real disclosure" \
-	|| bad "and the one blockquote is the real disclosure"
+[ "$(grep '^> ' <<<"$fout" | grep -cv CAPPED)" = "0" ] \
+	&& ok "and no blockquote line is anything but the disclosure" \
+	|| bad "and no blockquote line is anything but the disclosure"
 
 # A failed `gh pr comment` must not destroy the report: it goes to the pending file, so the
 # push is not blocked by a transport error on advice that cannot succeed.
