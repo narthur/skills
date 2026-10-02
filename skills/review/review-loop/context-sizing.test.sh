@@ -68,9 +68,9 @@ for ext in py yaml; do
 		yaml) before='prod:\n  debug: true\n  public: true\n'
 		      after='prod:\n  debug: true\npublic: true\n' ;;
 	esac
-	printf "$before" > "$r/a.$ext"
+	printf '%b' "$before" > "$r/a.$ext"
 	g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
-	printf "$after" > "$r/a.$ext"
+	printf '%b' "$after" > "$r/a.$ext"
 	g -C "$r" add -A && g -C "$r" commit -qm dedent
 	sem=$(field "$r" semantic_lines); raw=$(field "$r" changed_lines)
 	[ "$sem" -gt 0 ] && ok ".$ext: an indentation change that moves control flow counts ($sem)" \
@@ -209,6 +209,43 @@ g -C "$r" add -A && g -C "$r" commit -qm dedent
 sem=$(field "$r" semantic_lines); raw=$(field "$r" changed_lines)
 [ "$sem" = "$raw" ] && ok "a templated .yml.j2 and a Makefile.am count in full ($sem of $raw)" \
 	|| bad "a templated .yml.j2 and a Makefile.am count in full (sem $sem, raw $raw)"
+
+# --- the fail-toward-MORE-review fallback. With the sizing helper producing nothing,
+# --- semantic_lines must fall back to the raw count, NOT to 0 — 0 is the smallest possible
+# --- number and buys the cheapest possible review. Nothing exercised this, so the guard
+# --- could be removed with all ten suites green. Forced by making python3 unavailable to
+# --- the helper only, via a PATH stub that fails for the sizing call.
+r=$(newrepo helperfail)
+python3 -c "import io; io.open('$r/a.js','w').write(''.join(f'const v{i} = {i};\n' for i in range(50)))"
+g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+python3 -c "import io; io.open('$r/a.js','w').write(''.join(f'const w{i} = {i};\n' for i in range(50)))"
+g -C "$r" add -A && g -C "$r" commit -qm edit
+stub="$TMP/stubbin"; mkdir -p "$stub"
+# Fails ONLY for the sizing helper (which passes -c plus pathspec args); the final heredoc
+# call reads from stdin and must still work, or the script emits no JSON at all.
+cat > "$stub/python3" <<'STUB'
+#!/bin/sh
+case "$*" in
+	*"RAW_TOTAL"*|*exclude*) exit 1 ;;
+esac
+exec /usr/bin/env -i PATH=/usr/bin:/bin HOME="$HOME" TMPDIR="$TMPDIR" \
+	BASE_BRANCH="$BASE_BRANCH" LEARNINGS="$LEARNINGS" DIFFSTAT="$DIFFSTAT" \
+	CHANGED_LINES="$CHANGED_LINES" TODAY="$TODAY" SEMANTIC_LINES="$SEMANTIC_LINES" \
+	SIZING_EXCLUDED="$SIZING_EXCLUDED" LEARN_ENTRIES="$LEARN_ENTRIES" \
+	/usr/bin/python3 "$@"
+STUB
+chmod +x "$stub/python3"
+out=$(cd "$r" && PATH="$stub:$PATH" "$SCRIPT" 2>/dev/null)
+if python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$out" >/dev/null 2>&1; then
+	sem=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["semantic_lines"])' <<<"$out")
+	raw=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["changed_lines"])' <<<"$out")
+	[ "$sem" = "$raw" ] && [ "$sem" -gt 0 ] \
+		&& ok "a failed sizing helper falls back to the raw count, not 0 ($sem)" \
+		|| bad "a failed sizing helper falls back to the raw count, not 0 (sem $sem, raw $raw)"
+else
+	# The stub could not keep the outer python working; say so rather than passing silently.
+	bad "a failed sizing helper falls back to the raw count, not 0 (fixture could not run)"
+fi
 
 echo
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"

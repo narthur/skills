@@ -32,7 +32,8 @@ post the report block as a PR comment.
 Skip the reconcile on a cycle-limit exit or a test-failure short-circuit — that tree is not a
 converged state and its description should not claim otherwise.
 
-On a clean exit with **no PR yet**, both the reconcile and the comment are **deferred**: write the
+On **any terminal exit** with **no PR yet** the comment is **deferred**, and so is the reconcile
+when the exit was clean — the reconcile itself stays clean-exit-only. Write the
 report to `.git/info/review-loop-pending-report.md` (shape in `references/report-format.md`) so
 Step 0c flushes them when the PR appears. The comment posts directly on any terminal exit where a
 PR already exists.
@@ -43,8 +44,13 @@ PR already exists.
 ~/.claude/skills/review-loop/record-reviewed.sh
 ```
 
-On **any exit where `push-check` says `push: true`**, and **before** the push decision — so both
-this run's auto-push and any later *manual* push of the same HEAD pass the gate.
+On **any exit where `push-check` says `push: true`** — and **after** that decision, never before
+it, so both this run's auto-push and any later *manual* push of the same HEAD pass the gate.
+
+Recording first defeats the broken-tree block entirely and permanently: `review-gate.sh`'s only
+test is `grep -qxF "$local_sha" reviewed-shas`, so a `test-failure` tip stamped before the decision
+clears every later push of that commit, with no warning and no expiry. "Before the push decision"
+also cannot be obeyed — the decision is what tells you whether to record.
 
 That includes a `capped` or `halted` run. This used to read "clean exit only", which stranded
 exactly the commits the disclosure mechanism exists to let through: `push-check` authorises the

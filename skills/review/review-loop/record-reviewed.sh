@@ -1,6 +1,10 @@
 #!/bin/bash
 # Record a commit sha as reviewed, so the pre-push review-gate recognizes it.
-# Called by review-loop on a clean loop exit (Step 14), before the auto-push decision.
+# Called by review-loop at Step 14 on any exit where push-check says push: true — AFTER that
+# decision, never before it. Both halves of the old rule ("clean exit only", "before the
+# decision") were wrong: clean-exit-only stranded the capped runs the gate was meant to let
+# through, and recording before the decision stamps a broken tree's tip, which clears every later
+# push of that commit since review-gate.sh's only test is a fixed-string match on the sha.
 #   record-reviewed.sh [<sha, default HEAD>]
 set -euo pipefail
 # Resolve a commit-ish to a bare 40-hex sha, or fail loudly. Without this,

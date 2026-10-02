@@ -21,7 +21,8 @@ plan() { "$PY" runlog.py plan --tier full --model claude-opus-5 --gates "$G" "$@
 
 # --- a capped run must lead with the disclosure, verbatim and unmissable
 rid=$(plan --agent-cap 8 --changed-lines 900 --semantic-lines 120 --sizing-excluded "780 line(s) in lockfiles")
-"$PY" runlog.py cycle --run-id "$rid" --n 1 --applied 6 --agents 6 --defect-findings 4 --comment-findings 3 >/dev/null 2>&1
+"$PY" runlog.py cycle --run-id "$rid" --n 1 --applied 6 --asked 2 --agents 6 \
+	--defect-findings 4 --comment-findings 3 --tokens 123456 >/dev/null 2>&1
 "$PY" runlog.py cycle --run-id "$rid" --n 2 --applied 3 --agents 3 --analysis-changed >/dev/null 2>&1
 out=$("$PY" pr-report.py --run-id "$rid" </dev/null)
 grep -q 'CAPPED' <<<"$out" && ok "a capped run says CAPPED" || bad "a capped run says CAPPED"
@@ -44,14 +45,18 @@ check_cells() {
 import sys
 cells = [c.strip() for c in sys.argv[1].strip().strip("|").split("|")]
 # | # | applied | asked | defects | comment-accuracy | agents | analysis |
-want = {"#": "1", "applied": "6", "defects": "4", "comment-accuracy": "3", "agents": "6"}
+want = {"#": "1", "applied": "6", "asked": "2", "defects": "4",
+        "comment-accuracy": "3", "agents": "6"}
 got = dict(zip(("#", "applied", "asked", "defects", "comment-accuracy", "agents", "analysis"), cells))
 wrong = {k: (got.get(k), v) for k, v in want.items() if got.get(k) != v}
 raise SystemExit(f"cycle-1 row: {wrong}" if wrong else 0)
 PYCELL
 }
-check_cells && ok "the cycle-1 row carries the recorded defect and comment-accuracy counts" \
-	|| bad "the cycle-1 row carries the recorded defect and comment-accuracy counts ($(check_cells 2>&1))"
+check_cells && ok "the cycle-1 row carries every recorded count" \
+	|| bad "the cycle-1 row carries every recorded count ($(check_cells 2>&1))"
+# Nothing anywhere asserted the token line, so recording them could be deleted silently.
+grep -q '123,456 subagent tokens' <<<"$out" && ok "and the recorded subagent tokens are rendered" \
+	|| bad "and the recorded subagent tokens are rendered"
 grep -q 'comment-accuracy' <<<"$out" && ok "comment-accuracy findings are a separate column" || bad "comment-accuracy findings are a separate column"
 # Every cycle, including the one the old free-form field lost.
 rows=$(awk '/^\| [0-9]+ \|/' <<<"$out" | wc -l | tr -d ' ')

@@ -149,7 +149,7 @@ python3 ~/.claude/skills/review-loop/threat-model.py
 ```
 
 - **`exists: false`** → run the **bounded bootstrap** (one `sonnet` agent, hard caps: ~30 files read, ~60 lines written, four questions only). Skip entirely on a repo with no attacker-reachable surface — write one line saying so, so the next run doesn't retry.
-- **`exists: true`** → run the **update agent** (one `sonnet` agent) with the script output plus this cycle's diff. `stale[]` is the exact worklist: each entry's cited file changed since its commit pin, so the claim needs re-reading and then re-pinning, rewriting, or deleting. Skip the agent entirely when `stale` is empty and the diff touches no security-relevant surface.
+- **`exists: true`** → run the **update agent** (one `sonnet` agent) with the script output plus this cycle's diff. `stale[]` is the exact worklist: each entry's cited file changed since its commit pin, so the claim needs re-reading and then re-pinning, rewriting, or deleting. `broken_pins[]` is the worse case and belongs on the same worklist: the sha does not resolve here, so staleness can never be computed for that claim while it still *looks* pinned and stays out of `uncited` — and for a `Not an issue here` dismissal, which is the security review's per-repo suppression channel, that is a suppression nothing ever re-examines. Re-pin it to a sha that resolves. Skip the agent entirely only when `stale` **and** `broken_pins` are empty and the diff touches no security-relevant surface.
 
 Every claim is **OBSERVED** (verified, carries `[file:line @ sha]`) or **INFERRED** (unverified, uncited). The consumer treats OBSERVED as fact and INFERRED as a hypothesis to check. This split exists because the user is not a security expert and cannot audit this file — it makes a wrong inference cost a redundant check rather than a missed vulnerability.
 
@@ -183,11 +183,15 @@ The point: make the honest lightweight path as cheap as the dishonest shortcut w
 
 ```
 cycle = 1
-max_cycles = 3
 agent_cap = <the plan's agent_cap>   # cumulative agent budget for the whole RUN
 agents_spent = 0                     # running sum of the --agents you record at j2
 
-while cycle <= max_cycles and agents_spent < agent_cap:
+# ONE bound, in agents — not cycles. A cycle is not a unit of cost: one can be a
+# 30-agent fan-out over 50 files and the next a single agent on a few lines, so a
+# cycle limit bounds the wrong thing. There was also a `max_cycles = 3` here, and
+# it made the agent cap decorative: at 6-10 agents per cycle, three cycles never
+# reach 40, so the cycle limit always bound first and `capped` was unreachable.
+while agents_spent < agent_cap:
     a. Run the code-analysis pass (Step 4a below): the code-analysis skill (--diff --fix) plus the project linter --fix if detected. Stage what changed; collect the deterministic tool findings.
     b. Run the parallel review subagents (Step 5) over this cycle's REVIEW SCOPE (see below). Each returns findings + suggested fixes. In cycle 1 only, and only if Step 4b (run once, before the loop) established a reviewable intent, also spawn Agent #9 (intent reconciliation).
        REVIEW SCOPE:
@@ -215,12 +219,10 @@ while cycle <= max_cycles and agents_spent < agent_cap:
     k. agents_spent += <the --agents you just recorded>; cycle += 1
 
 If the loop exits with work still outstanding:
-    Report which bound you hit — the cycle limit or the agent budget — plus the
-    remaining findings. Cycles are the wrong unit to bound on by themselves: one
-    cycle can be a 30-agent fan-out over 50 files and the next a single agent on
-    a few lines. `convergence` is derived from the cycle rows either way, not
-    from this report: spending the budget derives `capped`, stopping for any
-    other reason derives `halted`, and both push with a disclosure.
+    Say so, and list the remaining findings. `convergence` is derived from the
+    cycle rows, not from this report: spending the budget derives `capped`,
+    stopping for any other reason (an interrupt, a test failure) derives
+    `halted`, and both push with a disclosure rather than stalling.
     The last cycle's row (outstanding work: applied > 0, asked > 0, or the analysis pass
     still changing files) is what makes this derivable rather than asserted. Not converging
     no longer blocks the push — Step 14 pushes with the `disclose` line the checker emits,
@@ -498,8 +500,11 @@ Otherwise the gate is active — **Read `references/measurement-gate.md`** and f
 
 ## Step 14: Final Report and Auto-Push
 
-Five things, in order. **Read `references/finish.md`** for the rules behind each — the reconcile's
-timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" spec.
+Five things, in this order — and the order is load-bearing, not cosmetic. Step 3 refuses the push
+until step 1 has produced a report, and step 2 must come *after* step 3 because recording a
+reviewed sha for a broken tree clears every later push of that tip permanently. **Read
+`references/finish.md`** for the rules behind each — the reconcile's timing, the record-reviewed
+honesty rule, and the full "when NOT to auto-push" spec.
 
 0. **Close the run record** — every exit, including a cycle-limit or test-failure one:
 
@@ -529,33 +534,32 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
    for a real reason: describing an unconverged tree as if it were final launders unfinished work
    into intent. *Posting* is the opposite — the less converged the run, the more the comment is
-   load-bearing, and step 3 below refuses the push until it exists. With **no PR yet** both defer to
-   `.git/info/review-loop-pending-report.md`, and Step 0c flushes them. The fast path and fast-path
-   re-entry are included: a one-reviewer run still posts (or defers) its summary, labelled as a
-   fast-path cycle.
+   load-bearing. With **no PR yet** both defer to `.git/info/review-loop-pending-report.md`, and
+   Step 0c flushes them. The fast path and fast-path re-entry are included: a one-reviewer run
+   still posts (or defers) its summary, labelled as a fast-path cycle.
 
-2. **Record the reviewed commit** — on **any** exit where `push-check` says `push: true`, **before**
-   the push decision:
+   Publish it **from the record, not from memory**:
 
    ```bash
-   ~/.claude/skills/review-loop/record-reviewed.sh
+   printf '%s\n' "<your findings narrative>" \
+     | python3 ~/.claude/skills/review-loop/pr-report.py --run-id <run_id> --post --label
    ```
 
-   This is the skill's completion stamp: it asserts the loop actually looked at this tip. Never
-   hand-call it to clear the pre-push gate on a change the loop didn't examine — re-run the Step 3b
-   fast path, or state the judgment with `record-skipped.sh "<reason>"`, which clears the gate
-   while recording a *distinct* state that can't masquerade as a review.
+   It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
+   numbers and the roster from the run record, appends your narrative verbatim, labels the PR
+   `review:<convergence>`, and writes the pending-report file by itself when there is no PR — or
+   when the post *fails*, so a transient GitHub error cannot destroy the report.
 
-   **It is not "clean exit only".** That reading is what stranded commits: `push-check` authorises a
-   capped or halted push, the pre-push hook accepts only a tip listed in `reviewed-shas` or
-   `skipped-shas`, and so the capped push the disclosure mechanism exists to permit was blocked at
-   the hook. The two ways through were both wrong — `record-skipped.sh`, which would file a fully
-   reviewed capped run as "judged beneath the loop" and corrupt the ratio `review-stats.py` reports,
-   or `REVIEW_GATE_BYPASS=1`. The skipped-shas store records this happening twice: *"run
-   29e0ce969725 hit its 3-cycle cap still applying 11 fixes, so it never converged and the tip was
-   never stamped."* A capped run **was** reviewed; how far is the PR's job to say, not this store's.
+   **This is not optional, and not on your honour.** Step 2 refuses the push until this run's
+   report is actually present — in a PR comment or in the pending file, matched by the
+   `<!-- review-loop:run=<id> -->` marker this script writes into every body. It checks the
+   artifact, not a claim that one exists: an earlier version recorded a marker row written by the
+   orchestrator's own toolchain, which `runlog.py disclosed --where "trust me"` satisfied with no
+   report anywhere. Required on **every** terminal exit, not only the unconverged ones — the
+   incident this redesign exists for was a *clean* exit on a fresh branch whose summary never
+   reached the PR.
 
-3. **Decide the push with the checker**, never by re-deriving the checklist:
+2. **Decide the push with the checker**, never by re-deriving the checklist:
 
    ```bash
    python3 ~/.claude/skills/review-loop/push-check.py --run-id <run_id> \
@@ -567,8 +571,12 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    `--clean-exit` any more: the one question this script exists to answer used to be answered by
    the orchestrator asserting a flag, which is how a run recorded `clean` while its own author
    reported it had not converged. Convergence is derived from the `cycle` rows you recorded at
-   Step 10, so **a run with no cycle rows reads as "did not converge"** — recording them is how the
-   honest path stays the cheap one.
+   Step 10, so **a run with no cycle rows reads as "did not converge"** — recording them is how
+   the honest path stays the cheap one.
+
+   **`--run-id` is required.** Both record-derived blockers — the recorded outcome, and the
+   missing report — are reached through it, so omitting it used to switch both off while a
+   *mistyped* id was correctly caught: the cheapest wrong spelling was the one that passed.
 
    **Not converging does not block the push.** A cap that strands commits only hands the decision
    back to the user. A `capped` or `halted` run pushes and the output carries `disclose` — the line
@@ -576,31 +584,41 @@ timing, the record-reviewed honesty rule, and the full "when NOT to auto-push" s
    push into a silent one, which is worse than the stall it replaced.
 
    **A recorded `test-failure`, `blocked` or `abandoned` outcome does block**, and outranks a
-   converged review: that is "the tree is broken", not "we stopped looking". Removing `--clean-exit`
-   deleted the only channel by which a Step 9 test failure reached this decision, so for a while a
-   known-broken tree pushed with the reason "converged, evidence gate ok".
+   converged review: that is "the tree is broken", not "we stopped looking". Removing
+   `--clean-exit` deleted the only channel by which a Step 9 test failure reached this decision, so
+   for a while a known-broken tree pushed with the reason "converged, evidence gate ok".
 
-   Then publish the disclosure — **from the record, not from memory**:
+   Push only on `push: true` (`git push`, or `git push -u origin <branch>` when `reason` says there
+   is no upstream yet) — but record the sha first, per step 3. On `false`, surface `reason` and end
+   the report with `Next step: <reason>; push when ready.` If the push itself fails, surface the
+   error verbatim and continue — don't retry, don't force.
+
+3. **Record the reviewed commit** — only once step 2 has said `push: true`:
 
    ```bash
-   printf '%s\n' "<your findings narrative>" \
-     | python3 ~/.claude/skills/review-loop/pr-report.py --run-id <run_id> --post --label
+   ~/.claude/skills/review-loop/record-reviewed.sh
    ```
 
-   It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
-   numbers and the roster from the run record, appends your narrative verbatim, labels the PR
-   `review:<convergence>`, and defers to the pending-report file by itself when there is no PR yet.
+   This is the skill's completion stamp: it asserts the loop actually looked at this tip. Never
+   hand-call it to clear the pre-push gate on a change the loop didn't examine — re-run the Step 3b
+   fast path, or state the judgment with `record-skipped.sh "<reason>"`, which clears the gate
+   while recording a *distinct* state that can't masquerade as a review.
 
-   **When `disclose` is non-null this is not optional, and it is no longer on your honour.**
-   `pr-report.py` records a `disclosed` marker pinned to the commit it describes — for the pending
-   file as well as for a real PR, since on a fresh branch the push gate forces
-   loop-then-push-then-PR — and `push-check` refuses a non-converged push until that marker exists
-   for the current head. So the order is **pr-report, then push-check, then push**. A capped run may
-   push only because it says so; this is what makes "it says so" checkable rather than exhorted.
+   **After step 2, never before it.** Recording the sha first defeats step 2 entirely and
+   permanently: `review-gate.sh`'s only test is `grep -qxF "$local_sha" reviewed-shas`, so stamping
+   the tip of a `test-failure` run clears every later push of that commit, with no warning and no
+   expiry. An earlier version of this step said "before the push decision", which cannot be obeyed
+   anyway — the decision is what tells you whether to record.
 
-   Push only on `push: true` (`git push`, or `git push -u origin <branch>` when `reason` says there is no upstream yet). On
-   `false`, surface `reason` and end the report with `Next step: <reason>; push when ready.` If the
-   push itself fails, surface the error verbatim and continue — don't retry, don't force.
+   **Nor is it "clean exit only".** That reading is what stranded commits: `push-check` authorises
+   a capped or halted push, the pre-push hook accepts only a tip listed in `reviewed-shas` or
+   `skipped-shas`, and so the capped push the disclosure mechanism exists to permit was blocked at
+   the hook. The two ways through were both wrong — `record-skipped.sh`, which would file a fully
+   reviewed capped run as "judged beneath the loop" and corrupt the ratio `review-stats.py`
+   reports, or `REVIEW_GATE_BYPASS=1`. The skipped-shas store records this happening twice: *"run
+   29e0ce969725 hit its 3-cycle cap still applying 11 fixes, so it never converged and the tip was
+   never stamped."* A capped run **was** reviewed; how far is the PR's job to say, not this
+   store's.
 
 4. **Emit the report** — the exact block is in `references/report-format.md`.
 

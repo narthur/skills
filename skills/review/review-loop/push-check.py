@@ -23,6 +23,9 @@ different question — a blocked evidence gate, an unresolved finding, the defau
 branch — which is "this is broken", not "we stopped looking".
 """
 import argparse
+import contextlib
+import importlib
+import io
 import json
 import os
 import subprocess
@@ -31,12 +34,7 @@ import sys
 # Plain import: the executed script's own directory is sys.path[0], and runlog is the
 # single definition of how convergence is derived. Restating the derivation here is how
 # the two would drift — the mistake this whole field exists to correct.
-import contextlib
-import importlib
-import io
-
 import runlog
-
 
 BROKEN_OUTCOMES = ("test-failure", "blocked", "abandoned")
 # The marker pr-report.py writes at the top of every report body. Matching it is how this

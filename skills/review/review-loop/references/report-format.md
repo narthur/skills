@@ -62,7 +62,7 @@ If the comment post fails, note it in the report and continue — don't retry.
 review-loop complete: <N> cycle(s), <M> commits, pushed: <yes|no — reason>.
 Evidence gate: <passed — existing evidence | passed — evidence captured & posted (link) | deferred — no PR yet (flushes via Step 0c) | skipped — no functional changes | blocked — <reason>>.
 Measurement gate: <passed — plan posted (metric: <name>) | waived — <reason> | deferred — no PR yet (flushes via Step 0c) | skipped — <no user-facing change | repo has no measurement capability> | blocked — <gap>>.
-PR description: <reconciled to final change | already accurate — no edit | deferred — no PR yet (flushes via Step 0c) | skipped — not converged (cycle limit / test failure)>.
+PR description: <reconciled to final change | already accurate — no edit | deferred — no PR yet (flushes via Step 0c) | skipped — not converged (agent budget spent / test failure)>.
 
 Cycle 1: <summary>
 Cycle 2: <summary>
