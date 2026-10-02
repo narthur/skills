@@ -1,13 +1,14 @@
 target: skills/review/review-loop/review-stats.py
 verify: cd skills/review/review-loop && ./review-stats.test.sh
 expect: a deliberate skip is not reported as a failure to complete
-why:    a gate the run accounted for and a gate it never reported need different fixes, and merging the counters reported correct behaviour as failure — all five of the alarm's reported misses of record_reviewed were of this kind
+why:    collapsing the two buckets reports every accounted-for decline as a failure to complete, which is the original defect — all five of the alarm's reported misses of record_reviewed were of exactly this kind, and none was real
 --- old
-            if st in DROP_STATES:
-                dropped[g] += 1
-            else:
+            if st in DECLINED_STATES:
                 declined[g] += 1
-                why[g].add(st)
+                decline_why[g].add(st)
+            else:
+                dropped[g] += 1
+                drop_why[g].add(st)
 --- new
             dropped[g] += 1
-            why[g].add(st)
+            drop_why[g].add(st)
