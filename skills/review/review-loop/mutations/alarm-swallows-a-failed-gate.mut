@@ -1,8 +1,0 @@
-target: skills/review/review-loop/review-stats.py
-verify: cd skills/review/review-loop && ./review-stats.test.sh
-expect: a failed gate is still a failure to complete
-why:    an inverted list that no longer names `failed` treats the one unambiguous failure as a deliberate decision, which is the opposite of the alarm's purpose
---- old
-DROP_STATES = ("unreported", "failed")
---- new
-DROP_STATES = ("unreported",)

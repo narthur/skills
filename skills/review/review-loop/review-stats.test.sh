@@ -217,7 +217,7 @@ for i in 1 2 3; do
 	arow failed "{\"run_id\":\"f$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"security_review\":{\"status\":\"failed\",\"reason\":\"agent errored\"}}}"
 done
 out=$(alarm failed)
-grep -q "security_review did not complete 3x" <<<"$out" \
+grep -q "security_review did not complete (failed) 3x" <<<"$out" \
 	&& ok "a failed gate is still a failure to complete" || bad "a failed gate is still a failure to complete"
 
 # A gate that fails BOTH ways must still raise. Two of each is four non-completions, and
@@ -248,6 +248,50 @@ grep -q "zzz_declined" <<<"$first" \
 	&& ok "the more frequent offender is listed first across both buckets" \
 	|| bad "the more frequent offender is listed first across both buckets (got: $first)"
 
+
+# Neither vocabulary is closed: runlog never validates the status string. The question is
+# which way an UNRECOGNISED one defaults, and it must default loud — a spelling nobody
+# listed is far likelier to be a new failure or a bug than a new deliberate word. Listing
+# the failures instead put every one of these in the benign bucket.
+for st in error timeout crashed blocked incomplete FAILED; do
+	f="vocab-$st"
+	for i in 1 2 3; do
+		arow "$f" "{\"run_id\":\"v$i\",\"phase\":\"plan\",\"planned_at\":\"2026-07-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"g\":{\"planned\":\"run\"}}}"
+		arow "$f" "{\"run_id\":\"v$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"g\":{\"status\":\"$st\",\"reason\":\"r\"}}}"
+	done
+	out=$(alarm "$f")
+	grep -q "g did not complete ($st) 3x" <<<"$out" \
+		&& ok "an unrecognised status '$st' goes loud and is named" \
+		|| bad "an unrecognised status '$st' goes loud and is named (got: $out)"
+done
+
+# A non-string status is not rejected at write time either, and formatting one into the
+# message crashed cmd_alarm with a TypeError — taking down every gate's signal at once,
+# which is the silence failure mode reached by a different route.
+for i in 1 2 3; do
+	arow nonstr "{\"run_id\":\"n$i\",\"phase\":\"plan\",\"planned_at\":\"2026-08-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"g\":{\"planned\":\"run\"}}}"
+	arow nonstr "{\"run_id\":\"n$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"g\":{\"status\":123,\"reason\":\"r\"}}}"
+done
+out=$(alarm nonstr)
+grep -q "g did not complete (123) 3x" <<<"$out" \
+	&& ok "a non-string status neither crashes nor is softened" \
+	|| bad "a non-string status neither crashes nor is softened (got: $out)"
+
+# A gate over the threshold in BOTH buckets prints one line per bucket, each count real.
+# Pinned because the "both ways" case above only covers neither bucket reaching it.
+for i in 1 2 3; do
+	arow twice "{\"run_id\":\"t$i\",\"phase\":\"plan\",\"planned_at\":\"2026-09-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"g\":{\"planned\":\"run\"}}}"
+	arow twice "{\"run_id\":\"t$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{}}"
+	arow twice "{\"run_id\":\"u$i\",\"phase\":\"plan\",\"planned_at\":\"2026-09-1${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"g\":{\"planned\":\"run\"}}}"
+	arow twice "{\"run_id\":\"u$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"g\":{\"status\":\"skipped\",\"reason\":\"r\"}}}"
+done
+out=$(alarm twice)
+grep -q "g did not complete 3x" <<<"$out" && grep -q "g was declined with a reason (skipped) 3x" <<<"$out" \
+	&& ok "a gate over both thresholds reports each bucket once" \
+	|| bad "a gate over both thresholds reports each bucket once (got: $out)"
+! grep -q "varying ways" <<<"$out" \
+	&& ok "and does not also print the combined line" \
+	|| bad "and does not also print the combined line"
 
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
 exit "$fails"

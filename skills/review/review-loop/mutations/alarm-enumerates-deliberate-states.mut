@@ -1,8 +1,18 @@
 target: skills/review/review-loop/review-stats.py
 verify: cd skills/review/review-loop && ./review-stats.test.sh
-expect: a 'pending' gate is declined, not reported as a failure
-why:    listing the deliberate statuses instead of the failures puts every spelling nobody thought of back in the failure bucket — the record already held `pending` and `deferred` beside `skipped`, all with reasons, and runlog never validates the string
+expect: an unrecognised status 'error' goes loud and is named
+why:    defaulting an unrecognised status to the DELIBERATE bucket softens every failure spelling nobody listed — error, timeout, crashed, blocked, incomplete, and FAILED all read as "declined with a reason". Neither vocabulary is closed, so the default is the whole decision, and it must be loud
 --- old
-DROP_STATES = ("unreported", "failed")
+            if st in DECLINED_STATES:
+                declined[g] += 1
+                decline_why[g].add(st)
+            else:
+                dropped[g] += 1
+                drop_why[g].add(st)
 --- new
-DROP_STATES = ("unreported", "failed", "pending", "deferred")
+            if st in ("unreported", "failed"):
+                dropped[g] += 1
+                drop_why[g].add(st)
+            else:
+                declined[g] += 1
+                decline_why[g].add(st)

@@ -1,0 +1,7 @@
+target: skills/review/review-loop/review-stats.py
+verify: cd skills/review/review-loop && ./review-stats.test.sh
+expect: a non-string status neither crashes nor is softened
+why:    a status that is not a string is not rejected at write time either, and formatting one into the message raises TypeError from the join — which takes down the whole alarm for every gate, not just the malformed one, and silence is the one failure mode this alarm cannot afford
+--- old
+            st = str(st)
+--- new

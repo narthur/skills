@@ -72,22 +72,33 @@ def dropped_gates(run):
     return out
 
 
-# A gate the run accounted for is a different signal from one it never reported, and the
-# two have different fixes — which is what the alarm's own closing line has always said.
-# Counting them together made the alarm report correct behaviour as failure: five reported
-# misses of `record_reviewed` over 21 runs contained no real miss at all.
+# A gate the run accounted for is a different signal from one it failed to complete, and
+# the two have different fixes — which is what the alarm's own closing line has always
+# said. Counting them together made the alarm report correct behaviour as failure: five
+# reported misses of `record_reviewed` over 21 runs contained no real miss at all.
 #
-# Enumerate the FAILURES, not the deliberate states. `runlog.cmd_finish` requires a
-# non-empty reason for every status but `done` and does not validate the string itself, so
-# the deliberate vocabulary is open-ended — the record already holds `skipped`, `pending`
-# and `deferred`, each with a reason — and a list of the deliberate ones loses to the next
-# spelling someone invents, dropping it back into the failure bucket. The failure set is
-# closed: a gate with no entry at all, and one that says it failed.
+# NEITHER vocabulary is closed. `runlog.cmd_finish` requires a non-empty reason for every
+# status but `done` and never validates the string, so any spelling can reach here. Two
+# earlier attempts each enumerated one side and lost to the other: listing the deliberate
+# words put `pending` and `deferred` in the failure bucket, and listing the failure words
+# put `error`, `timeout`, `crashed` and even `FAILED` in the deliberate one — the same
+# defect mirrored, and the second is the worse direction because it softens.
+#
+# So what settles it is the DEFAULT, not the list: an unrecognised status is far likelier
+# to be a new failure or a bug than a new deliberate word, so anything unknown falls to
+# the loud bucket, and the message names it. That is also how a genuinely new deliberate
+# word gets noticed and added here on purpose rather than silently absorbed.
 #
 # Not fixed by widening runlog.GATE_OK, which is the right place for this distinction to
 # NOT exist: derive_tier reads it to decide `partial`, and a run that did not complete a
 # planned gate genuinely is partial. Widening it there would launder partial into full.
-DROP_STATES = ("unreported", "failed")
+DECLINED_STATES = ("skipped", "pending", "deferred")
+
+
+def _naming(seen):
+    """The statuses behind a count, for the message — `unreported` adds nothing to read."""
+    named = sorted(x for x in seen if x != "unreported")
+    return f" ({', '.join(named)})" if named else ""
 
 
 def cmd_alarm(runs):
@@ -95,7 +106,8 @@ def cmd_alarm(runs):
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
     dropped = collections.Counter()
     declined = collections.Counter()
-    why = collections.defaultdict(set)
+    drop_why = collections.defaultdict(set)
+    decline_why = collections.defaultdict(set)
     for run in recent:
         if is_abandoned(run, here):
             # One event, one counter. An abandoned run has every planned gate unreported
@@ -106,14 +118,20 @@ def cmd_alarm(runs):
             dropped["(run abandoned)"] += 1
             continue
         for g, st in dropped_gates(run).items():
-            if st in DROP_STATES:
-                dropped[g] += 1
-            else:
+            # str(): a non-string status is not rejected at write time either, and
+            # formatting one into the message crashed the whole alarm with a TypeError —
+            # taking down every gate's signal, not just the malformed one.
+            st = str(st)
+            if st in DECLINED_STATES:
                 declined[g] += 1
-                why[g].add(st)
+                decline_why[g].add(st)
+            else:
+                dropped[g] += 1
+                drop_why[g].add(st)
 
-    hits = [(n, g, "did not complete") for g, n in dropped.items() if n >= ALARM_THRESHOLD]
-    hits += [(n, g, f"was declined with a reason ({', '.join(sorted(why[g]))})")
+    hits = [(n, g, f"did not complete{_naming(drop_why[g])}")
+            for g, n in dropped.items() if n >= ALARM_THRESHOLD]
+    hits += [(n, g, f"was declined with a reason{_naming(decline_why[g])}")
              for g, n in declined.items() if n >= ALARM_THRESHOLD]
     # A gate that fails BOTH ways still needs raising. Thresholding the two buckets
     # independently alone would have taken a gate from 3 non-completions to raise to 5 —

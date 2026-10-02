@@ -1,0 +1,13 @@
+target: skills/review/review-loop/review-stats.py
+verify: cd skills/review/review-loop && ./review-stats.test.sh
+expect: an unrecognised status 'timeout' goes loud and is named
+why:    an unrecognised status is reported loudly so someone can act on it, and dropping its name from the message leaves "did not complete" with no way to tell a genuinely new failure spelling from a plain unreported gate — which is how a new deliberate word would get absorbed instead of added on purpose
+--- old
+def _naming(seen):
+    """The statuses behind a count, for the message — `unreported` adds nothing to read."""
+    named = sorted(x for x in seen if x != "unreported")
+    return f" ({', '.join(named)})" if named else ""
+--- new
+def _naming(seen):
+    """The statuses behind a count, for the message — `unreported` adds nothing to read."""
+    return ""
