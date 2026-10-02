@@ -56,7 +56,20 @@ jobs:
             grep -q selftest "$f" || continue
             python3 "$f" --selftest >/dev/null 2>&1 || failed="$failed $f"
           done
-          [ -z "$failed" ] || { echo "selftest failed:$failed"; exit 1; }
+          # Quiet on success, but a failure must say WHAT failed. The first run of this
+          # step reported only "selftest failed: learn.py", which named the file and threw
+          # away the assertion — and the failure does not reproduce on the author's
+          # machine, so the discarded output was the only evidence there was.
+          if [ -n "$failed" ]; then
+            echo "selftest failed:$failed"
+            for f in $failed; do
+              echo "::group::$f --selftest"
+              python3 -VV
+              python3 "$f" --selftest || true
+              echo "::endgroup::"
+            done
+            exit 1
+          fi
 
       # Named individually so a failure says which suite. Stopping at the first would
       # hide the rest; this runs them all and then fails.
@@ -89,7 +102,10 @@ jobs:
         with:
           persist-credentials: false
           repository: PinePeakDigital/looper
-          ref: v0.1.2
+          # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
+          # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
+          # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
+          ref: 2e9b1a885441113dc8c98fda085e2a6e1e711363 # v0.1.2
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

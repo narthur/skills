@@ -28,7 +28,15 @@ input=$(cat)
 STORE="${REVIEW_LOOP_RUNS:-$HOME/.claude/review-loop/runs.jsonl}"
 [ -s "$STORE" ] || exit 0
 
-RUNLOG="$HOME/.claude/skills/review-loop/runlog.py"
+# Sibling first, then the installed location. These ship together, so the copy next to
+# this script is the one whose version matches it — and resolving only through $HOME meant
+# the hook silently exit 0'd anywhere the skill was not installed, including CI. That is
+# why runlog.test.sh's four stop-hook assertions passed here and went red on the first
+# runner that ever ran them: the suite was exercising the INSTALLED hook, not the checked-
+# out one, and on a machine without the install there was nothing to exercise at all.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUNLOG="$HERE/runlog.py"
+[ -x "$RUNLOG" ] || RUNLOG="$HOME/.claude/skills/review-loop/runlog.py"
 [ -x "$RUNLOG" ] || exit 0
 
 # The hook runs from the session's cwd, but a Stop can fire anywhere; only a git
