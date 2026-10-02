@@ -1,6 +1,6 @@
 target: skills/review/review-loop/runlog.py
 verify: cd skills/review/review-loop && ./runlog.test.sh
-expect: check(s) failed
+expect: asks recorded at finish prevent converged
 why:    a run that routed findings to the user and resolved none derives `converged`, so the PR says nothing is left to apply
 --- old
     if (run.get("unresolved_asks") or 0) > 0:

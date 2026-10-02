@@ -1,6 +1,6 @@
 target: skills/review/review-loop/runlog.py
 verify: cd skills/review/review-loop && ./runlog.test.sh
-expect: check(s) failed
+expect: precedent refused through whitespace
 why:    matching raw text lets a precedent-citing reason through whenever it wrapped onto another line
 --- old
         low = " ".join((text or "").lower().split())
