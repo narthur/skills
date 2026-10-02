@@ -194,6 +194,13 @@ def convergence(run):
     if not cy:
         return None
     last = cy[-1]
+    # Asks recorded at finish are outstanding work even when no cycle row carries them, so
+    # this precedes the converged test rather than following it — placed after, the converged
+    # branch short-circuited it and the hole stayed open. The omission path: `cycle --applied
+    # 0` with no --asked, then `finish --asks 7`, derived converged with disclose null while
+    # seven findings sat unresolved and the PR said nothing was left to apply.
+    if (run.get("unresolved_asks") or 0) > 0:
+        return "halted"
     # Converged means the loop stopped with nothing left to do — all three halves. The
     # deterministic pass changing files is as much unfinished work as a non-empty
     # auto-fix bucket, and so is the ask bucket: a cycle that routed every finding to
@@ -204,6 +211,10 @@ def convergence(run):
     if (last.get("applied") == 0 and not last.get("asked")
             and not last.get("analysis_changed")):
         return "converged"
+    # Asks recorded at finish count as outstanding work even when no cycle row carries them.
+    # Without this the omission path stayed open: `cycle --applied 0` with no --asked, then
+    # `finish --asks 7`, derived converged with disclose null while seven findings sat
+    # unresolved with the user and the PR said the review found nothing left to apply.
     cap = run.get("agent_cap")
     spent = sum(c.get("agents") or 0 for c in cy)
     if cap and spent >= cap:
@@ -235,8 +246,9 @@ def disclosure(conv, run):
                 "whether the loop still had findings when it stopped. Treat as unreviewed.")
     head = {"capped": f"Review CAPPED at {spent} of {cap} agents",
             "halted": f"Review HALTED after {len(cy)} cycle(s), {spent} agents"}[conv]
+    asked = last.get("asked") or (run or {}).get("unresolved_asks") or 0
     return (f"{head}: the last cycle applied {last.get('applied', '?')} fix(es)"
-            + (f" and left {last['asked']} finding(s) awaiting a decision" if last.get("asked") else "")
+            + (f" and left {asked} finding(s) awaiting a decision" if asked else "")
             + (" and the deterministic pass still had unresolved findings" if last.get("analysis_changed") else "")
             + ". The loop had not stopped finding things — another cycle would likely find more.")
 
@@ -245,12 +257,12 @@ def disclosure(conv, run):
 # to list all four independently while this tuple listed three, which is the divergence
 # the export exists to prevent.
 CONVERGENCE = ("converged", "capped", "halted", "unknown")
-# A ceiling, not a target. Set above where the hard cases actually settle: the record has
-# one run that converged within two cycles, against three that were still finding real
-# defects at three to four passes — so a ceiling that binds on every hard case is a stall
-# with extra steps. (An earlier version of this comment claimed "two runs converged in
-# 1-2 cycles" and "two did not, at 3 and 4 passes"; the record supports neither count.)
-# Overridable per run via --agent-cap.
+# A ceiling, not a target: set above where the hard cases settle, because a ceiling that
+# binds on every hard case is a stall with extra steps. The counts that used to be quoted
+# here are deliberately gone — they were restated by hand, went stale every time the record
+# grew, and were wrong twice and disputed twice. `review-stats.py` derives them from the
+# record (`convergence:` and `mean agents/run`), which is where to look before changing this
+# number. Overridable per run via --agent-cap.
 DEFAULT_AGENT_CAP = 40
 
 
@@ -595,15 +607,6 @@ def cmd_finish(a):
         print("runlog: WARNING — no cycle rows for this run, so convergence is unknown, "
               "which every consumer reads as 'did not converge'. Record each cycle with "
               "`runlog.py cycle`.", file=sys.stderr)
-    elif conv == "converged" and (a.asks or 0) > 0:
-        # The cycle-row `asked` guard is satisfiable by omission: `cycle --applied 0` with no
-        # --asked, then `finish --asks 7`, derives converged with no disclosure while seven
-        # findings sit unresolved with the user. The same asymmetry bucket._validate was
-        # fixed for in this build — and cmd_finish holds both numbers.
-        print(f"runlog: WARNING — the cycle rows derive 'converged' but this finish records "
-              f"{a.asks} unresolved ask(s). A cycle that routed findings to the user and "
-              "resolved none has not converged: record them with `cycle --asked N`, or the PR "
-              "will claim the review found nothing left to do.", file=sys.stderr)
     elif a.outcome == "clean" and conv != "converged":
         # The derivation was added to displace the self-report; the self-report stayed.
         # Run b480b45cc65d recorded `clean` for a run its own author says did not
@@ -792,7 +795,8 @@ def main():
     # cycle may be 30 agents over 50 files and the next a single agent on a few lines.
     sp.add_argument("--tier-reason", help="why the plan landed on this floor (vetted like every reason)")
     sp.add_argument("--agent-cap", type=int, default=DEFAULT_AGENT_CAP,
-                    help=f"cumulative agent budget for the run (default {DEFAULT_AGENT_CAP}); "
+                    help=f"cumulative subagent budget for the run, scorers included "
+                         f"(default {DEFAULT_AGENT_CAP}); "
                          "hitting it records `capped`, which permits a push WITH disclosure")
     sp.add_argument("--semantic-lines", type=int,
                     help="raw minus whitespace-only, lockfiles and declared-generated files")

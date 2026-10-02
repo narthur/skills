@@ -19,7 +19,7 @@ Split on purpose, mirroring the skill's deterministic/agent division:
 
 Without --post it prints the report. With --post it comments on the PR for the current
 branch, or — when no PR exists yet, the normal case for a fresh branch, since the push
-gate forces loop-then-push-then-PR — writes .git/info/review-loop-pending-report.md
+gate forces loop-then-push-then-PR — writes .git/info/review-loop-pending-report.<run_id>.md
 for Step 0c to flush. Deferred, never dropped.
 """
 import argparse
@@ -30,7 +30,17 @@ import sys
 import runlog
 
 MARKER = "<!-- review-loop:run={} -->"
-PENDING = "info/review-loop-pending-report.md"
+# Per RUN, not per repo. The dir comes from --git-common-dir, which every worktree of a repo
+# shares, so a single fixed name meant two concurrent worktree sessions overwrote each other's
+# report — then one push was refused and Step 0c posted the survivor to the wrong branch's PR.
+# Concurrent worktree sessions are the normal case here; runlog's own store is append-only for
+# exactly that reason.
+PENDING_DIR = "info"
+PENDING_GLOB = "review-loop-pending-report.*.md"
+
+
+def pending_name(run_id):
+    return f"{PENDING_DIR}/review-loop-pending-report.{run_id}.md"
 # At-a-glance trust, which is the point: a reader should not have to open a comment to
 # learn whether the review finished. Mirrors runlog's derived vocabulary exactly.
 LABELS = {
@@ -159,7 +169,7 @@ def write_pending(body, run_id, conv, repo):
     rc, gitdir, _ = sh("git", "rev-parse", "--path-format=absolute", "--git-common-dir", repo=repo)
     if rc != 0:
         return None
-    path = os.path.join(gitdir, PENDING)
+    path = os.path.join(gitdir, pending_name(run_id))
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write(body)
@@ -220,6 +230,10 @@ def main(argv):
               else "pr-report: could not preserve the report — no git dir", file=sys.stderr)
     else:
         print(f"pr-report: posted to PR #{num}", file=sys.stderr)
+        # Also locally, so the push gate rests on an artifact that does not depend on a
+        # SECOND successful remote read. Without this, a post that succeeded while the
+        # read-back failed refused the push forever and posted a duplicate on every retry.
+        write_pending(body, a.run_id, conv, a.repo)
 
     if a.label:
         name, colour, desc = LABELS[conv or "unknown"]

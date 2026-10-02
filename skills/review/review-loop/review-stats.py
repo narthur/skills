@@ -143,9 +143,10 @@ def cmd_report(runs, repo):
     # cap moves to a token or weighted basis — the stated reason tokens are recorded.
     # Over `fin`, the same population as the denominator below. Summing cycles across ALL
     # runs while dividing by finished ones counted open, abandoned, carried and skipped runs
-    # in the numerator only: measured, one finished run of 4 agents beside an in-flight run
-    # of 20 reported "mean agents/run: 24.0" where the honest figure is 4.0. These are the
-    # two numbers this block exists to let the cap be chosen from.
+    # in the numerator only: a finished run of 4 agents beside an in-flight run of 20 reports
+    # "mean agents/run: 24.0" where the honest figure is 4.0 — reproduced in this suite's own
+    # fixture, not observed in the store, which has never recorded a 20-agent cycle. These are
+    # the two numbers this block exists to let the cap be chosen from.
     cyc = [c for r in fin for c in runlog.cycles_of(r)]
     ag = sum(c.get("agents") or 0 for c in cyc)
     tok = sum(c.get("subagent_tokens") or 0 for c in cyc)

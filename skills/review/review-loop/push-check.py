@@ -40,7 +40,7 @@ BROKEN_OUTCOMES = ("test-failure", "blocked", "abandoned")
 # The marker pr-report.py writes at the top of every report body. Matching it is how this
 # script checks that the report actually reached a reader.
 REPORT_MARKER = "<!-- review-loop:run={} -->"
-PENDING = "info/review-loop-pending-report.md"
+PENDING_FMT = "info/review-loop-pending-report.{}.md"
 
 
 def sh(*args, repo="."):
@@ -53,31 +53,39 @@ def sh(*args, repo="."):
     return p.returncode, p.stdout.strip(), p.stderr.strip()
 
 
-def report_landed(run_id, repo="."):
-    """Did this run's report actually reach somewhere a reader will see it?
+def report_fingerprint(run):
+    """The strings a real rendered report must contain for THIS run, from the record.
 
-    Checks the ARTIFACT, not a claim that the artifact exists. An earlier version of this
-    gate read a `disclosed` row the orchestrator's own toolchain wrote, which could be
-    satisfied by `runlog.py disclosed --where "trust me"` with no report anywhere — the
-    exact shape `--clean-exit` was retired for, rebuilt inside its replacement. Checking
-    the artifact cannot be satisfied by an assertion, needs no new record phase, and gives
-    the marker string its first reader.
-
-    Returns None when it cannot tell (no git, no gh, no answer) rather than guessing, and
-    the caller decides. pr-report guarantees the body lands in one of these two places, so
-    "neither" means pr-report was not run.
+    The marker alone was not enough: `printf '<!-- review-loop:run=X -->' > <pending>` is 38
+    bytes and satisfied the gate, making it CHEAPER to forge than the `disclosed --where
+    "trust me"` row it replaced. Requiring the run line too means the numbers have to agree
+    with the cycle rows, which cannot be produced without rendering from the record — the
+    point being that this is a property of the artifact, not a claim about it.
     """
-    marker = REPORT_MARKER.format(run_id)
+    cy = runlog.cycles_of(run)
+    spent = sum(c.get("agents") or 0 for c in cy)
+    return ["## review-loop", f"{len(cy)} cycle(s) · {spent} agent(s)"]
+
+
+def report_landed(run_id, run, repo="."):
+    """Has this run's rendered report reached somewhere a reader will see it?
+
+    No "cannot tell" result: no gh and no git both read as "not landed", which fails closed,
+    and pr-report guarantees the body lands in one of the two places checked — a PR comment
+    or this run's pending file — including when the post fails. So "neither" means pr-report
+    did not run, which is the one thing this gate exists to catch.
+    """
+    needles = [REPORT_MARKER.format(run_id)] + report_fingerprint(run)
     rc, out, _ = sh("gh", "pr", "view", "--json", "comments",
                     "-q", ".comments[].body", repo=repo)
-    if rc == 0 and marker in out:
+    if rc == 0 and all(n in out for n in needles):
         return True
     rc, gitdir, _ = sh("git", "rev-parse", "--path-format=absolute", "--git-common-dir", repo=repo)
     if rc == 0 and gitdir:
         try:
-            with open(os.path.join(gitdir, PENDING), encoding="utf-8") as fh:
-                if marker in fh.read():
-                    return True
+            with open(os.path.join(gitdir, PENDING_FMT.format(run_id)), encoding="utf-8") as fh:
+                body = fh.read()
+            return all(n in body for n in needles)
         except OSError:
             pass
     return False
@@ -130,9 +138,10 @@ def decide(convergence, gate_state, unresolved_skip, branch, default_branch, ups
 
 
 def _upstream_exists(repo):
-    r = subprocess.run(["git", "-C", repo, "rev-parse", "--abbrev-ref", "@{upstream}"],
-                       capture_output=True, text=True, check=False)
-    return r.returncode == 0
+    # Through sh(), which swallows OSError and bounds the call. As a raw subprocess.run this
+    # was the only crash path in the file: it is evaluated as an argument to decide(), so an
+    # empty PATH produced a traceback and an empty stdout where Step 14 expects JSON.
+    return sh("git", "rev-parse", "--abbrev-ref", "@{upstream}", repo=repo)[0] == 0
 
 
 def _selftest():
@@ -235,11 +244,23 @@ def _selftest():
                   "--gate-state", "passed", "--repo", td])
         got = json.loads(out.getvalue())
         assert got["push"] is False and "pr-report" in got["reason"], got
-        # Write the pending file carrying this run's marker: the report has now landed.
+        # A marker-only file must NOT satisfy the gate: at 38 bytes that was cheaper to
+        # forge than the `disclosed --where "trust me"` row this replaced.
         gitdir = os.path.join(td, ".git")
         os.makedirs(os.path.join(gitdir, "info"), exist_ok=True)
-        with open(os.path.join(gitdir, PENDING), "w", encoding="utf-8") as fh:
+        pend = os.path.join(gitdir, PENDING_FMT.format(rid2))
+        with open(pend, "w", encoding="utf-8") as fh:
             fh.write(REPORT_MARKER.format(rid2) + "\n\nthe report\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["--run-id", rid2, "--branch", "feat/x", "--default-branch", "main",
+                  "--gate-state", "passed", "--repo", td])
+        assert json.loads(out.getvalue())["push"] is False, "a marker alone satisfied the gate"
+        # The real thing: marker plus the run line, whose numbers come from the cycle rows.
+        run2 = runlog.load(limit=None)[rid2]
+        with open(pend, "w", encoding="utf-8") as fh:
+            fh.write(REPORT_MARKER.format(rid2) + "\n\n"
+                     + "\n".join(report_fingerprint(run2)) + "\n")
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             main(["--run-id", rid2, "--branch", "feat/x", "--default-branch", "main",
@@ -277,7 +298,7 @@ def main(argv):
         run = runlog.load(limit=None).get(a.run_id) or {}
         conv = runlog.convergence(run)
     unreported = None
-    if not report_landed(a.run_id, a.repo):
+    if not report_landed(a.run_id, run, a.repo):
         unreported = ("this run's report has not reached the PR or the pending-report file — "
                       "run pr-report.py --post first")
     push, reason = decide(conv, a.gate_state, a.unresolved_skip,

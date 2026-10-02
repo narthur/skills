@@ -13,7 +13,7 @@ trap 'rm -rf "$TMP"' EXIT
 export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 fails=0
 NL=$'\n'
-TAB=$'\t'
+TAB=$'	'
 ok() { echo "  ok  $1"; }
 bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
 
@@ -234,24 +234,30 @@ grep -q "outcome 'clean' but the cycle rows derive" <<<"$out" \
 	&& ok "finish names a self-report that contradicts the derivation" \
 	|| bad "finish names a self-report that contradicts the derivation (got: $out)"
 
-# The cycle-row `asked` guard is satisfiable by omission — `cycle --applied 0` with no
-# --asked, then `finish --asks 7` — so the run derives converged with no disclosure while
-# seven findings sit unresolved with the user. cmd_finish holds both numbers, so it says so.
+# Asks recorded at finish are outstanding work even when no cycle row carries them. The
+# omission path — `cycle --applied 0` with no --asked, then `finish --asks 7` — derived
+# converged with no disclosure while seven findings sat unresolved with the user.
 r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 cy "$r" 1 0 6
-out=$("$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' --asks 7 2>&1)
-grep -q "derive 'converged' but this finish records 7 unresolved ask" <<<"$out" \
-	&& ok "finish names converged-with-unresolved-asks" \
-	|| bad "finish names converged-with-unresolved-asks (got: $out)"
-# And stays quiet when the asks were recorded on the cycle row, where they belong.
+"$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"}}' --asks 7 >/dev/null 2>&1
+[ "$(conv "$r")" = "halted" ] && ok "asks recorded at finish prevent converged" \
+	|| bad "asks recorded at finish prevent converged (got: $(conv "$r"))"
+"$PY" -c '
+import sys; sys.path.insert(0, ".")
+import runlog
+run = runlog.load(limit=None)["'"$r"'"]
+d = runlog.disclosure(runlog.convergence(run), run)
+assert "7 finding(s) awaiting a decision" in d, d
+' && ok "and the disclosure names them even with no cycle-row count" \
+	|| bad "and the disclosure names them even with no cycle-row count"
+# And a genuinely clean run still converges.
 r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 0 --asked 7 --agents 6 >/dev/null 2>&1
-out=$("$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
-	--executed '{"threat_model":{"status":"done"}}' --asks 7 2>&1)
-grep -q 'unresolved ask' <<<"$out" \
-	&& bad "no warning when the asks are on the cycle row (it derives halted already)" \
-	|| ok "and stays quiet when the asks are on the cycle row"
+cy "$r" 1 0 6
+"$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"}}' --asks 0 >/dev/null 2>&1
+[ "$(conv "$r")" = "converged" ] && ok "and zero asks still converges" \
+	|| bad "and zero asks still converges (got: $(conv "$r"))"
 
 # The disclosure gate is no longer here: the `disclosed` phase and disclosure_pending were
 # deleted because the marker they wrote could be satisfied by `runlog.py disclosed --where
@@ -264,8 +270,8 @@ grep -q 'unresolved ask' <<<"$out" \
 for variant in "matches  an   existing    pattern" "matches${NL}an existing pattern" \
 	"matches an existing${TAB}pattern" "MATCHES AN EXISTING PATTERN" "matches an existing pattern"; do
 	out=$("$PY" runlog.py skipped --reason "$variant" --model m 2>&1 | head -1)
-	grep -q refusing <<<"$out" && ok "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n\t' '  ' | cut -c1-32)" \
-		|| bad "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n\t' '  ' | cut -c1-32) (got: $out)"
+	grep -q refusing <<<"$out" && ok "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n	' '  ' | cut -c1-32)" \
+		|| bad "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n	' '  ' | cut -c1-32) (got: $out)"
 done
 # And a measurable reason still records.
 out=$("$PY" runlog.py skipped --reason "12 lines and no logic touched" --model m 2>&1 | head -1)

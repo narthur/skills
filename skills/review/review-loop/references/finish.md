@@ -34,7 +34,7 @@ converged state and its description should not claim otherwise.
 
 On **any terminal exit** with **no PR yet** the comment is **deferred**, and so is the reconcile
 when the exit was clean — the reconcile itself stays clean-exit-only. Write the
-report to `.git/info/review-loop-pending-report.md` (shape in `references/report-format.md`) so
+report to `.git/info/review-loop-pending-report.<run_id>.md` (shape in `references/report-format.md`) so
 Step 0c flushes them when the PR appears. The comment posts directly on any terminal exit where a
 PR already exists.
 

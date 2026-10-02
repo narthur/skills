@@ -66,7 +66,7 @@ case "$*" in
 esac
 STUB
 chmod +x "$stub/gh"
-pend="$WORK/.git/info/review-loop-pending-report.md"
+pend="$WORK/.git/info/review-loop-pending-report.$forge.md"
 rm -f "$pend"
 (cd "$WORK" && PATH="$stub:$PATH" "$PY" "$HERE/pr-report.py" --run-id "$forge" --post --repo "$WORK" </dev/null) >/dev/null 2>&1
 [ -f "$pend" ] && grep -qF "review-loop:run=$forge" "$pend" \
@@ -148,7 +148,7 @@ rid6=$(plan)
 nogh="$TMP/nogh"; mkdir -p "$nogh"
 for t in git python3 sed awk; do src=$(command -v "$t" 2>/dev/null) && ln -sf "$src" "$nogh/$t"; done
 (cd "$repo" && PATH="$nogh" "$PY" "$OLDPWD/pr-report.py" --run-id "$rid6" --post </dev/null) >/dev/null 2>&1
-pend="$repo/.git/info/review-loop-pending-report.md"
+pend="$repo/.git/info/review-loop-pending-report.$rid6.md"
 [ -s "$pend" ] && ok "with no PR the report is deferred to the pending file" || bad "with no PR the report is deferred to the pending file"
 grep -q 'review-loop:run=' "$pend" 2>/dev/null && ok "and the deferred file names its run" || bad "and the deferred file names its run"
 

@@ -52,7 +52,7 @@ EOF
 )"
 ```
 
-**No PR yet — defer, don't skip.** A fresh branch is pushed *after* the loop runs (the gate forces that order), so "no PR" is the normal first-branch case, not a reason to drop the summary. Write the report block — plus any evidence captured in Step 13 — to `.git/info/review-loop-pending-report.md` instead. Two things flush it, both running Step 0c's procedure (post the report, run the evidence gate, reconcile the description): (a) if you go on to create the PR **later in this same session**, flush it immediately (you still have this report in context); (b) otherwise Step 0c flushes automatically the next time the loop runs after the PR exists. Either way the summary and evidence reach the PR without the author having to notice they're missing.
+**No PR yet — defer, don't skip.** A fresh branch is pushed *after* the loop runs (the gate forces that order), so "no PR" is the normal first-branch case, not a reason to drop the summary. Write the report block — plus any evidence captured in Step 13 — to `.git/info/review-loop-pending-report.<run_id>.md` instead. Two things flush it, both running Step 0c's procedure (post the report, run the evidence gate, reconcile the description): (a) if you go on to create the PR **later in this same session**, flush it immediately (you still have this report in context); (b) otherwise Step 0c flushes automatically the next time the loop runs after the PR exists. Either way the summary and evidence reach the PR without the author having to notice they're missing.
 
 If the comment post fails, note it in the report and continue — don't retry.
 
@@ -116,10 +116,10 @@ case, since the push gate forces loop-then-push-then-PR — the at-a-glance sign
 the deferring run. Re-running `pr-report.py --run-id <id> --post --label` once the PR exists is
 therefore preferred over pasting the file by hand: it posts the body *and* applies the label.
 
-Reached when `.git/info/review-loop-pending-report.md` exists **and** a PR now exists for the
+Reached when any `.git/info/review-loop-pending-report.*.md` exists **and** a PR now exists for the
 branch. (Pending file but still no PR → leave it in place and continue the run.)
 
-1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file .git/info/review-loop-pending-report.md`).
+1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file <the pending file>`).
 2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
 3. Delete the pending file.
 4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
