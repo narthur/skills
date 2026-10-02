@@ -1,5 +1,6 @@
 target: skills/review/review-loop/runlog.py
 verify: cd skills/review/review-loop && ./runlog.test.sh
+expect: check(s) failed
 why:    a cycle row appended after finish rewrites a convergence already disclosed on a PR and already cleared for push
 --- old
     prior = load(limit=None).get(a.run_id) or {}

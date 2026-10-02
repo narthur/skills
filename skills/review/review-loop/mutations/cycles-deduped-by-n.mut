@@ -1,5 +1,6 @@
 target: skills/review/review-loop/runlog.py
 verify: cd skills/review/review-loop && ./runlog.test.sh
+expect: check(s) failed
 why:    deduping cycle rows by n deletes the first pass of every Step 13 restart from the agent-cap tally
 --- old
     return list(run.get("cycles") or [])

@@ -1,5 +1,6 @@
 target: skills/review/review-loop/context.sh
 verify: cd skills/review/review-loop && ./context-sizing.test.sh
+expect: check(s) failed
 why:    grep -c prints a count AND exits 1 on no match, so the count and the fallback both land and context.sh crashes on a header-only learnings file
 --- old
   learnings_entries=$(grep -c '^- ' "$lf" 2>/dev/null) || learnings_entries=0

@@ -5,14 +5,23 @@ on:
     branches: [main]
   pull_request:
 
+# Read-only. Neither job needs more, and a workflow with write permissions is one
+# compromised action away from pushing to the repo it builds.
+permissions:
+  contents: read
+
 jobs:
   suites:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: skills/review/review-loop
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Do not leave the token in .git/config for the test suites to find.
+          persist-credentials: false
 
       # Several suites build throwaway repos. Not every one sets an identity on its
       # own, and a commit that silently fails to land makes the checks around it
@@ -38,17 +47,24 @@ jobs:
 
   trust:
     runs-on: ubuntu-latest
+    # 13 mutations, each running one shell test suite, plus a Go build. A couple of
+    # minutes in practice; this caps a pathological run well under the 360-minute default.
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Do not leave the token in .git/config for the test suites to find.
+          persist-credentials: false
 
       # looper lives in its own repo, checked out and built rather than `go install`ed:
       # no module-proxy round trip, and the ref it is pinned to is visible right here.
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
+          persist-credentials: false
           repository: PinePeakDigital/looper
           ref: v0.1.0
           path: .looper
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
         with:
           go-version-file: .looper/go.mod
           cache: false
@@ -78,4 +94,5 @@ jobs:
       # Flags the prose attributes to a script that does not have them. SKILL.md
       # documented --max-cycles for a full day after it was deleted.
       - name: docs match the code
-        run: "$RUNNER_TEMP/looper" docs skills/review/review-loop
+        run: |
+          "$RUNNER_TEMP/looper" docs skills/review/review-loop

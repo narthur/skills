@@ -1,5 +1,6 @@
 target: skills/review/review-loop/context.sh
 verify: cd skills/review/review-loop && ./context-sizing.test.sh
+expect: check(s) failed
 why:    only the final extension is checked, so values.yml.j2 and main.py.j2 go down the -w path
 --- old
     return any(f".{part}" in INDENT for part in name.split(".")[1:])

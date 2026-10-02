@@ -1,5 +1,6 @@
 target: skills/review/review-loop/context.sh
 verify: cd skills/review/review-loop && ./context-sizing.test.sh
+expect: check(s) failed
 why:    Makefile and Makefile.am are not recognised as tab-significant, so a recipe dedent scores 0
 --- old
     if name in INDENT_NAMES or name.split(".")[0] in INDENT_STEMS:

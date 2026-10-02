@@ -1,5 +1,6 @@
 target: skills/review/review-loop/context.sh
 verify: cd skills/review/review-loop && ./context-sizing.test.sh
+expect: check(s) failed
 why:    under pipefail both awk's 0 and the fallback's 0 land, making changed_lines the string "0\n0" and truncating the context file to 0 bytes
 --- old
   changed_lines=$(git diff --numstat "$range" 2>/dev/null \
