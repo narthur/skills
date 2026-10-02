@@ -138,9 +138,13 @@ out=$(alarm skip)
 grep -q "record_reviewed was skipped though the plan said run 3x" <<<"$out" \
 	&& ok "three deliberate skips raise the plan, not the gate" \
 	|| bad "three deliberate skips raise the plan, not the gate"
-grep -q "did not complete" <<<"$out" \
-	&& bad "a deliberate skip is still reported as a failure to complete" \
-	|| ok "a deliberate skip is not reported as a failure to complete"
+# Guarded on non-empty: an absence assertion is satisfied by output that does not exist,
+# so with the alarm printing nothing at all this passed while the positive assertions
+# beside it went red. Silence is the alarm's correct state AND its total-failure state,
+# which makes a bare `! grep` here the one shape that cannot tell them apart.
+[ -n "$out" ] && ! grep -q "did not complete" <<<"$out" \
+	&& ok "a deliberate skip is not reported as a failure to complete" \
+	|| bad "a deliberate skip is not reported as a failure to complete"
 
 # Three abandoned runs, nine planned gates each. The abandonment is the signal; the
 # per-gate attribution is noise, and counting both turned one event into nine.
@@ -151,9 +155,9 @@ done
 out=$(alarm aband)
 grep -q "(run abandoned) did not complete 3x" <<<"$out" \
 	&& ok "repeated abandonment raises" || bad "repeated abandonment raises"
-grep -qE "record_reviewed|learnings_capture|upstream_drift_check" <<<"$out" \
-	&& bad "an abandoned run is counted again against each of its gates" \
-	|| ok "an abandoned run is not counted again against each of its gates"
+[ -n "$out" ] && ! grep -qE "record_reviewed|learnings_capture|upstream_drift_check" <<<"$out" \
+	&& ok "an abandoned run is not counted again against each of its gates" \
+	|| bad "an abandoned run is counted again against each of its gates"
 
 # And the shape that was firing falsely: two correct skips plus one real miss of the
 # same gate is below the threshold in BOTH buckets, so it must stay silent.
