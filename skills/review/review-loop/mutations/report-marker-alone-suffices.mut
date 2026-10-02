@@ -1,0 +1,7 @@
+target: skills/review/review-loop/push-check.py
+verify: cd skills/review/review-loop && ./pr-report.test.sh
+why:    a 38-byte marker file satisfies the report gate, making it cheaper to forge than the row it replaced
+--- old
+    needles = [REPORT_MARKER.format(run_id)] + report_fingerprint(run)
+--- new
+    needles = [REPORT_MARKER.format(run_id)]

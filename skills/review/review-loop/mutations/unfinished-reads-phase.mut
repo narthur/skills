@@ -1,0 +1,7 @@
+target: skills/review/review-loop/runlog.py
+verify: cd skills/review/review-loop && ./runlog.test.sh
+why:    any row appended after finish overwrites run["phase"] and resurrects a closed run, so the Stop hook blocks the next turn
+--- old
+        if run.get("repo") != repo or run.get("finished_at") or run.get("outcome"):
+--- new
+        if run.get("repo") != repo or run.get("phase") == "finish":

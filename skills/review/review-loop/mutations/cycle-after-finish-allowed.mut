@@ -1,0 +1,11 @@
+target: skills/review/review-loop/runlog.py
+verify: cd skills/review/review-loop && ./runlog.test.sh
+why:    a cycle row appended after finish rewrites a convergence already disclosed on a PR and already cleared for push
+--- old
+    prior = load(limit=None).get(a.run_id) or {}
+    if prior.get("finished_at") or prior.get("outcome"):
+        sys.exit(f"runlog: run {a.run_id!r} is already finished — a cycle row appended now "
+                 "would change a convergence that has already been reported. Start a new run.")
+
+--- new
+
