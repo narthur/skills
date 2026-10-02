@@ -560,7 +560,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    report is actually present — in a PR comment or in the pending file, matched by the
    `<!-- review-loop:run=<id> -->` marker this script writes into every body. It checks the
    artifact, not a claim that one exists: an earlier version recorded a marker row written by the
-   orchestrator's own toolchain, which `runlog.py disclosed --where "trust me"` satisfied with no
+   orchestrator's own toolchain, which a since-deleted `disclosed` subcommand satisfied with no
    report anywhere. Required on **every** terminal exit, not only the unconverged ones — the
    incident this redesign exists for was a *clean* exit on a fresh branch whose summary never
    reached the PR.
