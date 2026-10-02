@@ -1,5 +1,5 @@
 target: skills/review/review-loop/pins.py
-verify: cd skills/review/review-loop && ./carry-review.test.sh
+verify: cd skills/review/review-loop && ./deferred.test.sh
 why:    pins whose sha names no commit here are reported as fine, so staleness is silently never computed for them
 --- old
     return [c for c in pinned if not resolvable(c["sha"])]

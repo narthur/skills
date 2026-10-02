@@ -66,6 +66,24 @@ up=$(field unpinned)
 grep -q 'second, not pinned' <<<"$up" && ! grep -q 'first, pinned' <<<"$up" \
 	&& ok "only the genuinely unpinned entry is named" || bad "only the genuinely unpinned entry is named (got: $up)"
 
+# --- a pin naming no commit HERE: staleness can never be computed for it, so the entry
+# --- must be named rather than passing as quiet. pins.py notes that `broken()` could be
+# --- gutted to `return []` with its own selftest still green; it could also be gutted
+# --- with the whole suite green, which is how this assertion came to be missing.
+write "- DEFERRED 2026-10-01 (run abc123abc123): pinned to a commit that is not here.
+  Grounding: nothing. [src/types.ts:1 @ 0000000]
+  Guard: none."
+bp=$(field broken_pins)
+grep -q '0000000' <<<"$bp" && ok "a pin naming no local commit is reported broken" \
+	|| bad "a pin naming no local commit is reported broken (got: $bp)"
+# Guard the guard: the same shape with a resolvable sha must NOT be reported, or the
+# assertion above would also pass for an implementation that called every pin broken.
+write "- DEFERRED 2026-10-01 (run abc123abc123): pinned to a real commit.
+  Grounding: nothing. [src/types.ts:1 @ $pin]
+  Guard: none."
+[ "$(field broken_pins)" = "[]" ] && ok "and a resolvable pin is not" \
+	|| bad "and a resolvable pin is not (got: $(field broken_pins))"
+
 # --- no file at all is the normal starting state, not an error
 rm -f "$repo/.git/info/review-loop-deferred.md"
 out=$(cd "$repo" && python3 "$SCRIPT"); rc=$?

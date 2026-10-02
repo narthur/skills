@@ -124,6 +124,27 @@ rm -f "$blindpend"
 	&& ok "a PR comment carrying the report satisfies the gate with no local file" \
 	|| bad "a PR comment carrying the report satisfies the gate with no local file"
 
+# The marker ALONE must not satisfy it. `printf '<!-- review-loop:run=X -->' > <pending>` is
+# 38 bytes, which made the artifact check CHEAPER to forge than the record row it replaced —
+# the opposite of the point. So the check rests on the run line too, whose cycle and agent
+# counts can only come from rendering the record. Reintroducing the marker-only check left
+# every suite green, which is how this assertion came to be missing.
+rm -f "$blindpend"
+printf '<!-- review-loop:run=%s -->\n' "$forge" > "$blindpend"
+forged=$(cd "$WORK" && PATH="$stubok:$PATH" "$PY" "$HERE/push-check.py" --run-id "$forge" \
+	--gate-state passed --branch feat/x --default-branch main --repo "$WORK")
+grep -q '"push": false' <<<"$forged" && grep -q 'has not reached' <<<"$forged" \
+	&& ok "a marker-only pending file does not satisfy the report gate" \
+	|| bad "a marker-only pending file does not satisfy the report gate ($forged)"
+# Guard the guard: the SAME invocation with the real rendered body must clear, or the
+# assertion above would pass for any reason at all — a crash, a bad flag, a missing run.
+"$PY" pr-report.py --run-id "$forge" </dev/null > "$blindpend"
+(cd "$WORK" && PATH="$stubok:$PATH" "$PY" "$HERE/push-check.py" --run-id "$forge" \
+	--gate-state passed --branch feat/x --default-branch main --repo "$WORK") \
+	| grep -q '"push": true' \
+	&& ok "and the real rendered report in the same place does satisfy it" \
+	|| bad "and the real rendered report in the same place does satisfy it"
+
 # Both sizing numbers and the exclusion: a cheaper review must arrive with its receipt.
 grep -q '900 raw' <<<"$out" && grep -q '120 of review surface' <<<"$out" && grep -q '780 line(s) in lockfiles' <<<"$out" \
 	&& ok "raw size, review surface and the exclusion all appear" || bad "raw size, review surface and the exclusion all appear"
