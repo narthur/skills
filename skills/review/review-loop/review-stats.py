@@ -72,21 +72,45 @@ def dropped_gates(run):
     return out
 
 
+# A gate the run deliberately declined is a different signal from one it never
+# reported, and the two have different fixes — which is what the alarm's own closing
+# line has always said. Counting them together made the alarm report correct
+# behaviour as failure: `record_reviewed` is planned "run" with the reason "on clean
+# exit", so a cycle-limit run that declines to stamp an unconverged tip reviewed is
+# the gate WORKING, and two such runs were two of its five reported misses.
+#
+# Not fixed by widening runlog.GATE_OK, which is the right place for this distinction
+# to NOT exist: derive_tier reads it to decide `partial`, and a run that skipped a
+# planned gate genuinely is partial. Widening it there would launder partial into full.
+SKIP_STATES = ("skipped",)
+
+
 def cmd_alarm(runs):
     recent = runs[-ALARM_WINDOW:]
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
     counts = collections.Counter()
+    skipped = collections.Counter()
     for run in recent:
         if is_abandoned(run, here):
+            # One event, one counter. An abandoned run has every planned gate
+            # unreported by construction, so also attributing it per gate turned a
+            # single abandonment into nine gate failures — which is how three gates
+            # crossed the threshold while having no real miss between them. The
+            # abandonment is the actionable signal and it already has a counter;
+            # per-gate detail for an abandoned run is noise. `report` still shows it.
             counts["(run abandoned)"] += 1
-        for g in dropped_gates(run):
-            counts[g] += 1
-    hits = [(g, n) for g, n in counts.most_common() if n >= ALARM_THRESHOLD]
+            continue
+        for g, st in dropped_gates(run).items():
+            (skipped if st in SKIP_STATES else counts)[g] += 1
+    hits = [(g, n, "did not complete") for g, n in counts.most_common()
+            if n >= ALARM_THRESHOLD]
+    hits += [(g, n, "was skipped though the plan said run") for g, n in skipped.most_common()
+             if n >= ALARM_THRESHOLD]
     if not hits:
         return 0
     print(f"review-loop alarm — over the last {len(recent)} runs:")
-    for g, n in hits:
-        print(f"  {g} did not complete {n}x")
+    for g, n, what in hits:
+        print(f"  {g} {what} {n}x")
     print("  Repeat count beats calendar: fix the gate or change the plan, don't log it again.")
     return 0
 

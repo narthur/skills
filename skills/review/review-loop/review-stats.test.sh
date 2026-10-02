@@ -107,5 +107,65 @@ grep -q 'mean tokens/agent: 100,000' <<<"$rep" \
 	|| bad "and tokens per agent comes from the same population (got: $(grep -o 'mean tokens/agent: [0-9,]*' <<<"$rep"))"
 
 echo
+# --- The alarm's two signals, and the abandonment double-count ------------------
+#
+# None of this was covered. The alarm had no test at all, and it was reporting five
+# misses of record_reviewed where one was real: two were correct skips on
+# unconverged runs, and two came from abandoned runs, each of which contributes
+# EVERY planned gate at once. Silence is also what a broken alarm produces, so these
+# pin that it still fires — and with which message.
+ALARM_TMP="$TMP/alarm"
+mkdir -p "$ALARM_TMP"
+alarm() { REVIEW_LOOP_RUNS="$ALARM_TMP/$1.jsonl" "$PY" review-stats.py --alarm 2>&1; }
+arow() { printf '%s\n' "$2" >> "$ALARM_TMP/$1.jsonl"; }
+
+# Three runs that left a planned gate unreported: a gate to FIX.
+for i in 1 2 3; do
+	arow drop "{\"run_id\":\"d$i\",\"phase\":\"plan\",\"planned_at\":\"2026-02-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+	arow drop "{\"run_id\":\"d$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{}}"
+done
+out=$(alarm drop)
+grep -q "record_reviewed did not complete 3x" <<<"$out" \
+	&& ok "three unreported runs raise the gate" || bad "three unreported runs raise the gate"
+
+# Three runs that deliberately skipped it: a PLAN to change, and it must say so
+# differently — this is the case that was being reported as "did not complete".
+for i in 1 2 3; do
+	arow skip "{\"run_id\":\"s$i\",\"phase\":\"plan\",\"planned_at\":\"2026-02-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\",\"reason\":\"on clean exit\"}}}"
+	arow skip "{\"run_id\":\"s$i\",\"phase\":\"finish\",\"outcome\":\"cycle-limit\",\"executed\":{\"record_reviewed\":{\"status\":\"skipped\",\"reason\":\"run did not converge\"}}}"
+done
+out=$(alarm skip)
+grep -q "record_reviewed was skipped though the plan said run 3x" <<<"$out" \
+	&& ok "three deliberate skips raise the plan, not the gate" \
+	|| bad "three deliberate skips raise the plan, not the gate"
+grep -q "did not complete" <<<"$out" \
+	&& bad "a deliberate skip is still reported as a failure to complete" \
+	|| ok "a deliberate skip is not reported as a failure to complete"
+
+# Three abandoned runs, nine planned gates each. The abandonment is the signal; the
+# per-gate attribution is noise, and counting both turned one event into nine.
+for i in 1 2 3; do
+	arow aband "{\"run_id\":\"x$i\",\"phase\":\"plan\",\"planned_at\":\"2026-02-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"},\"learnings_capture\":{\"planned\":\"run\"},\"upstream_drift_check\":{\"planned\":\"run\"}}}"
+	arow aband "{\"run_id\":\"x$i\",\"phase\":\"finish\",\"outcome\":\"abandoned\"}"
+done
+out=$(alarm aband)
+grep -q "(run abandoned) did not complete 3x" <<<"$out" \
+	&& ok "repeated abandonment raises" || bad "repeated abandonment raises"
+grep -qE "record_reviewed|learnings_capture|upstream_drift_check" <<<"$out" \
+	&& bad "an abandoned run is counted again against each of its gates" \
+	|| ok "an abandoned run is not counted again against each of its gates"
+
+# And the shape that was firing falsely: two correct skips plus one real miss of the
+# same gate is below the threshold in BOTH buckets, so it must stay silent.
+for i in 1 2; do
+	arow mixed "{\"run_id\":\"m$i\",\"phase\":\"plan\",\"planned_at\":\"2026-02-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+	arow mixed "{\"run_id\":\"m$i\",\"phase\":\"finish\",\"outcome\":\"cycle-limit\",\"executed\":{\"record_reviewed\":{\"status\":\"skipped\"}}}"
+done
+arow mixed '{"run_id":"m3","phase":"plan","planned_at":"2026-02-03T00:00:00","session_id":"s1","repo":"r","gates":{"record_reviewed":{"planned":"run"}}}'
+arow mixed '{"run_id":"m3","phase":"finish","outcome":"clean","executed":{"record_reviewed":{"status":"pending"}}}'
+out=$(alarm mixed)
+[ -z "$out" ] && ok "two correct skips plus one real miss stays silent" \
+	|| bad "two correct skips plus one real miss stays silent"
+
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
 exit "$fails"

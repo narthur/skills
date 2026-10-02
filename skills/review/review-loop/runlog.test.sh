@@ -345,7 +345,11 @@ rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 "$PY" runlog.py show --run-id "$rid" | grep -q '"tier_executed": "full"' \
 	&& ok "a measurable n/a reason records full" || bad "a measurable n/a reason records full"
 
-# Alarm fires on the third non-completion, not the second.
+# Alarm fires on the third non-completion, not the second. These runs SKIP the gate, so
+# the message is the skip one ("change the plan") rather than the unreported one ("fix the
+# gate") — the threshold is what this block is pinning, and `skipped` is just a convenient
+# way to produce a non-completion. review-stats.py counts the two separately because they
+# have different fixes; conflating them had the alarm reporting a correct skip as a failure.
 export REVIEW_LOOP_RUNS="$TMP/alarm.jsonl"
 for _ in 1 2; do
 	r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
@@ -356,7 +360,7 @@ done
 r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 "$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
 	--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null
-"$PY" review-stats.py --alarm | grep -q "threat_model did not complete 3x" \
+"$PY" review-stats.py --alarm | grep -q "threat_model was skipped though the plan said run 3x" \
 	&& ok "alarm fires at 3" || bad "alarm fires at 3"
 
 # The ban guards every write path, not just finish — plan and abandon carry free

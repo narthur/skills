@@ -1,0 +1,10 @@
+target: skills/review/review-loop/review-stats.py
+verify: cd skills/review/review-loop && ./review-stats.test.sh
+expect: three unreported runs raise the gate
+why:    the alarm going silent is indistinguishable from the alarm working, so a change that disables it entirely must be caught by something other than reading the output of a healthy store
+--- old
+    hits = [(g, n, "did not complete") for g, n in counts.most_common()
+            if n >= ALARM_THRESHOLD]
+--- new
+    hits = [(g, n, "did not complete") for g, n in counts.most_common()
+            if n > ALARM_WINDOW]

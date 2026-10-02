@@ -1,0 +1,8 @@
+target: skills/review/review-loop/review-stats.py
+verify: cd skills/review/review-loop && ./review-stats.test.sh
+expect: a deliberate skip is still reported as a failure to complete
+why:    a gate the run deliberately declined and a gate it never reported need different fixes, and merging the counters reported correct behaviour as failure — record_reviewed is planned "run" with the reason "on clean exit", so declining to stamp an unconverged tip is the gate working
+--- old
+            (skipped if st in SKIP_STATES else counts)[g] += 1
+--- new
+            counts[g] += 1
