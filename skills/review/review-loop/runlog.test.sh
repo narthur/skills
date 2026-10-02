@@ -234,6 +234,25 @@ grep -q "outcome 'clean' but the cycle rows derive" <<<"$out" \
 	&& ok "finish names a self-report that contradicts the derivation" \
 	|| bad "finish names a self-report that contradicts the derivation (got: $out)"
 
+# The cycle-row `asked` guard is satisfiable by omission — `cycle --applied 0` with no
+# --asked, then `finish --asks 7` — so the run derives converged with no disclosure while
+# seven findings sit unresolved with the user. cmd_finish holds both numbers, so it says so.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 0 6
+out=$("$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"}}' --asks 7 2>&1)
+grep -q "derive 'converged' but this finish records 7 unresolved ask" <<<"$out" \
+	&& ok "finish names converged-with-unresolved-asks" \
+	|| bad "finish names converged-with-unresolved-asks (got: $out)"
+# And stays quiet when the asks were recorded on the cycle row, where they belong.
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 0 --asked 7 --agents 6 >/dev/null 2>&1
+out=$("$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
+	--executed '{"threat_model":{"status":"done"}}' --asks 7 2>&1)
+grep -q 'unresolved ask' <<<"$out" \
+	&& bad "no warning when the asks are on the cycle row (it derives halted already)" \
+	|| ok "and stays quiet when the asks are on the cycle row"
+
 # The disclosure gate is no longer here: the `disclosed` phase and disclosure_pending were
 # deleted because the marker they wrote could be satisfied by `runlog.py disclosed --where
 # "trust me"` with no report anywhere — the shape --clean-exit was retired for, rebuilt inside

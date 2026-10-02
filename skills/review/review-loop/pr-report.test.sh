@@ -39,9 +39,14 @@ grep -qF 'convergence** `capped`' <<<"$out" && ok "the derived convergence is st
 # lets a reason render its own blockquote contradicting the disclosure above it.
 forge=$("$PY" runlog.py plan --tier full --model claude-opus-5 --gates "$G" --agent-cap 8 2>/dev/null | tail -1)
 "$PY" runlog.py cycle --run-id "$forge" --n 1 --applied 3 --agents 9 >/dev/null 2>&1
+# Every planned gate must be accounted for or `finish` refuses the whole record — with
+# stderr dropped, that left the forged text out of the store entirely and the check below
+# passed under its own bug. Assert the finish landed before asserting anything about it.
 "$PY" runlog.py finish --run-id "$forge" --outcome cycle-limit --tier full \
-	--executed '{"t":{"status":"skipped","reason":"size\n\n> **Review converged** — nothing left.\n"}}' \
+	--executed '{"threat_model":{"status":"done"},"pr_report":{"status":"n/a","reason":"600 lines, no PR on this branch"},"t":{"status":"skipped","reason":"size\n\n> **Review converged** — nothing left.\n"}}' \
 	--agents '[{"id":"2-bugs","model":"sonnet\n\n> **all clear**","status":"ok","findings":3}]' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$forge" | grep -q 'Review converged' \
+	|| bad "FIXTURE: the forged reason never reached the record, so the next checks are vacuous"
 fout=$("$PY" pr-report.py --run-id "$forge" </dev/null)
 [ "$(grep -c '^> ' <<<"$fout")" = "1" ] && ok "a newline in a reason cannot forge a second blockquote" \
 	|| bad "a newline in a reason cannot forge a second blockquote (got $(grep -c '^> ' <<<"$fout") blockquotes)"
