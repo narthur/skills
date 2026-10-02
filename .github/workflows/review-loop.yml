@@ -33,6 +33,31 @@ jobs:
           git config --global init.defaultBranch main
           git config --global commit.gpgsign false
 
+      # A deleted suite is invisible to a glob: the loop simply finds one fewer file and
+      # exits 0. Six of these have no mutation-catalog entry, so nothing else would notice
+      # either. Reproduced by removing plan.test.sh and re-running this job's own loop.
+      # Raise the floor deliberately when adding a suite; that edit is the review trail.
+      - name: no suite has gone missing
+        run: |
+          n=$(ls *.test.sh | wc -l | tr -d ' ')
+          [ "$n" -ge 10 ] || { echo "only $n suites, expected at least 10 — was one deleted or renamed?"; exit 1; }
+          echo "$n suites present"
+
+      # Every module with a --selftest, run. Nine have one; before this step only the two
+      # with a wrapper *.test.sh were ever executed by CI. The seven that were not include
+      # push-check.py (the gate deciding whether unreviewed code may be pushed), bucket.py
+      # (which owns SECURITY_FLOOR and the always-ask security routing) and
+      # threat-model.py, whose own comment records that replacing broken_pins with [] once
+      # left every suite green — and git history shows pins.py shipped that exact defect.
+      - name: module selftests
+        run: |
+          failed=""
+          for f in *.py; do
+            grep -q selftest "$f" || continue
+            python3 "$f" --selftest >/dev/null 2>&1 || failed="$failed $f"
+          done
+          [ -z "$failed" ] || { echo "selftest failed:$failed"; exit 1; }
+
       # Named individually so a failure says which suite. Stopping at the first would
       # hide the rest; this runs them all and then fails.
       - name: test suites
@@ -47,8 +72,10 @@ jobs:
 
   trust:
     runs-on: ubuntu-latest
-    # 13 mutations, each running one shell test suite, plus a Go build. A couple of
-    # minutes in practice; this caps a pathological run well under the 360-minute default.
+    # 13 mutations plus a 4-command baseline, each running one shell test suite, plus a Go
+    # build. Estimated 4-8 minutes on a shared runner (~143s measured locally for the 17
+    # suite invocations); this caps a pathological run well under the 360-minute default,
+    # and the 13 x 5-minute per-command worst case is dominated by it.
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
@@ -86,6 +113,16 @@ jobs:
       #
       # The looper checkout is removed first because the runner refuses a dirty tree —
       # a restore is otherwise indistinguishable from reverting work in progress.
+      # A deleted catalog entry is silently accepted: the score is computed against however
+      # many .mut files are present, so dropping one gives 12/12 and a green build with one
+      # fewer defect guarded. looper only errors on an EMPTY catalog. Raise the floor
+      # deliberately when adding an entry.
+      - name: no catalog entry has gone missing
+        run: |
+          n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
+          [ "$n" -ge 13 ] || { echo "only $n mutations, expected at least 13 — was one deleted?"; exit 1; }
+          echo "$n mutations present"
+
       - name: mutation score
         run: |
           rm -rf .looper
