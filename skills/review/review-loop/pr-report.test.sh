@@ -74,6 +74,56 @@ rm -f "$pend"
 	&& ok "a failed post keeps the report in the pending file" \
 	|| bad "a failed post keeps the report in the pending file"
 
+# A post that SUCCEEDS must also leave the local artifact. When `gh pr comment` succeeded
+# but the read-back `gh pr view --json comments` did not return the marker — an unpaginated
+# GraphQL query on a busy PR, or GraphQL rate limiting, whose budget is separate from the
+# REST post — push-check refused forever and its own advice posted a duplicate comment on
+# every retry. Measured: 3 identical comments, 3 refusals, no pending file.
+stubok="$TMP/ghblind"; mkdir -p "$stubok"
+cat > "$stubok/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+	*"pr view"*comments*) echo ""; exit 0 ;;
+	*"pr view"*) echo 42; exit 0 ;;
+	*comment*) exit 0 ;;
+	*) exit 0 ;;
+esac
+STUB
+chmod +x "$stubok/gh"
+blindpend="$WORK/.git/info/review-loop-pending-report.$forge.md"
+rm -f "$blindpend"
+(cd "$WORK" && PATH="$stubok:$PATH" "$PY" "$HERE/pr-report.py" --run-id "$forge" --post --repo "$WORK" </dev/null) >/dev/null 2>&1
+[ -s "$blindpend" ] \
+	&& ok "a successful post still leaves the local artifact" \
+	|| bad "a successful post still leaves the local artifact"
+# And the gate then clears, instead of livelocking behind advice that cannot succeed.
+(cd "$WORK" && PATH="$stubok:$PATH" "$PY" "$HERE/push-check.py" --run-id "$forge" \
+	--gate-state passed --branch feat/x --default-branch main --repo "$WORK") \
+	| grep -q '"push": true' \
+	&& ok "and the push is not blocked by a failed read-back" \
+	|| bad "and the push is not blocked by a failed read-back"
+
+# The gh leg of report_landed: a PR comment carrying the rendered report satisfies the gate
+# with NO pending file. Gutting that leg left every suite green.
+stubpr="$TMP/ghhas"; mkdir -p "$stubpr"
+body=$("$PY" pr-report.py --run-id "$forge" </dev/null)
+printf '%s\n' "$body" > "$TMP/posted.md"
+cat > "$stubpr/gh" <<STUB
+#!/bin/sh
+case "\$*" in
+	*"pr view"*comments*) cat "$TMP/posted.md"; exit 0 ;;
+	*"pr view"*) echo 42; exit 0 ;;
+	*) exit 0 ;;
+esac
+STUB
+chmod +x "$stubpr/gh"
+rm -f "$blindpend"
+(cd "$WORK" && PATH="$stubpr:$PATH" "$PY" "$HERE/push-check.py" --run-id "$forge" \
+	--gate-state passed --branch feat/x --default-branch main --repo "$WORK") \
+	| grep -q '"push": true' \
+	&& ok "a PR comment carrying the report satisfies the gate with no local file" \
+	|| bad "a PR comment carrying the report satisfies the gate with no local file"
+
 # Both sizing numbers and the exclusion: a cheaper review must arrive with its receipt.
 grep -q '900 raw' <<<"$out" && grep -q '120 of review surface' <<<"$out" && grep -q '780 line(s) in lockfiles' <<<"$out" \
 	&& ok "raw size, review surface and the exclusion all appear" || bad "raw size, review surface and the exclusion all appear"
