@@ -72,45 +72,67 @@ def dropped_gates(run):
     return out
 
 
-# A gate the run deliberately declined is a different signal from one it never
-# reported, and the two have different fixes — which is what the alarm's own closing
-# line has always said. Counting them together made the alarm report correct
-# behaviour as failure: `record_reviewed` is planned "run" with the reason "on clean
-# exit", so a cycle-limit run that declines to stamp an unconverged tip reviewed is
-# the gate WORKING, and two such runs were two of its five reported misses.
+# A gate the run accounted for is a different signal from one it never reported, and the
+# two have different fixes — which is what the alarm's own closing line has always said.
+# Counting them together made the alarm report correct behaviour as failure: five reported
+# misses of `record_reviewed` over 21 runs contained no real miss at all.
 #
-# Not fixed by widening runlog.GATE_OK, which is the right place for this distinction
-# to NOT exist: derive_tier reads it to decide `partial`, and a run that skipped a
+# Enumerate the FAILURES, not the deliberate states. `runlog.cmd_finish` requires a
+# non-empty reason for every status but `done` and does not validate the string itself, so
+# the deliberate vocabulary is open-ended — the record already holds `skipped`, `pending`
+# and `deferred`, each with a reason — and a list of the deliberate ones loses to the next
+# spelling someone invents, dropping it back into the failure bucket. The failure set is
+# closed: a gate with no entry at all, and one that says it failed.
+#
+# Not fixed by widening runlog.GATE_OK, which is the right place for this distinction to
+# NOT exist: derive_tier reads it to decide `partial`, and a run that did not complete a
 # planned gate genuinely is partial. Widening it there would launder partial into full.
-SKIP_STATES = ("skipped",)
+DROP_STATES = ("unreported", "failed")
 
 
 def cmd_alarm(runs):
     recent = runs[-ALARM_WINDOW:]
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
-    counts = collections.Counter()
-    skipped = collections.Counter()
+    dropped = collections.Counter()
+    declined = collections.Counter()
+    why = collections.defaultdict(set)
     for run in recent:
         if is_abandoned(run, here):
-            # One event, one counter. An abandoned run has every planned gate
-            # unreported by construction, so also attributing it per gate turned a
-            # single abandonment into nine gate failures — which is how three gates
-            # crossed the threshold while having no real miss between them. The
-            # abandonment is the actionable signal and it already has a counter;
-            # per-gate detail for an abandoned run is noise. `report` still shows it.
-            counts["(run abandoned)"] += 1
+            # One event, one counter. An abandoned run has every planned gate unreported
+            # by construction, so also attributing it per gate turned a single
+            # abandonment into nine gate failures — which is how three gates crossed the
+            # threshold with no real miss between them. The abandonment is the actionable
+            # signal and already has its own counter; `report` still shows per-gate detail.
+            dropped["(run abandoned)"] += 1
             continue
         for g, st in dropped_gates(run).items():
-            (skipped if st in SKIP_STATES else counts)[g] += 1
-    hits = [(g, n, "did not complete") for g, n in counts.most_common()
-            if n >= ALARM_THRESHOLD]
-    hits += [(g, n, "was skipped though the plan said run") for g, n in skipped.most_common()
-             if n >= ALARM_THRESHOLD]
+            if st in DROP_STATES:
+                dropped[g] += 1
+            else:
+                declined[g] += 1
+                why[g].add(st)
+
+    hits = [(n, g, "did not complete") for g, n in dropped.items() if n >= ALARM_THRESHOLD]
+    hits += [(n, g, f"was declined with a reason ({', '.join(sorted(why[g]))})")
+             for g, n in declined.items() if n >= ALARM_THRESHOLD]
+    # A gate that fails BOTH ways still needs raising. Thresholding the two buckets
+    # independently alone would have taken a gate from 3 non-completions to raise to 5 —
+    # two of each is four, and silent. The split exists to name the right fix, not to
+    # make a gate that thrashes between them cheaper to ignore.
+    reported = {g for _, g, _ in hits}
+    for g in set(dropped) | set(declined):
+        total = dropped[g] + declined[g]
+        if g not in reported and total >= ALARM_THRESHOLD:
+            hits.append((total, g, f"did not complete {dropped[g]}x and was declined "
+                                   f"{declined[g]}x, in varying ways"))
     if not hits:
         return 0
+    # Sorted across both buckets, because the printed order reads as a ranking and
+    # concatenating two separately-sorted lists put a 3x drop above a 6x decline.
+    hits.sort(key=lambda h: (-h[0], h[1]))
     print(f"review-loop alarm — over the last {len(recent)} runs:")
-    for g, n, what in hits:
-        print(f"  {g} {what} {n}x")
+    for n, g, what in hits:
+        print(f"  {g} {what} {n}x" if "varying ways" not in what else f"  {g} {what}")
     print("  Repeat count beats calendar: fix the gate or change the plan, don't log it again.")
     return 0
 

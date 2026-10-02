@@ -135,7 +135,7 @@ for i in 1 2 3; do
 	arow skip "{\"run_id\":\"s$i\",\"phase\":\"finish\",\"outcome\":\"cycle-limit\",\"executed\":{\"record_reviewed\":{\"status\":\"skipped\",\"reason\":\"run did not converge\"}}}"
 done
 out=$(alarm skip)
-grep -q "record_reviewed was skipped though the plan said run 3x" <<<"$out" \
+grep -q "record_reviewed was declined with a reason (skipped) 3x" <<<"$out" \
 	&& ok "three deliberate skips raise the plan, not the gate" \
 	|| bad "three deliberate skips raise the plan, not the gate"
 # Guarded on non-empty: an absence assertion is satisfied by output that does not exist,
@@ -168,8 +168,86 @@ done
 arow mixed '{"run_id":"m3","phase":"plan","planned_at":"2026-02-03T00:00:00","session_id":"s1","repo":"r","gates":{"record_reviewed":{"planned":"run"}}}'
 arow mixed '{"run_id":"m3","phase":"finish","outcome":"clean","executed":{"record_reviewed":{"status":"pending"}}}'
 out=$(alarm mixed)
-[ -z "$out" ] && ok "two correct skips plus one real miss stays silent" \
-	|| bad "two correct skips plus one real miss stays silent"
+# This is the live store's actual shape, and it was the basis for calling one of the five
+# reported misses "real". It is not: `pending` carried the reason "runs immediately after
+# this finish, before the push" — deliberate, like the two skips. So all three are
+# declines, and three declines of a gate the plan keeps marking "run" is a true signal
+# with a specific meaning: change the plan, because `record_reviewed`'s own planned reason
+# ("on clean exit") is conditional while the plan records it unconditionally. What must
+# never happen is this shape being reported as a failure to COMPLETE.
+grep -q "record_reviewed was declined with a reason (pending, skipped) 3x" <<<"$out" \
+	&& ok "the live store's shape raises the plan, naming both statuses" \
+	|| bad "the live store's shape raises the plan, naming both statuses (got: $out)"
+[ -n "$out" ] && ! grep -q "did not complete" <<<"$out" \
+	&& ok "and is not reported as a failure to complete" \
+	|| bad "and is not reported as a failure to complete"
+
+# Below the threshold in both buckets and combined: genuinely silent.
+arow quiet '{"run_id":"q1","phase":"plan","planned_at":"2026-06-01T00:00:00","session_id":"s1","repo":"r","gates":{"record_reviewed":{"planned":"run"}}}'
+arow quiet '{"run_id":"q1","phase":"finish","outcome":"cycle-limit","executed":{"record_reviewed":{"status":"skipped","reason":"did not converge"}}}'
+arow quiet '{"run_id":"q2","phase":"plan","planned_at":"2026-06-02T00:00:00","session_id":"s1","repo":"r","gates":{"record_reviewed":{"planned":"run"}}}'
+arow quiet '{"run_id":"q2","phase":"finish","outcome":"clean","executed":{}}'
+[ -z "$(alarm quiet)" ] && ok "one decline plus one drop stays silent" \
+	|| bad "one decline plus one drop stays silent"
+
+# `skipped` is not the whole deliberate vocabulary. runlog.cmd_finish requires a reason for
+# every status but `done` and never validates the string, and the live record already held
+# `pending` and `deferred` alongside `skipped` — all three deliberate. Enumerating the
+# deliberate ones put the other two in the failure bucket, which is the very bug this
+# alarm change exists to fix, reached by a different spelling.
+for st in pending deferred; do
+	f="decl-$st"
+	for i in 1 2 3; do
+		arow "$f" "{\"run_id\":\"p$i\",\"phase\":\"plan\",\"planned_at\":\"2026-03-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"pr_report\":{\"planned\":\"run\"}}}"
+		arow "$f" "{\"run_id\":\"p$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"pr_report\":{\"status\":\"$st\",\"reason\":\"deliberate and documented\"}}}"
+	done
+	out=$(alarm "$f")
+	grep -q "pr_report was declined with a reason ($st) 3x" <<<"$out" \
+		&& ok "a '$st' gate is declined, not reported as a failure" \
+		|| bad "a '$st' gate is declined, not reported as a failure"
+	[ -n "$out" ] && ! grep -q "did not complete" <<<"$out" \
+		&& ok "and '$st' is not counted as a failure to complete" \
+		|| bad "and '$st' is not counted as a failure to complete"
+done
+
+# A status that says it FAILED is a failure, not a decline — the inverted list must not
+# swallow the one case it exists to report.
+for i in 1 2 3; do
+	arow failed "{\"run_id\":\"f$i\",\"phase\":\"plan\",\"planned_at\":\"2026-03-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"security_review\":{\"planned\":\"run\"}}}"
+	arow failed "{\"run_id\":\"f$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"security_review\":{\"status\":\"failed\",\"reason\":\"agent errored\"}}}"
+done
+out=$(alarm failed)
+grep -q "security_review did not complete 3x" <<<"$out" \
+	&& ok "a failed gate is still a failure to complete" || bad "a failed gate is still a failure to complete"
+
+# A gate that fails BOTH ways must still raise. Two of each is four non-completions, and
+# thresholding the buckets independently alone left that silent — the split exists to name
+# the right fix, not to make a thrashing gate cheaper to ignore.
+for i in 1 2; do
+	arow both "{\"run_id\":\"b$i\",\"phase\":\"plan\",\"planned_at\":\"2026-04-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"evidence_gate\":{\"planned\":\"run\"}}}"
+	arow both "{\"run_id\":\"b$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{}}"
+	arow both "{\"run_id\":\"c$i\",\"phase\":\"plan\",\"planned_at\":\"2026-04-1${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"evidence_gate\":{\"planned\":\"run\"}}}"
+	arow both "{\"run_id\":\"c$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"evidence_gate\":{\"status\":\"skipped\",\"reason\":\"no PR\"}}}"
+done
+out=$(alarm both)
+grep -q "evidence_gate did not complete 2x and was declined 2x, in varying ways" <<<"$out" \
+	&& ok "a gate failing both ways still raises" || bad "a gate failing both ways still raises"
+
+# The printed order reads as a ranking, so it must be one across both buckets: two
+# separately-sorted lists concatenated put a 3x drop above a 6x decline.
+for i in 1 2 3; do
+	arow sort "{\"run_id\":\"g$i\",\"phase\":\"plan\",\"planned_at\":\"2026-05-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"aaa_drop\":{\"planned\":\"run\"},\"zzz_declined\":{\"planned\":\"run\"}}}"
+	arow sort "{\"run_id\":\"g$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"zzz_declined\":{\"status\":\"skipped\",\"reason\":\"r\"}}}"
+done
+for i in 4 5 6; do
+	arow sort "{\"run_id\":\"g$i\",\"phase\":\"plan\",\"planned_at\":\"2026-05-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"zzz_declined\":{\"planned\":\"run\"}}}"
+	arow sort "{\"run_id\":\"g$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"zzz_declined\":{\"status\":\"skipped\",\"reason\":\"r\"}}}"
+done
+first=$(alarm sort | sed -n '2p')
+grep -q "zzz_declined" <<<"$first" \
+	&& ok "the more frequent offender is listed first across both buckets" \
+	|| bad "the more frequent offender is listed first across both buckets (got: $first)"
+
 
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
 exit "$fails"

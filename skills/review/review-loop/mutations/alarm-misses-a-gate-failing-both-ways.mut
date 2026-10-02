@@ -1,0 +1,14 @@
+target: skills/review/review-loop/review-stats.py
+verify: cd skills/review/review-loop && ./review-stats.test.sh
+expect: a gate failing both ways still raises
+why:    thresholding the two buckets independently and nothing else takes a gate from 3 non-completions to raise to 5 — two of each is four, and silent. The split names the right fix; it must not make a thrashing gate cheaper to ignore
+--- old
+    reported = {g for _, g, _ in hits}
+    for g in set(dropped) | set(declined):
+        total = dropped[g] + declined[g]
+        if g not in reported and total >= ALARM_THRESHOLD:
+--- new
+    reported = {g for _, g, _ in hits}
+    for g in set(dropped) | set(declined):
+        total = dropped[g] + declined[g]
+        if g not in reported and total >= ALARM_WINDOW:

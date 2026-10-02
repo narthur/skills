@@ -1,0 +1,8 @@
+target: skills/review/review-loop/review-stats.py
+verify: cd skills/review/review-loop && ./review-stats.test.sh
+expect: a 'pending' gate is declined, not reported as a failure
+why:    listing the deliberate statuses instead of the failures puts every spelling nobody thought of back in the failure bucket — the record already held `pending` and `deferred` beside `skipped`, all with reasons, and runlog never validates the string
+--- old
+DROP_STATES = ("unreported", "failed")
+--- new
+DROP_STATES = ("unreported", "failed", "pending", "deferred")

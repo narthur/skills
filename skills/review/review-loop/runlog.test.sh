@@ -360,7 +360,7 @@ done
 r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 "$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
 	--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null
-"$PY" review-stats.py --alarm | grep -q "threat_model was skipped though the plan said run 3x" \
+"$PY" review-stats.py --alarm | grep -q "threat_model was declined with a reason (skipped) 3x" \
 	&& ok "alarm fires at 3" || bad "alarm fires at 3"
 
 # The ban guards every write path, not just finish — plan and abandon carry free
