@@ -20,7 +20,13 @@ learnings_entries=0
 lf="$(git rev-parse --git-common-dir 2>/dev/null || echo .git)/info/review-loop-learnings.md"
 if [ -f "$lf" ]; then
   learnings=$(cat "$lf")
-  learnings_entries=$(grep -c '^- ' "$lf" 2>/dev/null || echo 0)
+  # No `|| echo 0`: `grep -c` prints a count AND exits 1 when nothing matches, so under
+  # pipefail both the count and the fallback landed, making this the string "0\n0" — the
+  # same shape removed from changed_lines, which that commit said to check for and missed
+  # here. A learnings file that exists with no `- ` entries (a fresh header-only file, or
+  # one the compaction sweep emptied) crashed context.sh and truncated its own output to
+  # 0 bytes, because Step 1 redirects into review-loop-context.json.
+  learnings_entries=$(grep -c '^- ' "$lf" 2>/dev/null) || learnings_entries=0
 fi
 
 today=$(date +%F)
@@ -85,8 +91,14 @@ import os, subprocess, sys
 
 # Indentation is syntax in these, so a whitespace-blind diff can hide control flow.
 INDENT = {".py", ".pyi", ".yml", ".yaml", ".hs", ".nim", ".elm", ".coffee", ".sass",
-          ".styl", ".slim", ".haml", ".pug", ".jade", ".cr"}
-INDENT_NAMES = {"Makefile", "makefile", "GNUmakefile"}
+          ".styl", ".slim", ".haml", ".pug", ".jade", ".cr", ".mk", ".make",
+          # Indentation defines list nesting and code blocks in markdown, and step
+          # grouping in Gherkin.
+          ".md", ".markdown", ".feature"}
+# Lowercased, since indent_sensitive() lowercases before matching. Recipe lines in every
+# make dialect are tab-significant, and automake/include fragments are the same language.
+INDENT_NAMES = {"makefile", "gnumakefile", "makefile.am", "makefile.in", "gnumakefile.am"}
+INDENT_STEMS = {"makefile", "gnumakefile"}
 
 
 def per_file(*flags):
@@ -103,9 +115,15 @@ def per_file(*flags):
 
 
 def indent_sensitive(path):
-    name = path.rsplit("/", 1)[-1]
-    dot = name.rfind(".")
-    return name in INDENT_NAMES or (dot > 0 and name[dot:] in INDENT)
+    # Every suffix, lowercased — not just the last, and not case-sensitively. Checking only
+    # the final extension sent `values.yml.j2`, `main.py.j2` and `Up.PY` down the -w path
+    # and scored their indentation changes 0, which is the hole this function exists to
+    # close, one naming convention over. Measured: a dedent in each of app.py, Makefile.am
+    # and Up.PY reported semantic 2 of raw 6 and read as fast-path eligible.
+    name = path.rsplit("/", 1)[-1].lower()
+    if name in INDENT_NAMES or name.split(".")[0] in INDENT_STEMS:
+        return True
+    return any(f".{part}" in INDENT for part in name.split(".")[1:])
 
 
 raw, blind = per_file(), per_file("-w")

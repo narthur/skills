@@ -29,7 +29,6 @@ run_id.
                     [--defect-findings <n>] [--comment-findings <n>] [--analysis-changed]
                     [--tokens <n>]
   runlog.py convergence --run-id <id>              prints it; exit 0 only if converged
-  runlog.py disclosed --run-id <id> --where <w>    the disclosure reached a reader
   runlog.py show    --run-id <id>
 """
 import argparse
@@ -167,13 +166,15 @@ def cycles_of(run):
     cycle, and the only thing that revisits an `n` is the Step 13 restart, which resets
     the counter to 1. So the dedupe served a corrector that does not exist while
     silently deleting the first pass of every restart from every derived answer.
-    Measured: a run that spent 40 agents across three rows counted 20 against its cap,
-    because the restart's `n=1` (5 agents) replaced the original `n=1` (20 agents).
+    Reproduced against the pre-fix code with rows n=1/20 agents, n=2/15, n=1/5: the cap
+    counted 20 of the 40 spent, because the restart's `n=1` replaced the original.
 
     It exists as a function rather than inline so that `convergence()`, `disclosure()`
     and pr-report cannot read the list three different ways — which is exactly what had
-    happened: disclosure() read the raw list and the other two read this one, so one PR
-    comment reported "CAPPED at 11 of 8 agents" above a table showing 8.
+    happened: disclosure() read the raw list and the other two read this one, so a rendered
+    report said "CAPPED at 11 of 8 agents" above a table showing 8. (Reproduced in a fixture,
+    not seen on a real PR — the live record has only ever held one cycle row, and blurring
+    "reproduced" into "observed" is how an invented measurement got committed here twice.)
     """
     return list(run.get("cycles") or [])
 
@@ -223,8 +224,8 @@ def disclosure(conv, run):
     if conv == "converged":
         return None
     # cycles_of, not the raw list: reading it raw made this disagree with the derivation
-    # it exists to explain. Measured, one rendered comment said "CAPPED at 11 of 8
-    # agents: the last cycle applied 0 fix(es)" above a table whose last cycle applied 5.
+    # it exists to explain. Reproduced in a fixture: one rendered report said "CAPPED at 11
+    # of 8 agents: the last cycle applied 0 fix(es)" above a table whose last cycle applied 5.
     cy = cycles_of(run or {})
     last = cy[-1] if cy else {}
     spent = sum(c.get("agents") or 0 for c in cy)
@@ -606,48 +607,6 @@ def cmd_finish(a):
     print(f"runlog: finished {a.run_id} ({a.outcome}; convergence: {conv or 'unknown'})")
 
 
-def cmd_disclosed(a):
-    """Record that this run's disclosure actually reached a reader.
-
-    A capped or halted run is allowed to push on the condition that the PR says how far
-    it was reviewed. That condition was prose, and prose instructions to post the summary
-    are the ones that get skipped — the whole reason pr-report.py exists as a script. So
-    push-check refuses a non-converged push until this row exists for the current head,
-    which is what turns "not optional" into something a later reader can audit.
-
-    Written by pr-report.py, in both of its branches: posting to a PR and writing the
-    pending file both count, because on a fresh branch the push gate forces
-    loop-then-push-then-PR and there is no PR to post to yet. `where` says which.
-    """
-    if not plan_of(a.run_id):
-        sys.exit(f"runlog: no plan for run {a.run_id!r}")
-    append({
-        "run_id": a.run_id,
-        "phase": "disclosed",
-        "disclosed_at": now(),
-        "disclosed_where": a.where,
-        # Pinned to the commit, not just the run: a disclosure describing an earlier tip
-        # says nothing about what is being pushed now.
-        "disclosed_head": a.head or git("rev-parse", "HEAD"),
-    })
-    print(f"runlog: disclosure recorded for {a.run_id} ({a.where})", file=sys.stderr)
-    return 0
-
-
-def disclosure_pending(run, head):
-    """Why this run may not push yet, or None. Shared so push-check cannot restate it."""
-    conv = convergence(run)
-    if disclosure(conv, run) is None:
-        return None
-    if not run.get("disclosed_head"):
-        return (f"review derived {conv or 'unknown'}, which obliges the PR to say so, and no "
-                "disclosure has been recorded — run pr-report.py first")
-    if head and run["disclosed_head"] != head:
-        return (f"the recorded disclosure describes {run['disclosed_head'][:12]}, not the "
-                f"commit being pushed ({head[:12]}) — re-run pr-report.py")
-    return None
-
-
 def cmd_carried(a):
     """Record that a review record moved to a rewritten commit.
 
@@ -746,7 +705,12 @@ def unfinished(repo, head=None, session=None):
     """
     out = []
     for run in load().values():
-        if run.get("repo") != repo or run.get("phase") == "finish":
+        # The FACT of being finished, not the latest phase written. load() merges non-cycle
+        # phases with .update(), so any row appended after `finish` overwrote run["phase"]
+        # and resurrected a closed run as an open one — the Stop hook then blocked the next
+        # turn claiming the run was never finished, and its advice (`abandon`) writes an
+        # outcome push-check refuses. All four finish-writing paths set finished_at.
+        if run.get("repo") != repo or run.get("finished_at") or run.get("outcome"):
             continue
         if head and run.get("head") != head:
             continue
@@ -860,12 +824,6 @@ def main():
     sc.set_defaults(func=cmd_cycle)
 
     sv = sub.add_parser("convergence", help="print the DERIVED convergence; exit 0 only if converged")
-    sd = sub.add_parser("disclosed", help="record that the disclosure reached a PR or the pending file")
-    sd.add_argument("--run-id", required=True)
-    sd.add_argument("--where", required=True, help="where it landed, e.g. a PR url or the pending path")
-    sd.add_argument("--head", help="the commit it describes (default: HEAD)")
-    sd.set_defaults(func=cmd_disclosed)
-
     sv.add_argument("--run-id", required=True)
     sv.set_defaults(func=cmd_convergence)
 

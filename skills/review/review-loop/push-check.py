@@ -39,17 +39,62 @@ import runlog
 
 
 BROKEN_OUTCOMES = ("test-failure", "blocked", "abandoned")
+# The marker pr-report.py writes at the top of every report body. Matching it is how this
+# script checks that the report actually reached a reader.
+REPORT_MARKER = "<!-- review-loop:run={} -->"
+PENDING = "info/review-loop-pending-report.md"
+
+
+def sh(*args, repo="."):
+    """Run a command in `repo`. Swallows OSError so a missing `gh` reads as "cannot tell"."""
+    try:
+        p = subprocess.run(args, capture_output=True, text=True, check=False,
+                           timeout=20, cwd=repo)
+    except (OSError, subprocess.SubprocessError):
+        return 1, "", "not available"
+    return p.returncode, p.stdout.strip(), p.stderr.strip()
+
+
+def report_landed(run_id, repo="."):
+    """Did this run's report actually reach somewhere a reader will see it?
+
+    Checks the ARTIFACT, not a claim that the artifact exists. An earlier version of this
+    gate read a `disclosed` row the orchestrator's own toolchain wrote, which could be
+    satisfied by `runlog.py disclosed --where "trust me"` with no report anywhere — the
+    exact shape `--clean-exit` was retired for, rebuilt inside its replacement. Checking
+    the artifact cannot be satisfied by an assertion, needs no new record phase, and gives
+    the marker string its first reader.
+
+    Returns None when it cannot tell (no git, no gh, no answer) rather than guessing, and
+    the caller decides. pr-report guarantees the body lands in one of these two places, so
+    "neither" means pr-report was not run.
+    """
+    marker = REPORT_MARKER.format(run_id)
+    rc, out, _ = sh("gh", "pr", "view", "--json", "comments",
+                    "-q", ".comments[].body", repo=repo)
+    if rc == 0 and marker in out:
+        return True
+    rc, gitdir, _ = sh("git", "rev-parse", "--path-format=absolute", "--git-common-dir", repo=repo)
+    if rc == 0 and gitdir:
+        try:
+            with open(os.path.join(gitdir, PENDING), encoding="utf-8") as fh:
+                if marker in fh.read():
+                    return True
+        except OSError:
+            pass
+    return False
 
 
 def decide(convergence, gate_state, unresolved_skip, branch, default_branch, upstream_exists,
-           outcome=None, undisclosed=None):
+           outcome=None, unreported=None):
     """First failing check wins — mirrors Step 14 'When NOT to auto-push'.
 
     `convergence` is "converged", "capped", "halted", or None/"unknown" when the run
     recorded no cycles. Only "converged" needs no disclosure; everything else — None
     included, so omitting the cycle rows can never buy a silent push — pushes with one.
 
-    `outcome` and `undisclosed` are read from the record. They exist because moving
+    `outcome` and `unreported` are read from the record and the filesystem. They exist
+    because moving
     convergence into the record and then making convergence non-blocking left nothing
     that blocks derived from the record at all — every remaining blocker was an
     orchestrator-supplied flag, which is the shape `--clean-exit` was retired for.
@@ -60,11 +105,13 @@ def decide(convergence, gate_state, unresolved_skip, branch, default_branch, ups
     # permitted with the reason "converged, evidence gate ok".
     if outcome in BROKEN_OUTCOMES:
         return False, f"run recorded {outcome} — broken, not merely unfinished"
-    # The disclosure is the entire consideration for which a capped run is allowed to
-    # push. Unverified, it was prose — and prose instructions to post the summary are the
-    # ones that get skipped, which is why pr-report.py is a script at all.
-    if undisclosed:
-        return False, undisclosed
+    # The report is the entire consideration for which a non-converged run is allowed to
+    # push, and prose instructions to post it are the ones that get skipped — which is why
+    # pr-report.py is a script at all. Required on EVERY terminal exit, not just the
+    # non-converged ones: the incident that motivated this redesign (buzz #376) was a
+    # CLEAN exit on a fresh branch whose summary never reached the PR.
+    if unreported:
+        return False, unreported
     if gate_state == "blocked":
         return False, "evidence gate blocked or hit its restart cap"
     if unresolved_skip:
@@ -124,9 +171,12 @@ def _selftest():
         assert push is False, bad
         assert bad in reason, reason
     assert decide("converged", "passed", False, *ok, outcome="clean")[0] is True
-    # An owed-but-unrecorded disclosure blocks, and says what to run.
-    push, reason = decide("capped", "passed", False, *ok, undisclosed="no disclosure recorded")
-    assert push is False and "no disclosure" in reason
+    # An owed-but-missing report blocks, and says what to run.
+    push, reason = decide("capped", "passed", False, *ok, unreported="report has not reached the PR")
+    assert push is False and "report has not reached" in reason
+    # And it blocks a CONVERGED run too: the incident that motivated this was a clean exit
+    # whose summary never reached the PR, so gating only the non-converged runs misses it.
+    assert decide("converged", "passed", False, *ok, unreported="x")[0] is False
     # main() end to end against a real store — the claim "convergence is READ FROM THE
     # RECORD" had no test, so defaulting conv to "converged" passed this selftest while
     # emitting a silent unconverged push.
@@ -134,23 +184,80 @@ def _selftest():
     with tempfile.TemporaryDirectory() as td:
         os.environ["REVIEW_LOOP_RUNS"] = os.path.join(td, "runs.jsonl")
         importlib.reload(runlog)
-        out = io.StringIO()
-        with contextlib.redirect_stdout(out):
+        # No --run-id is refused outright. It used to be optional, which made BOTH
+        # record-derived blockers invisible while a bogus id was correctly caught — so the
+        # cheapest wrong spelling was the one that passed.
+        try:
             main(["--branch", "feat/x", "--default-branch", "main", "--gate-state", "passed"])
-        got = json.loads(out.getvalue())
-        assert got["convergence"] == "unknown", got        # no --run-id is not converged
-        assert got["disclose"] and "UNKNOWN" in got["disclose"], got
+        except SystemExit as exc:
+            assert "run-id is required" in str(exc), exc
+        else:
+            raise AssertionError("push-check must refuse to run without --run-id")
+        # A run-id absent from the store is "unknown", never converged.
         out = io.StringIO()
         with contextlib.redirect_stdout(out):
             main(["--run-id", "nosuchrun", "--branch", "feat/x",
                   "--default-branch", "main", "--gate-state", "passed"])
         got = json.loads(out.getvalue())
         assert got["convergence"] == "unknown", got        # absent from the store either
+
+        # main()'s wiring of the two record-derived blockers, not just decide()'s handling
+        # of them: replacing `outcome=run.get("outcome"), unreported=unreported` with
+        # None, None used to pass every suite, which is the same "the channel was never
+        # wired" shape that removing --clean-exit left behind.
+        import runlog as rl
+        gates = {"t": {"planned": "run", "reason": "2 stale claims"}}
+        os.chdir(td)
+        subprocess.run(["git", "init", "-q", "."], cwd=td, check=False)
+        rid = "pcselftest01"
+        rl.STORE = os.environ["REVIEW_LOOP_RUNS"]
+        rl.append({"run_id": rid, "phase": "plan", "repo": rl.repo_id(), "gates": gates,
+                   "agent_cap": 40, "planned_at": rl.now()})
+        rl.append({"run_id": rid, "phase": "cycle", "n": 1, "applied": 3, "agents": 5})
+        rl.append({"run_id": rid, "phase": "finish", "outcome": "test-failure",
+                   "finished_at": rl.now(), "executed": {"t": {"status": "done"}}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["--run-id", rid, "--branch", "feat/x", "--default-branch", "main",
+                  "--gate-state", "passed", "--repo", td])
+        got = json.loads(out.getvalue())
+        assert got["push"] is False, got
+        assert "test-failure" in got["reason"], got      # the record's outcome reached decide()
+
+        # And the report check: no report anywhere -> refused, naming pr-report.
+        rid2 = "pcselftest02"
+        rl.append({"run_id": rid2, "phase": "plan", "repo": rl.repo_id(), "gates": gates,
+                   "agent_cap": 8, "planned_at": rl.now()})
+        rl.append({"run_id": rid2, "phase": "cycle", "n": 1, "applied": 3, "agents": 9})
+        rl.append({"run_id": rid2, "phase": "finish", "outcome": "cycle-limit",
+                   "finished_at": rl.now(), "executed": {"t": {"status": "done"}}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["--run-id", rid2, "--branch", "feat/x", "--default-branch", "main",
+                  "--gate-state", "passed", "--repo", td])
+        got = json.loads(out.getvalue())
+        assert got["push"] is False and "pr-report" in got["reason"], got
+        # Write the pending file carrying this run's marker: the report has now landed.
+        gitdir = os.path.join(td, ".git")
+        os.makedirs(os.path.join(gitdir, "info"), exist_ok=True)
+        with open(os.path.join(gitdir, PENDING), "w", encoding="utf-8") as fh:
+            fh.write(REPORT_MARKER.format(rid2) + "\n\nthe report\n")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["--run-id", rid2, "--branch", "feat/x", "--default-branch", "main",
+                  "--gate-state", "passed", "--repo", td])
+        got = json.loads(out.getvalue())
+        assert got["push"] is True, got                  # artifact present -> permitted
+        assert got["disclose"], got                      # and still carries the disclosure
     print("ok")
 
 
 def main(argv):
     ap = argparse.ArgumentParser()
+    # Required, not optional. Both record-derived blockers were computed only when it was
+    # present, so omitting it turned off the owed-report check AND the broken-outcome check
+    # while a bogus id was correctly caught — the cheapest wrong spelling was the one that
+    # passed.
     ap.add_argument("--run-id", help="read convergence from the run record (required unless --selftest)")
     ap.add_argument("--gate-state", choices=["passed", "skipped", "blocked"], default="skipped")
     ap.add_argument("--unresolved-skip", action="store_true")
@@ -162,20 +269,22 @@ def main(argv):
     if a.selftest:
         _selftest()
         return 0
+    if not a.run_id:
+        sys.exit("push-check: --run-id is required — without it the record's outcome and the "
+                 "report check are both invisible, and the run pushes on nothing")
     # No --run-id means no record to read, which is not the same as converged. Fail
     # closed the way a missing cycle row does: push, but disclose that nothing is known.
     run, conv = {}, None
     if a.run_id:
         run = runlog.load(limit=None).get(a.run_id) or {}
         conv = runlog.convergence(run)
-    head = subprocess.run(["git", "-C", a.repo, "rev-parse", "HEAD"],
-                          capture_output=True, text=True, check=False).stdout.strip()
-    # Asked of runlog, not restated here: two definitions of "has this been disclosed"
-    # is the divergence that put "CAPPED at 11 of 8 agents" above a table showing 8.
-    undisclosed = runlog.disclosure_pending(run, head) if a.run_id else None
+    unreported = None
+    if not report_landed(a.run_id, a.repo):
+        unreported = ("this run's report has not reached the PR or the pending-report file — "
+                      "run pr-report.py --post first")
     push, reason = decide(conv, a.gate_state, a.unresolved_skip,
                           a.branch, a.default_branch, _upstream_exists(a.repo),
-                          outcome=run.get("outcome"), undisclosed=undisclosed)
+                          outcome=run.get("outcome"), unreported=unreported)
     print(json.dumps({"push": push, "reason": reason,
                       "convergence": conv or "unknown",
                       "disclose": runlog.disclosure(conv, run)}))

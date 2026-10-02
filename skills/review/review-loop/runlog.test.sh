@@ -157,9 +157,14 @@ grep -q 'no cycle rows' <<<"$out" && ok "finish warns when convergence is unknow
 # under both behaviours, so it discriminated nothing.
 r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" --agent-cap 10)
 cy "$r" 1 4 6; cy "$r" 2 2 3; cy "$r" 1 1 4   # restart repeats n=1; 13 agents of a 10 cap
-n=$("$PY" runlog.py show --run-id "$r" | "$PY" -c 'import json,sys; print(len(json.load(sys.stdin).get("cycles") or []))')
+# Counted through cycles_of, the reader under test — not through `show`, which returns the
+# raw stored list and so reported 3 whether or not the read path collapsed them.
+n=$("$PY" runlog.py show --run-id "$r" | "$PY" -c '
+import json, sys; sys.path.insert(0, ".")
+import runlog
+print(len(runlog.cycles_of(json.load(sys.stdin))))')
 [ "$n" = "3" ] && ok "a restart's repeated cycle number is kept, not collapsed" \
-	|| bad "a restart's repeated cycle number is kept, not collapsed (rows=$n)"
+	|| bad "a restart's repeated cycle number is kept, not collapsed (cycles_of returned $n of 3)"
 [ "$(conv "$r")" = "capped" ] && ok "and its agents count against the cap (13 of 10 = capped)" \
 	|| bad "and its agents count against the cap (got: $(conv "$r"))"
 "$PY" runlog.py show --run-id "$r" | "$PY" -c '
@@ -229,24 +234,11 @@ grep -q "outcome 'clean' but the cycle rows derive" <<<"$out" \
 	&& ok "finish names a self-report that contradicts the derivation" \
 	|| bad "finish names a self-report that contradicts the derivation (got: $out)"
 
-# The disclosure obligation is what a capped run pushes ON, so it has to be checkable.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 5 6
-"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
-	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
-pend() { "$PY" -c '
-import json, sys; sys.path.insert(0, ".")
-import runlog
-print(runlog.disclosure_pending(runlog.load(limit=None)["'"$1"'"], "'"$2"'") or "CLEAR")
-'; }
-[ "$(pend "$r" aaaa111)" != "CLEAR" ] && ok "an undisclosed non-converged run is not clear to push" \
-	|| bad "an undisclosed non-converged run is not clear to push"
-"$PY" runlog.py disclosed --run-id "$r" --where "pending file" --head aaaa111 >/dev/null 2>&1
-[ "$(pend "$r" aaaa111)" = "CLEAR" ] && ok "and is clear once the disclosure is recorded" \
-	|| bad "and is clear once the disclosure is recorded (got: $(pend "$r" aaaa111))"
-[ "$(pend "$r" bbbb222)" != "CLEAR" ] && ok "but only for the commit it describes" \
-	|| bad "but only for the commit it describes"
-
+# The disclosure gate is no longer here: the `disclosed` phase and disclosure_pending were
+# deleted because the marker they wrote could be satisfied by `runlog.py disclosed --where
+# "trust me"` with no report anywhere — the shape --clean-exit was retired for, rebuilt inside
+# its own replacement. push-check.py --selftest owns that coverage now, and checks the
+# artifact (a PR comment or the pending file carrying the run's marker) instead of a claim.
 # The precedent ban matched raw text, so whitespace walked straight through it: a reason
 # long enough to wrap carries a newline mid-phrase, which is the ordinary case rather than
 # an evasion. Three of these five phrasings used to be recorded.

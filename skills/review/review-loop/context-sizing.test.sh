@@ -60,10 +60,13 @@ grep -q 'whitespace-only' <<<"$exc" && ok "and the exclusion is reported, not si
 for ext in py yaml; do
 	r=$(newrepo "dedent-$ext")
 	case $ext in
-		py)   before='if user.is_test:\n    stripe.charge(user, amount)\n'
-		      after='if user.is_test:\n    pass\nstripe.charge(user, amount)\n' ;;
-		yaml) before='prod:\n  debug: true\n'
-		      after='prod:\n  pass: 1\ndebug: true\n' ;;
+		# Whitespace-ONLY on purpose: the whole point is that `git diff -w` scores these 0.
+		# An earlier version also ADDED a line, which made -w score 1 and let `sem > 0`
+		# pass under the restored bug.
+		py)   before='if user.is_test:\n    log(user)\n    stripe.charge(user, amount)\n'
+		      after='if user.is_test:\n    log(user)\nstripe.charge(user, amount)\n' ;;
+		yaml) before='prod:\n  debug: true\n  public: true\n'
+		      after='prod:\n  debug: true\npublic: true\n' ;;
 	esac
 	printf "$before" > "$r/a.$ext"
 	g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
@@ -107,9 +110,10 @@ raw=$(field "$r" changed_lines); sem=$(field "$r" semantic_lines)
 [ "$raw" -gt 300 ] && ok "a lockfile bump has a large raw count ($raw)" || bad "a lockfile bump has a large raw count (got: $raw)"
 [ "$sem" -le 4 ] && ok "but only the real edit counts semantically ($sem)" || bad "but only the real edit counts semantically (got: $sem)"
 grep -q 'lockfile' <<<"$(field "$r" sizing_excluded)" && ok "and the lockfile exclusion is reported" || bad "and the lockfile exclusion is reported"
-# The only fixture whose raw and semantic counts straddle the 30-line threshold, so it is
-# the only one that can tell keying on semantic from keying on raw. Without it, mutating
-# `semantic < 30` to `changed < 30` passed the entire suite.
+# The only fixture that ASSERTS the flag with counts straddling the 30-line threshold, so
+# it is the only one that can tell keying on semantic from keying on raw. (The generated-file
+# fixture below straddles it too — raw 51, semantic 0 — but never asserts the flag.) Without
+# this line, mutating `semantic < 30` to `changed < 30` passed the entire suite.
 [ "$(field "$r" fast_path_eligible_by_size)" = "True" ] && ok "and the fast path keys on semantic, not raw" \
 	|| bad "and the fast path keys on semantic, not raw (raw $raw, sem $sem)"
 
@@ -175,6 +179,36 @@ out=$(cd "$r" && "$SCRIPT" 2>/dev/null); rc=$?
 [ "$rc" -eq 0 ] && python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$out" >/dev/null \
 	&& ok "a missing origin/<base> ref still emits valid JSON" \
 	|| bad "a missing origin/<base> ref still emits valid JSON (rc=$rc)"
+
+# --- a learnings file that exists with NO entries. `grep -c` prints 0 and exits 1, so the
+# --- `|| echo 0` fallback fired too and the count became the string "0\\n0" — the same shape
+# --- as the numstat case above, in the one place the first fix missed.
+r=$(newrepo emptylearn)
+printf 'const a = 1;\\n' > "$r/a.js"
+g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+printf 'const a = 2;\\n' > "$r/a.js"
+g -C "$r" add -A && g -C "$r" commit -qm edit
+mkdir -p "$r/.git/info"
+printf '# Review-loop learnings\\n\\nNo entries yet.\\n' > "$r/.git/info/review-loop-learnings.md"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null); rc=$?
+[ "$rc" -eq 0 ] && python3 -c 'import json,sys; json.loads(sys.stdin.read())' <<<"$out" >/dev/null \
+	&& ok "a learnings file with no entries still emits valid JSON" \
+	|| bad "a learnings file with no entries still emits valid JSON (rc=$rc)"
+[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_entries"])' <<<"$out")" = "0" ] \
+	&& ok "and counts zero entries" || bad "and counts zero entries"
+
+# --- an indentation-sensitive file whose extension is not the LAST one, or is uppercase,
+# --- or is a make fragment: all previously fell through to -w and scored 0.
+r=$(newrepo indentnames)
+printf 'prod:\\n  debug: true\\n  public: true\\n' > "$r/values.yml.j2"
+printf 'all:\\n\\tcc -o x x.c\\n\\tstrip x\\n' > "$r/Makefile.am"
+g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+printf 'prod:\\n  debug: true\\npublic: true\\n' > "$r/values.yml.j2"
+printf 'all:\\n\\tcc -o x x.c\\nstrip x\\n' > "$r/Makefile.am"
+g -C "$r" add -A && g -C "$r" commit -qm dedent
+sem=$(field "$r" semantic_lines); raw=$(field "$r" changed_lines)
+[ "$sem" = "$raw" ] && ok "a templated .yml.j2 and a Makefile.am count in full ($sem of $raw)" \
+	|| bad "a templated .yml.j2 and a Makefile.am count in full (sem $sem, raw $raw)"
 
 echo
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"

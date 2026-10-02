@@ -104,17 +104,32 @@ def _selftest():
     assert citations("- OBSERVED: nothing pinned\n")[1] == 0
 
     # A pin whose sha does not name a commit here can never be checked, yet it counts as
-    # pinned and so stays out of unpinned[] too: it looks checked and is unwatched, which
-    # is worse than no pin. Needs a real repo, so skip where there is none rather than
-    # assert vacuously.
-    if git("rev-parse", "--git-dir"):
-        real = git("rev-parse", "HEAD")
-        assert real and resolvable(real), real
-        assert not resolvable("deadbeefcafe")
-        bogus = {"path": "pins.py", "line": 1, "sha": "deadbeefcafe"}
-        good = {"path": "pins.py", "line": 2, "sha": real}
-        assert broken([bogus, good]) == [bogus], broken([bogus, good])
-        assert broken([good]) == [], broken([good])
+    # pinned and so stays out of unpinned[] too: it looks checked and is unwatched, which is
+    # worse than no pin. BUILD the repo rather than guarding on finding one — an
+    # `if git("rev-parse", "--git-dir")` guard silently skipped this whole block outside a
+    # checkout, so `broken()` could be gutted to `return []` and the selftest still printed ok.
+    import os
+    import tempfile
+    cwd = os.getcwd()
+    with tempfile.TemporaryDirectory() as td:
+        try:
+            os.chdir(td)
+            for cmd in (("init", "-q", "."), ("config", "user.email", "t@t"),
+                        ("config", "user.name", "t")):
+                git(*cmd)
+            open("f.txt", "w").close()
+            git("add", "-A")
+            git("-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null",
+                "commit", "-qm", "seed")
+            real = git("rev-parse", "HEAD")
+            assert real and resolvable(real), f"fixture has no resolvable HEAD: {real!r}"
+            assert not resolvable("deadbeefcafe")
+            bogus = {"path": "f.txt", "line": 1, "sha": "deadbeefcafe"}
+            good = {"path": "f.txt", "line": 2, "sha": real}
+            assert broken([bogus, good]) == [bogus], broken([bogus, good])
+            assert broken([good]) == [], broken([good])
+        finally:
+            os.chdir(cwd)
     print("ok")
 
 

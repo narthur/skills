@@ -11,7 +11,7 @@ A claim is STALE when its cited file has changed since that pin. That is a
 the LLM sweep — the update agent gets an exact worklist instead of "re-read the
 diff and guess what's now wrong".
 
-  threat-model.py            # JSON: {path, exists, claims, stale, uncited}
+  threat-model.py            # JSON: {path, exists, claims, stale, broken_pins, uncited}
   threat-model.py --selftest
 
 Exit 0 always (informational); callers read `exists` and `stale`.
@@ -35,13 +35,21 @@ def report():
         with open(path, encoding="utf-8") as fh:
             text = fh.read()
     except (OSError, TypeError):
-        return {"path": path, "exists": False, "claims": 0, "stale": [], "uncited": 0}
+        return {"path": path, "exists": False, "claims": 0, "stale": [],
+                "broken_pins": [], "uncited": 0}
     claims, uncited = pins.citations(text, marker="OBSERVED:")
     return {
         "path": path,
         "exists": True,
         "claims": len(claims),
         "stale": pins.stale(claims),
+        # pins.broken's doctrine is "callers must report it", and this was the caller that
+        # did not. A claim pinned to an unresolvable sha returns [] from stale(), so Step 2b's
+        # "skip the agent when stale is empty" drops it from the worklist entirely — while it
+        # still looks pinned and stays out of `uncited`. For a `Not an issue here` dismissal,
+        # which is the security review's per-repo suppression channel, that is a suppression
+        # nothing ever re-examines.
+        "broken_pins": pins.broken(claims),
         "uncited": uncited,
     }
 

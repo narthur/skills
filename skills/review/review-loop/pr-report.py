@@ -91,7 +91,7 @@ def render(run, run_id, conv, narrative):
     outcome_line = (f"- **Outcome** `{run.get('outcome') or 'unrecorded'}`"
                     f" · **convergence** `{conv or 'unknown'}`"
                     f" · **tier** `{tier}` (floor `{floor}`)")
-    run_line = (f"- **Run** `{run_id}` · orchestrator `{run.get('orchestrator_model') or '?'}`"
+    run_line = (f"- **Run** `{run_id}` · orchestrator `{cell(run.get('orchestrator_model')) or '?'}`"
                 f" · {len(cycles)} cycle(s) · {agents} agent(s)")
     if tokens:
         run_line += f" · ~{tokens:,} subagent tokens"
@@ -136,8 +136,11 @@ def render(run, run_id, conv, narrative):
     roster = run.get("agents")
     if isinstance(roster, list) and roster:
         out += ["### Agents", ""]
-        out += [f"- `{a.get('id')}` ({a.get('model') or '?'}) — {cell(a.get('status'))}"
-                f", {a.get('findings', '?')} finding(s)" for a in roster if isinstance(a, dict)]
+        # Every field here is orchestrator-written free text from `finish --agents <json>`,
+        # so all four need celling, not just status: a newline in `model` rendered a real
+        # blockquote reading "Review converged" four lines under a HALTED disclosure.
+        out += [f"- `{cell(a.get('id'))}` ({cell(a.get('model')) or '?'}) — {cell(a.get('status'))}"
+                f", {cell(a.get('findings', '?'))} finding(s)" for a in roster if isinstance(a, dict)]
         out.append("")
 
     if narrative:
@@ -145,24 +148,27 @@ def render(run, run_id, conv, narrative):
     return "\n".join(out).rstrip() + "\n"
 
 
-def _disclosed(run_id, where, repo):
-    """Record that the disclosure reached a reader, pinned to the commit it describes.
+def write_pending(body, run_id, conv, repo):
+    """Write the report where Step 0c will find it. Returns the path, or None.
 
-    This is the half that makes "a capped run may push, and the PR must say so" checkable:
-    push-check refuses a non-converged push until this row exists for the current head.
-    Written for the pending file as well as for a real PR, because on a fresh branch the
-    push gate forces loop-then-push-then-PR and there is no PR to post to yet.
+    This is the fallback channel for "nowhere to post it right now", and a failed post is
+    one of those: the body must survive the failure. push-check looks for this file when
+    there is no PR comment carrying the run's marker, so writing it is also what keeps a
+    transient GitHub error from blocking the push permanently.
     """
-    head = subprocess.run(["git", "-C", repo, "rev-parse", "HEAD"],
-                          capture_output=True, text=True, check=False).stdout.strip()
-    argv = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "runlog.py"),
-            "disclosed", "--run-id", run_id, "--where", where]
-    if head:
-        argv += ["--head", head]
-    try:
-        subprocess.run(argv, capture_output=True, text=True, check=False, timeout=10)
-    except (OSError, subprocess.SubprocessError) as exc:
-        print(f"pr-report: could not record the disclosure: {exc}", file=sys.stderr)
+    rc, gitdir, _ = sh("git", "rev-parse", "--path-format=absolute", "--git-common-dir", repo=repo)
+    if rc != 0:
+        return None
+    path = os.path.join(gitdir, PENDING)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        fh.write(body)
+        # The label block below only runs when a PR exists, and on a fresh branch there is
+        # none — which is the common case, since the push gate forces
+        # loop-then-push-then-PR. Say the label is still owed so Step 0c applies it.
+        fh.write(f"\n<!-- review-loop: label review:{conv or 'unknown'} still owed; "
+                 f"Step 0c applies it with `pr-report.py --run-id {run_id} --label` -->\n")
+    return path
 
 
 def main(argv):
@@ -194,33 +200,26 @@ def main(argv):
     rc, num, _ = sh("gh", "pr", "view", "--json", "number", "-q", ".number", repo=a.repo)
     if rc != 0 or not num:
         # No PR is the normal first-branch case, not a reason to drop the report.
-        rc, gitdir, _ = sh("git", "rev-parse", "--path-format=absolute", "--git-common-dir", repo=a.repo)
-        if rc != 0:
+        path = write_pending(body, a.run_id, conv, a.repo)
+        if not path:
             sys.exit("pr-report: no PR and no git dir — nowhere to defer to")
-        path = os.path.join(gitdir, PENDING)
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w", encoding="utf-8") as fh:
-            fh.write(body)
-        # The label block below is unreachable here — there is no PR to label — and this is
-        # the COMMON path, since the push gate forces loop-then-push-then-PR. So say the
-        # label is still owed, in the file Step 0c reads, rather than losing the
-        # at-a-glance signal on every fresh branch.
-        with open(path, "a", encoding="utf-8") as fh:
-            fh.write(f"\n<!-- review-loop: label review:{conv or 'unknown'} still owed; "
-                     f"Step 0c applies it with `pr-report.py --run-id {a.run_id} --label` -->\n")
-        _disclosed(a.run_id, path, a.repo)
         print(f"pr-report: no PR yet — deferred to {path} (Step 0c flushes it)", file=sys.stderr)
         return 0
 
     rc, _, err = sh("gh", "pr", "comment", num, "--body", body, repo=a.repo)
     if rc != 0:
-        # Never fail the run over a failed post; say so and let the report carry it. No
-        # disclosure is recorded in this branch: push-check then refuses a non-converged
-        # push, which is correct — the disclosure genuinely did not reach a reader.
+        # Fail on a MISSING report, never on a failed POST. A transient GitHub error — 502,
+        # rate limit, expired auth, the sandbox TLS failure this repo has already hit while
+        # `git push` worked — used to discard the body entirely and leave push-check
+        # refusing the push on advice that could not succeed ("run pr-report.py first"),
+        # which re-created the stranding this whole mechanism exists to end. The pending
+        # file is the module's own "nowhere to post right now" channel; use it.
         print(f"pr-report: comment failed on PR #{num}: {err}", file=sys.stderr)
+        path = write_pending(body, a.run_id, conv, a.repo)
+        print(f"pr-report: kept the report at {path} for Step 0c" if path
+              else "pr-report: could not preserve the report — no git dir", file=sys.stderr)
     else:
         print(f"pr-report: posted to PR #{num}", file=sys.stderr)
-        _disclosed(a.run_id, f"PR #{num}", a.repo)
 
     if a.label:
         name, colour, desc = LABELS[conv or "unknown"]

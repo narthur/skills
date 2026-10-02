@@ -89,12 +89,19 @@ def _validate(f):
             f"finding {f.get('id', '?')!r}: observed_failure must be the text of the failure "
             f"you watched, not {type(obs).__name__} — `true` is a claim, not an observation"
         )
+    # isinstance, not `.get("agent", "")`: the default covers a MISSING key, not a
+    # present-but-null one, so `"agent": null` raised AttributeError and lost the whole batch
+    # — the same crash-instead-of-refusal shape fixed for observed_failure two checks above,
+    # reintroduced by the fix for it. A serializer emitting null for an unfilled field is the
+    # very argument used to make cost_recurrence required.
+    agent = f.get("agent")
+    agent = agent if isinstance(agent, str) else ""
     if rec in RECURRING and (f.get("category") == "comment-accuracy"
                              # The comments agent implies the category. Without this, the
                              # Bands finding refiled as agent '4-comments' with no category
                              # key escaped the refusal entirely, which is the shape it came
                              # in as the first time.
-                             or f.get("agent", "").endswith("-comments")):
+                             or agent.endswith("-comments")):
         raise Contradiction(
             f"finding {f.get('id', '?')!r}: category 'comment-accuracy' with cost_recurrence "
             f"{rec!r} is a contradiction. A cost paid on every use is not a wording problem. "
@@ -184,7 +191,10 @@ def _selftest():
     assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "per-item"})[0] == "ask"
     assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "per-use"})[0] == "ask"
     assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "once"})[0] == "skip"
-    assert route({"agent": "2-bugs", "score": 20, "cost_recurrence": "once"})[0] == "skip"
+    # The auto-fix boundary itself: nothing sat in 70-79, so lowering `score >= 80` to 70
+    # passed the whole selftest.
+    assert route({"agent": "2-bugs", "score": 79, "risk": "high", "cost_recurrence": "once"})[0] == "ask"
+    assert route({"agent": "2-bugs", "score": 80, "risk": "high", "cost_recurrence": "once"})[0] == "auto_fix"
     # It floors, never ceilings: high confidence still auto-fixes.
     assert route({"agent": "2-bugs", "score": 85, "cost_recurrence": "per-item"})[0] == "auto_fix"
     # And it overrides neither always-ask nor the security floor.

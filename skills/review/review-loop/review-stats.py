@@ -141,7 +141,12 @@ def cmd_report(runs, repo):
     # Agents is the cap's unit because it is derivable; tokens are the real cost.
     # Reporting both is what lets the proxy be checked against actual spend before the
     # cap moves to a token or weighted basis — the stated reason tokens are recorded.
-    cyc = [c for r in runs for c in runlog.cycles_of(r)]
+    # Over `fin`, the same population as the denominator below. Summing cycles across ALL
+    # runs while dividing by finished ones counted open, abandoned, carried and skipped runs
+    # in the numerator only: measured, one finished run of 4 agents beside an in-flight run
+    # of 20 reported "mean agents/run: 24.0" where the honest figure is 4.0. These are the
+    # two numbers this block exists to let the cap be chosen from.
+    cyc = [c for r in fin for c in runlog.cycles_of(r)]
     ag = sum(c.get("agents") or 0 for c in cyc)
     tok = sum(c.get("subagent_tokens") or 0 for c in cyc)
     if cyc:
