@@ -595,6 +595,15 @@ def cmd_finish(a):
         print("runlog: WARNING — no cycle rows for this run, so convergence is unknown, "
               "which every consumer reads as 'did not converge'. Record each cycle with "
               "`runlog.py cycle`.", file=sys.stderr)
+    elif conv == "converged" and (a.asks or 0) > 0:
+        # The cycle-row `asked` guard is satisfiable by omission: `cycle --applied 0` with no
+        # --asked, then `finish --asks 7`, derives converged with no disclosure while seven
+        # findings sit unresolved with the user. The same asymmetry bucket._validate was
+        # fixed for in this build — and cmd_finish holds both numbers.
+        print(f"runlog: WARNING — the cycle rows derive 'converged' but this finish records "
+              f"{a.asks} unresolved ask(s). A cycle that routed findings to the user and "
+              "resolved none has not converged: record them with `cycle --asked N`, or the PR "
+              "will claim the review found nothing left to do.", file=sys.stderr)
     elif a.outcome == "clean" and conv != "converged":
         # The derivation was added to displace the self-report; the self-report stayed.
         # Run b480b45cc65d recorded `clean` for a run its own author says did not

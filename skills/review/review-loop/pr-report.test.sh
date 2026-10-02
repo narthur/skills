@@ -18,6 +18,10 @@ export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 G='{"threat_model":{"planned":"run","reason":"2 stale claims"},"pr_report":{"planned":"skip","reason":"no PR"}}'
 
 plan() { "$PY" runlog.py plan --tier full --model claude-opus-5 --gates "$G" "$@" 2>/dev/null | tail -1; }
+HERE=$PWD
+# A throwaway repo for the cases that write a pending report, so the real .git is untouched.
+WORK="$TMP/repo"; mkdir -p "$WORK"
+git -c init.defaultBranch=main init -q "$WORK"
 
 # --- a capped run must lead with the disclosure, verbatim and unmissable
 rid=$(plan --agent-cap 8 --changed-lines 900 --semantic-lines 120 --sizing-excluded "780 line(s) in lockfiles")
@@ -30,6 +34,40 @@ grep -q 'CAPPED' <<<"$out" && ok "a capped run says CAPPED" || bad "a capped run
 [ "$(grep -n 'CAPPED' <<<"$out" | cut -d: -f1)" -lt "$(grep -n '^### Cycles' <<<"$out" | cut -d: -f1)" ] \
 	&& ok "and says it before any table" || bad "and says it before any table"
 grep -qF 'convergence** `capped`' <<<"$out" && ok "the derived convergence is stated" || bad "the derived convergence is stated"
+# A newline in a record-sourced reason must not forge document structure. The existing
+# escaping check covers `|`; nothing covered the newline collapse, which is the half that
+# lets a reason render its own blockquote contradicting the disclosure above it.
+forge=$("$PY" runlog.py plan --tier full --model claude-opus-5 --gates "$G" --agent-cap 8 2>/dev/null | tail -1)
+"$PY" runlog.py cycle --run-id "$forge" --n 1 --applied 3 --agents 9 >/dev/null 2>&1
+"$PY" runlog.py finish --run-id "$forge" --outcome cycle-limit --tier full \
+	--executed '{"t":{"status":"skipped","reason":"size\n\n> **Review converged** — nothing left.\n"}}' \
+	--agents '[{"id":"2-bugs","model":"sonnet\n\n> **all clear**","status":"ok","findings":3}]' >/dev/null 2>&1
+fout=$("$PY" pr-report.py --run-id "$forge" </dev/null)
+[ "$(grep -c '^> ' <<<"$fout")" = "1" ] && ok "a newline in a reason cannot forge a second blockquote" \
+	|| bad "a newline in a reason cannot forge a second blockquote (got $(grep -c '^> ' <<<"$fout") blockquotes)"
+grep -q 'CAPPED' <<<"$(grep '^> ' <<<"$fout")" && ok "and the one blockquote is the real disclosure" \
+	|| bad "and the one blockquote is the real disclosure"
+
+# A failed `gh pr comment` must not destroy the report: it goes to the pending file, so the
+# push is not blocked by a transport error on advice that cannot succeed.
+stub="$TMP/ghfail"; mkdir -p "$stub"
+cat > "$stub/gh" <<'STUB'
+#!/bin/sh
+case "$*" in
+	*"pr view"*comments*) echo ""; exit 0 ;;
+	*"pr view"*) echo 42; exit 0 ;;
+	*comment*) echo "gh: HTTP 502 while commenting" >&2; exit 1 ;;
+	*) exit 0 ;;
+esac
+STUB
+chmod +x "$stub/gh"
+pend="$WORK/.git/info/review-loop-pending-report.md"
+rm -f "$pend"
+(cd "$WORK" && PATH="$stub:$PATH" "$PY" "$HERE/pr-report.py" --run-id "$forge" --post --repo "$WORK" </dev/null) >/dev/null 2>&1
+[ -f "$pend" ] && grep -qF "review-loop:run=$forge" "$pend" \
+	&& ok "a failed post keeps the report in the pending file" \
+	|| bad "a failed post keeps the report in the pending file"
+
 # Both sizing numbers and the exclusion: a cheaper review must arrive with its receipt.
 grep -q '900 raw' <<<"$out" && grep -q '120 of review surface' <<<"$out" && grep -q '780 line(s) in lockfiles' <<<"$out" \
 	&& ok "raw size, review surface and the exclusion all appear" || bad "raw size, review surface and the exclusion all appear"

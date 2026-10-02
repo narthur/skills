@@ -84,6 +84,28 @@ done
 # the headline is meant to stop it masquerading as a review, not to hide it.
 grep -qE '^outcome:.*carried=3' <<<"$out" && ok "the outcome tally still shows carried" || bad "the outcome tally still shows carried"
 
+# --- the spend figures must divide one population by itself. Summing cycle agents over ALL
+# --- runs while dividing by FINISHED ones put open, abandoned and bookkeeping runs in the
+# --- numerator only: measured, one finished run of 4 agents beside an in-flight run of 20
+# --- reported "mean agents/run: 24.0" where the honest figure is 4.0. These are the two
+# --- numbers the block exists to let the agent cap be chosen from.
+export REVIEW_LOOP_RUNS="$TMP/spend.jsonl"
+rm -f "$REVIEW_LOOP_RUNS"
+GATES='{"threat_model":{"planned":"run","reason":"2 stale claims"}}' 
+fin=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" 2>/dev/null | tail -1)
+"$PY" runlog.py cycle --run-id "$fin" --n 1 --applied 1 --agents 4 --tokens 400000 >/dev/null 2>&1
+"$PY" runlog.py finish --run-id "$fin" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
+open=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" 2>/dev/null | tail -1)
+"$PY" runlog.py cycle --run-id "$open" --n 1 --applied 1 --agents 20 >/dev/null 2>&1
+rep=$("$PY" review-stats.py 2>/dev/null)
+grep -q 'mean agents/run: 4.0' <<<"$rep" \
+	&& ok "spend divides finished-run cycles by finished runs" \
+	|| bad "spend divides finished-run cycles by finished runs (got: $(grep -o 'mean agents/run: [0-9.]*' <<<"$rep"))"
+grep -q 'mean tokens/agent: 100,000' <<<"$rep" \
+	&& ok "and tokens per agent comes from the same population" \
+	|| bad "and tokens per agent comes from the same population (got: $(grep -o 'mean tokens/agent: [0-9,]*' <<<"$rep"))"
+
 echo
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
 exit "$fails"

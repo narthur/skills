@@ -89,13 +89,18 @@ def _validate(f):
             f"finding {f.get('id', '?')!r}: observed_failure must be the text of the failure "
             f"you watched, not {type(obs).__name__} — `true` is a claim, not an observation"
         )
-    # isinstance, not `.get("agent", "")`: the default covers a MISSING key, not a
-    # present-but-null one, so `"agent": null` raised AttributeError and lost the whole batch
-    # — the same crash-instead-of-refusal shape fixed for observed_failure two checks above,
-    # reintroduced by the fix for it. A serializer emitting null for an unfilled field is the
-    # very argument used to make cost_recurrence required.
+    # A present-but-non-string agent is malformed, and refused by name. `.get("agent", "")`
+    # defaults only a MISSING key, so a present null reached `.endswith()` in this function
+    # and an unhashable list reached the `in SECURITY_AGENTS` test in route() — two crash
+    # sites, both losing the whole batch to a traceback instead of naming the finding. Absent
+    # is still fine: that is the common case and routes as an ordinary finding.
     agent = f.get("agent")
-    agent = agent if isinstance(agent, str) else ""
+    if agent is not None and not isinstance(agent, str):
+        raise Contradiction(
+            f"finding {f.get('id', '?')!r}: agent must be the agent's id as a string, not "
+            f"{type(agent).__name__}"
+        )
+    agent = agent or ""
     if rec in RECURRING and (f.get("category") == "comment-accuracy"
                              # The comments agent implies the category. Without this, the
                              # Bands finding refiled as agent '4-comments' with no category
@@ -238,6 +243,23 @@ def _selftest():
     assert route({"agent": "4-comments", "score": 95, "cost_recurrence": "once"})[0] == "auto_fix"
     # The security floor still outranks it.
     assert route({"agent": "5-security", "score": 70, "behavioral": True, "cost_recurrence": "once"})[0] == "skip"
+    # Neither a null agent. `f.get("agent", "")` defaults only a MISSING key, so a present
+    # null reached .endswith() and took the whole batch down — the same crash shape as
+    # observed_failure, in the fix for observed_failure.
+    for bad_agent in (123, ["x"], {"a": 1}):
+        try:
+            route({"agent": bad_agent, "score": 20, "cost_recurrence": "once"})
+        except Contradiction:
+            pass
+        else:
+            raise AssertionError(f"agent {bad_agent!r} should be refused, not routed")
+    # null is treated as absent, which is the shape a serializer emits for an unfilled
+    # field: it routes as an ordinary finding rather than crashing on .endswith().
+    assert route({"agent": None, "score": 20, "cost_recurrence": "once"})[0] == "skip"
+    assert route({"agent": None, "score": 20, "cost_recurrence": "per-use"})[0] == "ask"
+    # And an absent key is unchanged.
+    assert route({"score": 85, "cost_recurrence": "once"})[0] == "auto_fix"
+
     # A non-string observed_failure is a refusal by name, not an AttributeError that takes
     # the whole batch down with a traceback.
     for bad in (True, 123, ["seen it"]):

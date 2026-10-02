@@ -252,6 +252,32 @@ done
 out=$("$PY" runlog.py skipped --reason "12 lines and no logic touched" --model m 2>&1 | head -1)
 grep -q refusing <<<"$out" && bad "a measurable reason still records" || ok "a measurable reason still records"
 
+# A finished run must stay finished however many phase rows arrive after `finish`. load()
+# merges non-cycle phases with .update(), so any later row overwrote run["phase"] and a
+# `phase == "finish"` test then read the run as OPEN — the Stop hook blocked the next turn
+# claiming it was never finished, and its advice (`abandon`) writes an outcome push-check
+# refuses. The `disclosed` row that exposed this is gone, so the row below is synthetic: the
+# coupling is what is under test, and any future phase would re-trigger it.
+# Its own store: `check` reports every open run in the repo, and the shared store above
+# still holds several, so this block would pass or fail on their account rather than ours.
+phase_store="$TMP/latephase.jsonl"
+prev_store=$REVIEW_LOOP_RUNS
+export REVIEW_LOOP_RUNS="$phase_store"
+r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+cy "$r" 1 4 6
+"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
+	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
+"$PY" runlog.py check >/dev/null 2>&1
+[ $? -eq 0 ] && ok "a finished run reads as finished" || bad "a finished run reads as finished"
+"$PY" -c '
+import sys; sys.path.insert(0, ".")
+import runlog
+runlog.append({"run_id": "'"$r"'", "phase": "latephase", "noted_at": runlog.now()})'
+"$PY" runlog.py check >/dev/null 2>&1
+[ $? -eq 0 ] && ok "and still does after a later phase row is appended" \
+	|| bad "and still does after a later phase row is appended"
+export REVIEW_LOOP_RUNS="$prev_store"
+
 # A cycle for a run that was never planned is a row with nothing to attach to.
 out=$("$PY" runlog.py cycle --run-id deadbeefdead --n 1 --applied 0 --agents 1 2>&1)
 grep -q 'no plan' <<<"$out" && ok "a cycle without a plan is refused" || bad "a cycle without a plan is refused"
