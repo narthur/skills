@@ -722,7 +722,7 @@ def unfinished(repo, head=None, session=None):
         # and resurrected a closed run as an open one — the Stop hook then blocked the next
         # turn claiming the run was never finished, and its advice (`abandon`) writes an
         # outcome push-check refuses. All four finish-writing paths set finished_at.
-        if run.get("repo") != repo or run.get("finished_at") or run.get("outcome"):
+        if run.get("repo") != repo or run.get("phase") == "finish":
             continue
         if head and run.get("head") != head:
             continue
