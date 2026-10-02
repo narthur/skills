@@ -89,7 +89,7 @@ jobs:
         with:
           persist-credentials: false
           repository: PinePeakDigital/looper
-          ref: v0.1.0
+          ref: v0.1.2
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
