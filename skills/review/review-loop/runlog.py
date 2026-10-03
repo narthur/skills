@@ -456,8 +456,12 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     """`partial` is a fact about the run, not a label the caller picks.
 
     Any planned agent that failed, or any gate that did not complete, makes the run
-    partial — the PR label and the push gate both read it that way, so letting a
-    caller write `full` over it launders the run.
+    partial. The PR comment body reports it (`pr-report.py`, the **tier** field) and
+    `review-stats` tallies it, so letting a caller write `full` over it launders the
+    run in the record humans actually read. The push gate does NOT read it — nothing
+    here blocks a push — and the PR *label* is keyed on `convergence`, not on tier.
+    That is the reason this has to be derived rather than claimed: a laundered tier is
+    never caught downstream, because nothing downstream enforces it.
     """
     # Only gates the plan said to run count. An entry for a gate the plan already
     # marked skip is redundant, not a failure, and shouldn't drag the tier down.
