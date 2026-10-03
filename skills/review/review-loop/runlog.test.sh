@@ -422,6 +422,24 @@ rid5=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 "$PY" runlog.py show --run-id "$rid5" | grep -q '"tier_executed": "partial"' \
 	&& ok "a failed agent forces tier partial" || bad "a failed agent forces tier partial"
 
+# A waiver PASSES the measurement gate, so it must not force partial — the deferred-findings
+# record carried this as unreachable for two days because nothing had ever recorded `waived`.
+# And it must still reach the alarm: three runs waiving one gate is the signal the alarm is
+# for, which is why `waived` is in GATE_ACCOUNTED (tier) and NOT in GATE_OK (silence).
+for st in waived passed; do
+	ridw=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+	"$PY" runlog.py finish --run-id "$ridw" --outcome clean --tier full \
+		--executed "{\"threat_model\":{\"status\":\"$st\",\"reason\":\"repo cannot measure\"}}" >/dev/null 2>&1
+	"$PY" runlog.py show --run-id "$ridw" | grep -q '"tier_executed": "full"' \
+		&& ok "a $st gate does not force partial" || bad "a $st gate does not force partial"
+done
+# A status nobody enumerated still forces partial — the loud default the three omissions argued for.
+ridu=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$ridu" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"probably fine","reason":"2 stale claims re-read"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridu" | grep -q '"tier_executed": "partial"' \
+	&& ok "an unenumerated status still forces partial" || bad "an unenumerated status still forces partial"
+
 # The other half, which nothing checked: a run where every agent SUCCEEDED must not
 # be partial. Gates say `done`, so a caller writing the agent roster reaches for
 # `done` too — and only `ok` was accepted, so five successful agents were counted as
@@ -738,7 +756,7 @@ done
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=118
+EXPECTED_CHECKS=121
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

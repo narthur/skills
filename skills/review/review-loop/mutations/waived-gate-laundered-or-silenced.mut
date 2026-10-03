@@ -1,0 +1,8 @@
+target: skills/review/review-loop/runlog.py
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  a waived gate does not force partial
+why:    one tuple was answering two questions. A waiver PASSES the measurement gate (references/measurement-gate.md:65) so it must not force `partial`, but three runs waiving the same gate is exactly the signal the alarm exists to raise, so it must not go quiet either. Collapsing GATE_ACCOUNTED back onto GATE_OK laundered nothing but downgraded every waived run; collapsing the other way would have made `waived` in review-stats.DECLINED_STATES dead code and hidden a repeated waiver completely. This entry guards the tier half; the review-stats suite guards the visibility half.
+--- old
+GATE_ACCOUNTED = GATE_OK + ("waived", "passed")
+--- new
+GATE_ACCOUNTED = GATE_OK

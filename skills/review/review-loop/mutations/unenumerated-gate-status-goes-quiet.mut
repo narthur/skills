@@ -1,0 +1,8 @@
+target: skills/review/review-loop/runlog.py
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  an unenumerated status still forces partial
+why:    three separate omissions from this vocabulary (`waived`, `passed`, and earlier `n/a`) have now argued for the same default: enumerate the deliberate words and a failure spelling softens silently, so anything NOT enumerated must force partial and be named. Accepting an unknown status as success is how a laundered tier would reach the record humans actually read, and nothing downstream enforces the tier.
+--- old
+              if isinstance(v, dict) and v.get("status") not in GATE_ACCOUNTED
+--- new
+              if isinstance(v, dict) and v.get("status") in ("failed",)

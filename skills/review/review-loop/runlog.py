@@ -449,6 +449,17 @@ SUBCOMMAND_STATES = ("skipped", "carried")
 # and the Step 0 alarm fired permanently on gates nobody could fix, which teaches a
 # reader to scroll past the alarms that are right.
 GATE_OK = ("done", "n/a")
+# Two different questions were being asked of one tuple. "Did the gate complete?" decides
+# the tier; "should it be silent?" decides whether the alarm shows it. A waiver PASSES the
+# gate (references/measurement-gate.md:65), so it must not force `partial` — but three runs
+# waiving the same gate is precisely the signal the alarm exists to raise, so it must not go
+# quiet either. Adding `waived` to GATE_OK would have done both at once and made its entry
+# in review-stats.DECLINED_STATES dead code, hiding a repeated waiver completely.
+# `passed` rides along for the same reason: it is report-line prose for a gate that passed
+# (references/report-format.md:64), and a gate that passed is not a non-completion. Anything
+# NOT listed here still forces partial and is still reported with its own name, which is the
+# loud default three separate omissions have now argued for.
+GATE_ACCOUNTED = GATE_OK + ("waived", "passed")
 TIER_RANK = {"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}
 
 
@@ -466,7 +477,7 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     # Only gates the plan said to run count. An entry for a gate the plan already
     # marked skip is redundant, not a failure, and shouldn't drag the tier down.
     broken = [g for g, v in executed.items()
-              if isinstance(v, dict) and v.get("status") not in GATE_OK
+              if isinstance(v, dict) and v.get("status") not in GATE_ACCOUNTED
               and (planned is None or g in planned)]
     # "done" and "ok" are the same claim. Gates say `done`, so a caller writing the
     # agent roster reaches for `done` too — and counted every successful agent as a

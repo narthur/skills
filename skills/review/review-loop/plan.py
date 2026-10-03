@@ -170,11 +170,23 @@ def build(ctx, a):
     gates["record_reviewed"] = gate("run", "on clean exit")
 
     # --- computable from context.sh ------------------------------------------
+    # The reason has to name the condition that actually decided it. `due` stopped being
+    # the bare threshold when the regrowth margin was added, and this text did not follow:
+    # at 40 entries last swept to 36 it printed "40 learnings entries — under the 40
+    # threshold", which is false on its face and sent a reader looking for an off-by-one
+    # that was not there. Two conditions gate this now, so say which one held.
     due = bool(ctx.get("learnings_compaction_due"))
-    gates["staleness_sweep"] = gate(
-        "run" if due else "skip",
-        f"{ctx.get('learnings_entries', 0)} learnings entries"
-        + (" — at/over the 40 threshold" if due else " — under the 40 threshold"))
+    entries = ctx.get("learnings_entries", 0)
+    swept = ctx.get("learnings_swept_entries")
+    if due:
+        why = f"{entries} learnings entries — at/over the 40 threshold"
+    elif entries < 40:
+        why = f"{entries} learnings entries — under the 40 threshold"
+    else:
+        why = (f"{entries} learnings entries, at/over the 40 threshold, but the last sweep "
+               f"left {swept} and the file has not grown far enough past it to be worth "
+               f"re-sweeping")
+    gates["staleness_sweep"] = gate("run" if due else "skip", why)
 
     # --- threat model ---------------------------------------------------------
     tm = threat_model_state()

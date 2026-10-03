@@ -1,0 +1,14 @@
+target: skills/review/review-loop/plan.py
+verify: bash skills/review/review-loop/plan.test.sh
+expect: FAIL  at the threshold but under the regrowth margin, the reason says so
+why:    `due` stopped being the bare threshold test when the regrowth margin was added, and this reason text did not follow. At 40 entries last swept to 36 it printed "40 learnings entries — under the 40 threshold", false on its face, and sent a reader hunting an off-by-one that did not exist. Two conditions gate this now, so the reason has to say which one held — a gate reason is read later as evidence.
+--- old
+    if due:
+        why = f"{entries} learnings entries — at/over the 40 threshold"
+    elif entries < 40:
+        why = f"{entries} learnings entries — under the 40 threshold"
+--- new
+    if due:
+        why = f"{entries} learnings entries — at/over the 40 threshold"
+    elif True:
+        why = f"{entries} learnings entries — under the 40 threshold"

@@ -118,6 +118,28 @@ sem() {
 	printf '{"changed_lines":%s,"semantic_lines":%s,"sizing_excluded":"890 line(s) in lockfiles or generated files","fast_path_eligible_by_size":%s,"base_branch":"","learnings_entries":0,"learnings_compaction_due":false}' \
 		"$raw" "$semantic" "$fast" | "$PY" plan.py --model test --dry-run "$@" 2>/dev/null
 }
+# The sweep gate's reason must name the condition that actually decided it. `due` stopped
+# being the bare threshold when the regrowth margin was added and this text did not follow:
+# at 40 entries last swept to 36 it said "40 learnings entries — under the 40 threshold",
+# false on its face, and sent a reader hunting an off-by-one that did not exist.
+sweepreason() {
+	printf '{"changed_lines":10,"fast_path_eligible_by_size":false,"base_branch":"","learnings_entries":%s,"learnings_compaction_due":%s,"learnings_swept_entries":%s}' \
+		"$1" "$2" "$3" | "$PY" plan.py --model test --dry-run $BOOLS_OFF 2>/dev/null \
+		| "$PY" -c 'import json,sys; print(json.load(sys.stdin)["gates"]["staleness_sweep"]["reason"])'
+}
+r=$(sweepreason 40 false 36)
+grep -q "last sweep left 36" <<<"$r" && ! grep -q "under the 40" <<<"$r" \
+	&& ok "at the threshold but under the regrowth margin, the reason says so" \
+	|| bad "at the threshold but under the regrowth margin, the reason says so ($r)"
+r=$(sweepreason 12 false null)
+grep -q "under the 40 threshold" <<<"$r" \
+	&& ok "genuinely under the threshold still says under the threshold" \
+	|| bad "genuinely under the threshold still says under the threshold ($r)"
+r=$(sweepreason 44 true 36)
+grep -q "at/over the 40 threshold" <<<"$r" && ! grep -q "last sweep" <<<"$r" \
+	&& ok "and a due sweep says the threshold was crossed" \
+	|| bad "and a due sweep says the threshold was crossed ($r)"
+
 p=$(sem 900 10 true $BOOLS_OFF)
 [ "$(gate agent_7_structural <<<"$p")" = "skip" ] && ok "a 900-raw/10-semantic diff is under the structural floor" 	|| bad "a 900-raw/10-semantic diff is under the structural floor"
 [ "$(tier <<<"$p")" = "fast" ] && ok "and is fast-path eligible on the semantic count" || bad "and is fast-path eligible on the semantic count"
@@ -250,7 +272,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=36
+EXPECTED_CHECKS=39
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))
