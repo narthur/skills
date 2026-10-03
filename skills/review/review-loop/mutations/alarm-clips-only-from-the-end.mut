@@ -4,6 +4,6 @@ expect: FAIL  two reasons sharing a long prefix stay distinguishable
 why:    these reasons name gates, so two different ones sharing a long prefix is likely. Clipping from the end alone printed them as identical lines carrying separate counts, which reads as the counter being broken rather than as two causes. Truncating the middle keeps the differing tail.
 --- old
     head = (REASON_CLIP - 1) * 2 // 3
-    return flat[:head] + "…" + flat[head + 1 - REASON_CLIP:]
+    return flat[:head] + "\u2026" + flat[head + 1 - REASON_CLIP:]
 --- new
-    return flat[:REASON_CLIP - 1] + "…"
+    return flat[:REASON_CLIP - 1] + "\u2026"

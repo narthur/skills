@@ -3,6 +3,6 @@ verify: bash skills/review/review-loop/review-stats.test.sh
 expect: FAIL  an abandonment with no record says so rather than borrowing a reason
 why:    a run nobody recorded an abandonment for has no reason to print, and saying that out loud IS the actionable fact about it — it is the one shape where the record cannot tell you anything. Falling back to an empty key instead groups it with whatever other reason sorts alongside, so the one abandonment worth chasing hides inside a count explained by something else.
 --- old
-            abandon_why[run.get("abandoned_missing") or NO_ABANDON_RECORD] += 1
+            abandon_why[_flat(run.get("abandoned_missing") or NO_ABANDON_RECORD)] += 1
 --- new
-            abandon_why[run.get("abandoned_missing") or ""] += 1
+            abandon_why[_flat(run.get("abandoned_missing") or "")] += 1

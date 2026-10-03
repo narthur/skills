@@ -35,15 +35,17 @@ if [ -f "$lf" ]; then
   # treat it as a single observation, not a measurement. Storing the post-sweep count makes
   # the cost scale with actual growth instead of with the threshold being crossed once.
   #
-  # The pattern is DELIBERATELY loose. Nothing in this repo writes the marker — the only
-  # producer is an instruction to an LLM in references/staleness-sweep.md — so an exact
+  # The pattern is DELIBERATELY loose, and the looseness is the whole mechanism: an exact
   # `^<!-- swept: N -->$` match meant a stray `\r` from a CRLF file, a missing space, or a
   # trailing period silently reverted the trigger to the bare-count behaviour this exists
-  # to remove, with nothing saying so. A reader this forgiving cannot be defeated by
-  # whitespace or case; `tr -d` strips the CR before the match can fail on it.
-  learnings_swept_entries=$(tr -d '\r' < "$lf" 2>/dev/null \
-    | sed -n 's/^[[:space:]]*<!--[[:space:]]*[Ss]wept:[[:space:]]*\([0-9]\{1,\}\).*$/\1/p' \
-    | tail -1)
+  # to remove, with nothing saying so — and for most of this feature's life nothing in the
+  # repo WROTE the marker, so the only producer was an instruction to an LLM.
+  # `[[:space:]]*` absorbs a leading CR and `.*$` a trailing one, which is why there is no
+  # `tr -d '\r'` here: one was added and the mutation catalog proved it dead code, since
+  # every CRLF case it was meant to rescue already matched without it.
+  learnings_swept_entries=$(sed -n \
+    's/^[[:space:]]*<!--[[:space:]]*[Ss]wept:[[:space:]]*\([0-9]\{1,\}\).*$/\1/p' \
+    "$lf" 2>/dev/null | tail -1)
 fi
 
 today=$(date +%F)
