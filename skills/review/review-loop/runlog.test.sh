@@ -684,5 +684,40 @@ rc=$?
 	&& ok "hook is silent outside a git repo" || bad "hook is silent outside a git repo"
 
 echo
+# `record_reviewed` is the one gate whose applicability depends on the run's OWN outcome:
+# the plan marks it run ("on clean exit") because convergence is unknowable at plan time.
+# A run that did not converge has no completed review to stamp, so the status is `n/a` —
+# and recording `skipped` instead forces `partial` on a run that executed the whole
+# process, and raises the Step 0 alarm about a gate that worked correctly. Five of that
+# alarm's reported misses came from exactly this, none of them real.
+export REVIEW_LOOP_RUNS="$TMP/cond.jsonl"
+CG='{"record_reviewed":{"planned":"run","reason":"on clean exit"}}'
+r=$("$PY" runlog.py plan --tier full --model m --gates "$CG")
+"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 3 --agents 40 >/dev/null 2>&1
+"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
+	--executed '{"record_reviewed":{"status":"n/a","reason":"run hit the agent cap without converging, so there is no completed review to stamp"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$r" | grep -q '"tier_executed": "full"' \
+	&& ok "a non-converged run records n/a for record_reviewed without going partial" \
+	|| bad "a non-converged run records n/a for record_reviewed without going partial"
+# ...and the distinction is load-bearing: `skipped` for the same gate on the same run IS
+# partial, because that claims you declined a gate you could have run.
+export REVIEW_LOOP_RUNS="$TMP/cond2.jsonl"
+r=$("$PY" runlog.py plan --tier full --model m --gates "$CG")
+"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 3 --agents 40 >/dev/null 2>&1
+"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
+	--executed '{"record_reviewed":{"status":"skipped","reason":"chose not to stamp this tip"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$r" | grep -q '"tier_executed": "partial"' \
+	&& ok "and skipped for the same gate still records partial" \
+	|| bad "and skipped for the same gate still records partial"
+# And the alarm stays quiet across three such n/a runs, which is the whole point.
+export REVIEW_LOOP_RUNS="$TMP/cond3.jsonl"
+for i in 1 2 3; do
+	r=$("$PY" runlog.py plan --tier full --model m --gates "$CG")
+	"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
+		--executed '{"record_reviewed":{"status":"n/a","reason":"no completed review to stamp"}}' >/dev/null 2>&1
+done
+[ -z "$("$PY" review-stats.py --alarm)" ] \
+	&& ok "three n/a runs raise no alarm" || bad "three n/a runs raise no alarm"
+
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
 exit "$fails"
