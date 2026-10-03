@@ -1,0 +1,10 @@
+target: skills/review/review-loop/context.sh
+verify: bash skills/review/review-loop/context-sizing.test.sh
+expect: FAIL  an impossible sweep count is treated as never swept
+why:    a sweep only ever REDUCES the entry count, so a recorded post-sweep count above today's live count is not a state -- it is a bad write. Trusting one disarmed the compaction trigger until the file grew past it, which for a stray extra digit is never. One redundant sweep beats a permanently disarmed trigger.
+--- old
+if swept_entries is not None and swept_entries > learn_entries:
+    swept_entries = None
+--- new
+if False:
+    swept_entries = None

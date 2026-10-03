@@ -1,10 +1,9 @@
 target: skills/review/review-loop/context.sh
 verify: bash skills/review/review-loop/context-sizing.test.sh
-expect: FAIL  and not due again until it has grown past the last sweep
-why:    the sweep trigger is a COUNT but the sweep evicts by RELEVANCE, so a file already swept to 36 has nothing new to drop at 40 and re-arming on the bare count spawns a compaction agent on every run for zero evictions. Measured: one sweep went 42 to 36 with zero dead-path and zero stale evictions, and four entries added later in the same run re-armed it immediately. The post-sweep count travels in the learnings file so the cost scales with growth.
+expect: FAIL  one entry short of the regrowth margin is not due
+why:    the sweep trigger is a COUNT but the sweep evicts by RELEVANCE, so a file already swept to 36 has nothing new to drop at 40 and re-arming on the bare count spawns a compaction agent on every run for zero evictions. The one run this was built from went 42 to 36 with zero dead-path and zero stale evictions, and four entries added later in the same run re-armed it immediately; nothing durable records that run, so it is one observation rather than a measurement. The post-sweep count travels in the learnings file so the cost scales with growth.
 --- old
-    "learnings_compaction_due": (
-        learn_entries >= LEARN_COMPACTION_THRESHOLD
-        and (swept_at is None or learn_entries >= swept_at + LEARN_REGROWTH)),
+        and (swept_entries is None
+             or learn_entries >= min(swept_entries + LEARN_REGROWTH, LEARN_CAP - 2))),
 --- new
-    "learnings_compaction_due": learn_entries >= LEARN_COMPACTION_THRESHOLD,
+        and True),

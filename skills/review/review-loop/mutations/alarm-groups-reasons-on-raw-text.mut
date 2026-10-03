@@ -1,0 +1,8 @@
+target: skills/review/review-loop/review-stats.py
+verify: bash skills/review/review-loop/review-stats.test.sh
+expect: FAIL  whitespace variants of one reason group as one reason
+why:    the alarm groups abandonment reasons so one cause repeated reads as one cause repeated. Keying the counter on the RAW field and flattening only at print time made three whitespace-variant copies of one reason print as three separate 1x lines, defeating the grouping outright and able to push a repeated cause below ABANDON_REASONS_SHOWN. The reason is operator-typed free text, so that variance is ordinary.
+--- old
+            abandon_why[_flat(run.get("abandoned_missing") or NO_ABANDON_RECORD)] += 1
+--- new
+            abandon_why[run.get("abandoned_missing") or NO_ABANDON_RECORD] += 1

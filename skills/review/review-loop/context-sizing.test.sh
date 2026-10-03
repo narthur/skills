@@ -223,16 +223,103 @@ due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compact
 	&& ok "and not due again until it has grown past the last sweep" \
 	|| bad "and not due again until it has grown past the last sweep (due=$due)"
 # A reader must be able to tell "not due" from "never swept".
-[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_swept_at"])' <<<"$out")" = "36" ] \
+[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_swept_entries"])' <<<"$out")" = "36" ] \
 	&& ok "and reports the count the last sweep left" \
 	|| bad "and reports the count the last sweep left"
+# A CRLF file, which is the whole reason the marker pattern is loose: the exact-match
+# version read a trailing \r as part of the line, failed, and silently reverted to the
+# bare-count trigger. Nothing in this repo WRITES the marker, so the reader is the only
+# place that can absorb a variant.
+printf -- '- entry 43\r\n' >> "$lf"
+crlf="$r/.git/info/crlf.md"
+{ printf '# Review-loop learnings\r\n\r\n'; for i in $(seq 1 43); do printf -- '- entry %s\r\n' "$i"; done
+  printf -- '<!--  Swept:  36 -->\r\n'; } > "$crlf"
+cp "$crlf" "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_swept_entries"])' <<<"$out")" = "36" ] \
+	&& ok "a CRLF file with odd marker spacing and case is still read" \
+	|| bad "a CRLF file with odd marker spacing and case is still read"
+# One short of the margin, then exactly on it. The old fixture jumped 42 -> 50, so both
+# LEARN_REGROWTH = 7 and a `>` comparison left this suite green.
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 43); do printf -- '- entry %s\n' "$i"; done
+  printf -- '<!-- swept: 36 -->\n'; } > "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "False" ] \
+	&& ok "one entry short of the regrowth margin is not due" \
+	|| bad "one entry short of the regrowth margin is not due (due=$due)"
+printf -- '- entry 44\n' >> "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "True" ] \
+	&& ok "and due on exactly the margin" || bad "and due on exactly the margin (due=$due)"
+# A post-sweep count ABOVE the live count is a bad write, not a state. Trusting it
+# disarmed the trigger until the file grew past it, which for this value is never.
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 44); do printf -- '- entry %s\n' "$i"; done
+  printf -- '<!-- swept: 3600000000 -->\n'; } > "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+swept=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_swept_entries"])' <<<"$out")
+[ "$due" = "True" ] && [ "$swept" = "None" ] \
+	&& ok "an impossible sweep count is treated as never swept, not as a disarmed trigger" \
+	|| bad "an impossible sweep count is treated as never swept (due=$due swept=$swept)"
+# Producer and reader, together. The marker's format had no producer under test at all —
+# only prose telling an LLM what to type — so nothing would have noticed the two drifting
+# apart, which is silent in exactly one direction: the trigger reverts to a bare count.
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 38); do printf -- '- entry %s\n' "$i"; done; } > "$lf"
+python3 "$(dirname "$SCRIPT")/mark-swept.py" "$lf" >/dev/null
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+swept=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_swept_entries"])' <<<"$out")
+[ "$swept" = "38" ] \
+	&& ok "what mark-swept.py writes is what context.sh reads" \
+	|| bad "what mark-swept.py writes is what context.sh reads (got $swept)"
+
 # Grown well past it: due again, so the memory delays the sweep rather than disabling it.
-for i in $(seq 43 50); do printf -- '- entry %s\n' "$i" >> "$lf"; done
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 50); do printf -- '- entry %s\n' "$i"; done
+  printf -- '<!-- swept: 36 -->\n'; } > "$lf"
 out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
 due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
 [ "$due" = "True" ] \
 	&& ok "and due again once it has grown past the margin" \
 	|| bad "and due again once it has grown past the margin (due=$due)"
+
+# --- the follow-up-commit delta. A trivial commit on an already-reviewed branch is a
+# --- question about the FOLLOW-UP; sizing it against the whole branch is what turned that
+# --- into a judgment call someone had to be asked about.
+r=$(newrepo delta)
+printf 'seed\n' > "$r/seed.txt"
+g -C "$r" add -A && g -C "$r" commit -qm seed && g -C "$r" push -q origin main
+# The big commit stays UNPUSHED, so the branch-wide count is large while the follow-up
+# delta is tiny — the exact shape that forced the question by hand.
+python3 -c 'print("\n".join("line %d" % i for i in range(200)))' > "$r/big.txt"
+printf 'x = 1\n' > "$r/app.py"
+g -C "$r" add -A && g -C "$r" commit -qm first
+first=$(g -C "$r" rev-parse HEAD)
+printf 'x = 1\n# a follow-up comment\n' > "$r/app.py"
+g -C "$r" add -A && g -C "$r" commit -qm followup
+
+# No stamp yet: nothing on this branch has been reviewed, so the branch is all there is.
+fakehome="$TMP/home-delta"; mkdir -p "$fakehome/.claude/review-loop"
+out=$(cd "$r" && HOME="$fakehome" "$SCRIPT" 2>/dev/null)
+j() { python3 -c "import json,sys; print(json.load(sys.stdin)[\"$1\"])" <<<"$out"; }
+[ "$(j last_reviewed_sha)" = "None" ] && [ "$(j fast_path_eligible_by_delta)" = "False" ] \
+	&& ok "an unreviewed branch reports no delta base" \
+	|| bad "an unreviewed branch reports no delta base ($(j last_reviewed_sha))"
+
+# Stamped at `first`: the delta is the follow-up commit alone, not the 200-line base.
+printf '%s\n' "$first" > "$fakehome/.claude/review-loop/reviewed-shas"
+out=$(cd "$r" && HOME="$fakehome" "$SCRIPT" 2>/dev/null)
+[ "$(j last_reviewed_sha)" = "$first" ] \
+	&& ok "the newest reviewed ancestor becomes the delta base" \
+	|| bad "the newest reviewed ancestor becomes the delta base ($(j last_reviewed_sha))"
+[ "$(j review_delta_lines)" = "1" ] && [ "$(j fast_path_eligible_by_delta)" = "True" ] \
+	&& ok "and a one-line follow-up is delta-fast-path eligible though the branch is not" \
+	|| bad "and a one-line follow-up is delta-fast-path eligible ($(j review_delta_lines) lines)"
+# The branch-wide verdict must be unchanged — the delta is an ADDITIONAL measure, and
+# conflating the two is how a 200-line branch would have slipped into the fast path.
+[ "$(j fast_path_eligible_by_size)" = "False" ] \
+	&& ok "and the branch-wide verdict still says the branch is too big" \
+	|| bad "and the branch-wide verdict still says the branch is too big"
 
 # --- an indentation-sensitive file whose extension is not the LAST one, or is uppercase,
 # --- or is a make fragment: all previously fell through to -w and scored 0.
@@ -318,7 +405,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=33
+EXPECTED_CHECKS=42
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

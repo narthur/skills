@@ -374,6 +374,16 @@ rida=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 out=$("$PY" runlog.py abandon --run-id "$rida" --missing "consistent with existing code" 2>&1)
 if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent rejected on the abandon path"; else bad "precedent rejected on the abandon path"; fi
 
+# An empty --missing is the silent skip this record exists to prevent, and the --missing
+# help text says so. argparse's required=True only demands the FLAG: `--missing ""` exited
+# 0 and wrote an empty reason, so the claim was unenforced prose.
+out=$("$PY" runlog.py abandon --run-id "$rida" --missing "   " 2>&1)
+if [ $? -ne 0 ] && grep -qi "nothing named" <<<"$out"; then
+	ok "an abandonment with nothing named is rejected"
+else
+	bad "an abandonment with nothing named is rejected"
+fi
+
 # A finish is terminal: abandoning afterwards must not half-overwrite it.
 "$PY" runlog.py finish --run-id "$rida" --outcome clean --tier full \
 	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
@@ -728,7 +738,7 @@ done
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=117
+EXPECTED_CHECKS=118
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

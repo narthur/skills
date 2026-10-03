@@ -86,13 +86,22 @@ def github_reachable():
     # gh works, so the remaining question is whether there is anything to read. One API
     # call, not per-file: a repo with zero PRs cannot have PR comments on any file, and
     # that is the case this check exists to separate from an auth failure.
-    rc, out, _ = run(["gh", "pr", "list", "--state", "all", "--limit", "1",
-                      "--json", "number"], timeout=20)
-    if rc == 0 and out.strip() in ("[]", ""):
+    rc, out, err = run(["gh", "pr", "list", "--state", "all", "--limit", "1",
+                        "--json", "number"], timeout=20)
+    if rc != 0:
+        # Fail OPEN on a failed probe — #10 can discover an empty repo itself — but say
+        # that is what happened. Falling through to the unconditional success line below
+        # made this function do the very thing its docstring diagnoses one screen up:
+        # assert a checked fact (`gh authenticated, github remote present`) identically
+        # whether the probe confirmed PR history or crashed and the check was abandoned.
+        return True, ("gh authenticated, but could not confirm PR history "
+                      f"({(err or '').strip().splitlines()[0] if err and err.strip() else f'exit {rc}'}) "
+                      "— assuming reachable")
+    if out.strip() in ("[]", ""):
         return False, ("gh works, but this repo has no pull requests at all — there are "
                        "no review comments to mine, which is a different skip from an "
                        "auth failure and needs no fix")
-    return True, "gh authenticated, github remote present"
+    return True, "gh authenticated, github remote present, PR history confirmed"
 
 
 def biggest_changed_file(base):

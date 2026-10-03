@@ -1,0 +1,8 @@
+target: skills/review/review-loop/plan.py
+verify: bash skills/review/review-loop/plan.test.sh
+expect: FAIL  a repo with no PRs is skipped for the right reason
+why:    this sent a run record into the store saying gh was unauthenticated when `gh auth status` had succeeded and the real reason was a repo with no PRs. The fixes differ -- authenticate versus nothing to fix -- so naming the wrong cause is worse than naming none.
+--- old
+        return False, ("gh works, but this repo has no pull requests at all — there are "
+--- new
+        return False, ("gh not authenticated — this repo has no pull requests at all, "

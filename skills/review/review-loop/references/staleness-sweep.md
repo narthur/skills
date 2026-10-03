@@ -12,10 +12,13 @@ The learnings file is re-shipped to every review agent on every cycle, so its si
 
 Then it rewrites the file (same two-section structure) and returns a one-line summary: `dropped N (D dead-path, S stale), promoted P, now E entries`. Surface that line in the final report (Step 14).
 
-**Then record what the sweep left behind**, as the last line of the learnings file:
+**Then record what the sweep left behind**, with the command rather than by hand:
 
-```
-<!-- swept: E -->
+```bash
+lf="$(git rev-parse --git-common-dir)/info/review-loop-learnings.md"
+python3 ~/.claude/skills/review-loop/mark-swept.py "$lf"
 ```
 
-where `E` is the final entry count. `context.sh` reads it and will not re-arm the trigger until the file has grown by `LEARN_REGROWTH` (8) entries past that number. Without the marker the trigger is a bare `entries >= 40`, and because the sweep evicts by *relevance* rather than by count, a file of 40 recent, all-distinct entries has nothing to evict and spawns a compaction agent on **every run** for no result. Measured: one sweep went 42 → 36 with zero dead-path and zero stale evictions, and four entries added later in the same run re-armed it immediately. Replace any existing `<!-- swept: -->` line rather than appending a second one — `context.sh` takes the last, but two markers is a record of two different answers to one question. If the sweep can't run (subagent unavailable), fall back to Step 11's age-based cap — don't block the review.
+It counts the surviving entries itself and replaces any existing marker, so the number cannot disagree with the file and two markers cannot coexist. Write the `<!-- swept: E -->` line by hand only if the script is unavailable: `context.sh`'s reader is deliberately forgiving about spacing, case and CRLF, but it is the *only* consumer of a format with no other producer, and an invented variant silently reverts the trigger rather than failing.
+
+`context.sh` reads the marker and will not re-arm the trigger until the file has grown by `LEARN_REGROWTH` (8) entries past that number, capped so the re-arm point stays under the ~50-entry hard cap `learn.py prune` falls back to. Without a marker the trigger is a bare `entries >= 40`, and because the sweep evicts by *relevance* rather than by count, a file of 40 recent, all-distinct entries has nothing to evict and spawns a compaction agent on **every run** for no result. The one run this was built from went 42 → 36 with zero dead-path and zero stale evictions, and four entries added later in the same run re-armed it immediately; nothing durable records that run, so treat it as a single observation rather than a measurement. If the sweep can't run (subagent unavailable), fall back to Step 11's age-based cap — don't block the review.

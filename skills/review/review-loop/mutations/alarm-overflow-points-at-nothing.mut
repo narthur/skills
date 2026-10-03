@@ -1,0 +1,9 @@
+target: skills/review/review-loop/review-stats.py
+verify: bash skills/review/review-loop/review-stats.test.sh
+expect: FAIL  and the report it points at really lists every reason
+why:    the alarm shows the top few reasons and points at the report for the rest. It pointed at `review-stats.py --report`, which argparse rejects, and the report printed no abandonment reasons at all -- a message directing a reader to information that did not exist, written inside the fix for exactly that defect.
+--- old
+    why = collections.Counter(_flat(r.get("abandoned_missing") or NO_ABANDON_RECORD)
+                              for r in lost)
+--- new
+    why = collections.Counter()

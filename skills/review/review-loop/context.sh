@@ -29,11 +29,21 @@ if [ -f "$lf" ]; then
   learnings_entries=$(grep -c '^- ' "$lf" 2>/dev/null) || learnings_entries=0
   # What the file counted the last time a sweep finished. The trigger below is a COUNT,
   # but the sweep evicts by RELEVANCE — so a file of 40 recent, all-distinct entries has
-  # nothing to evict and used to re-spawn a compaction agent on every single run. Measured:
-  # one sweep took 42 to 36 with zero dead-path and zero stale evictions, and four new
-  # entries re-armed it within the same run. Storing the post-sweep count makes the cost
-  # scale with actual growth instead of with the threshold being crossed once.
-  learnings_swept_at=$(sed -n 's/^<!-- swept: \([0-9]\{1,\}\) -->$/\1/p' "$lf" 2>/dev/null | tail -1)
+  # nothing to evict and used to re-spawn a compaction agent on every single run. The one
+  # run this was built from went 42 entries to 36 with zero dead-path and zero stale
+  # evictions, then re-armed within the same run; nothing durable records that run, so
+  # treat it as a single observation, not a measurement. Storing the post-sweep count makes
+  # the cost scale with actual growth instead of with the threshold being crossed once.
+  #
+  # The pattern is DELIBERATELY loose. Nothing in this repo writes the marker — the only
+  # producer is an instruction to an LLM in references/staleness-sweep.md — so an exact
+  # `^<!-- swept: N -->$` match meant a stray `\r` from a CRLF file, a missing space, or a
+  # trailing period silently reverted the trigger to the bare-count behaviour this exists
+  # to remove, with nothing saying so. A reader this forgiving cannot be defeated by
+  # whitespace or case; `tr -d` strips the CR before the match can fail on it.
+  learnings_swept_entries=$(tr -d '\r' < "$lf" 2>/dev/null \
+    | sed -n 's/^[[:space:]]*<!--[[:space:]]*[Ss]wept:[[:space:]]*\([0-9]\{1,\}\).*$/\1/p' \
+    | tail -1)
 fi
 
 today=$(date +%F)
@@ -165,10 +175,37 @@ print("; ".join(out))
   esac
 fi
 
+# The newest ancestor of HEAD already recorded as reviewed, so a follow-up commit after a
+# clean exit is sized against the delta since the last REVIEW rather than against the whole
+# unpushed branch. Measuring the branch is what forced the question by hand: a nine-line
+# follow-up on a reviewed branch measured as the branch and so read as fan-out-sized.
+reviewed_store="$HOME/.claude/review-loop/reviewed-shas"
+last_reviewed=""
+review_delta_lines=0
+if [ -s "$reviewed_store" ]; then
+  # Bounded walk. A branch with no reviewed commit in its last 200 has nothing to find,
+  # and the fallback — size the whole branch — is the conservative direction.
+  while IFS= read -r sha; do
+    [ -n "$sha" ] || continue
+    if grep -qxF "$sha" "$reviewed_store" 2>/dev/null; then last_reviewed="$sha"; break; fi
+  done <<EOF
+$(git rev-list -n 200 HEAD 2>/dev/null || true)
+EOF
+fi
+if [ -n "$last_reviewed" ]; then
+  # RAW, deliberately: no lockfile or generated-file exclusions, so this can only
+  # OVER-count. An over-count makes the delta fast path harder to reach, never easier,
+  # which is the only direction a size gate may err in without re-running the semantic
+  # block over a second range.
+  review_delta_lines=$(git diff --numstat "$last_reviewed..HEAD" 2>/dev/null \
+    | awk '{a+=$1; d+=$2} END {print a+d+0}')
+fi
+
 BASE_BRANCH="$base_branch" LEARNINGS="$learnings" \
 DIFFSTAT="$diffstat" CHANGED_LINES="$changed_lines" TODAY="$today" \
 SEMANTIC_LINES="$semantic_lines" SIZING_EXCLUDED="$sizing_excluded" \
-LEARN_ENTRIES="$learnings_entries" LEARN_SWEPT_AT="${learnings_swept_at:-}" python3 - <<'PY'
+LAST_REVIEWED="$last_reviewed" REVIEW_DELTA_LINES="$review_delta_lines" \
+LEARN_ENTRIES="$learnings_entries" LEARN_SWEPT_ENTRIES="${learnings_swept_entries:-}" python3 - <<'PY'
 import json, os, re, pathlib
 
 def pkg_scripts():
@@ -210,13 +247,22 @@ elif pathlib.Path(".rubocop.yml").exists():
 changed = int(os.environ.get("CHANGED_LINES") or 0)
 semantic = int(os.environ.get("SEMANTIC_LINES") or 0)
 learn_entries = int(os.environ.get("LEARN_ENTRIES") or 0)
+last_reviewed = os.environ.get("LAST_REVIEWED") or ""
+delta = int(os.environ.get("REVIEW_DELTA_LINES") or 0)
 LEARN_COMPACTION_THRESHOLD = 40  # sweep before the ~50-entry cap so it self-heals early
 # Re-sweeping needs real GROWTH since the last sweep, not just being over the threshold.
 # The sweep evicts by relevance, so a file already swept to 36 has nothing new to drop at
 # 37 — and re-running it every run is a compaction agent per run for no evictions.
 LEARN_REGROWTH = 8
-swept_at = os.environ.get("LEARN_SWEPT_AT") or ""
-swept_at = int(swept_at) if swept_at.isdigit() else None
+LEARN_CAP = 50  # learn.py prune's default: past this the blunt age-based eviction takes over
+swept_entries = os.environ.get("LEARN_SWEPT_ENTRIES") or ""
+swept_entries = int(swept_entries) if swept_entries.isdigit() else None
+# A sweep only ever REDUCES the count, so a recorded post-sweep count above today's live
+# count is not a state — it is a bad write (a stray digit, a hand-edit). Trusting one
+# disabled the trigger until the file passed it, which for `3600000000` is never. Treat it
+# as never-swept: the cost of one redundant sweep beats a permanently disarmed one.
+if swept_entries is not None and swept_entries > learn_entries:
+    swept_entries = None
 print(json.dumps({
     "base_branch": os.environ["BASE_BRANCH"] or None,
     "test_cmd": test_cmd,
@@ -226,9 +272,15 @@ print(json.dumps({
     "learnings_entries": learn_entries,
     "learnings_compaction_due": (
         learn_entries >= LEARN_COMPACTION_THRESHOLD
-        and (swept_at is None or learn_entries >= swept_at + LEARN_REGROWTH)),
-    # So a reader can tell "not due" from "never swept".
-    "learnings_swept_at": swept_at,
+        # min() against the cap so the regrowth margin cannot eat the headroom it sits in:
+        # a low-yield sweep (36 + 8 = 44) already lands near LEARN_CAP, and a sweep that
+        # evicts less would push the re-arm point past it — handing the job to the blunt
+        # age-based `prune` fallback, the opposite of sweeping early.
+        and (swept_entries is None
+             or learn_entries >= min(swept_entries + LEARN_REGROWTH, LEARN_CAP - 2))),
+    # So a reader can tell "not due" from "never swept". Named `_entries`, not `_at`:
+    # `_at` is an ISO timestamp everywhere else in this record and this is a count.
+    "learnings_swept_entries": swept_entries,
     "today": os.environ.get("TODAY"),
     "diff_stat": os.environ.get("DIFFSTAT") or None,
     "changed_lines": changed,
@@ -242,5 +294,13 @@ print(json.dumps({
     # semantic made a PURE reformatting ineligible — semantic 0 fails `0 <` — which is
     # exactly the change this sizing exists to route to the fast path.
     "fast_path_eligible_by_size": 0 < changed and semantic < 30,
+    # The last sha this loop reviewed, and the raw size of everything since. Null means
+    # nothing on this branch has been reviewed, so the branch-wide numbers are the only
+    # ones there are. Step 3b's re-entry path keys on the delta: a follow-up commit on an
+    # already-reviewed branch is a trivial-diff question about the FOLLOW-UP, and sizing
+    # it against the branch is what turned that into a judgment call to ask about.
+    "last_reviewed_sha": last_reviewed or None,
+    "review_delta_lines": delta,
+    "fast_path_eligible_by_delta": bool(last_reviewed) and 0 < delta < 30,
 }, indent=2))
 PY

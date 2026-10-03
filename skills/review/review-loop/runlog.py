@@ -702,6 +702,13 @@ def cmd_abandon(a):
     existing = load(limit=None).get(a.run_id) or {}
     if existing.get("outcome"):
         sys.exit(f"runlog: {a.run_id} already finished as {existing['outcome']!r} — not overwriting")
+    # argparse's required=True only demands the flag, not content: `--missing ""` wrote an
+    # empty reason and exited 0, which is precisely the silent skip the --missing help text
+    # says this record prevents. Enforce the claim rather than soften it; cmd_plan and
+    # cmd_finish already hold their own reason fields to this bar.
+    if not (a.missing or "").strip():
+        sys.exit("runlog: --missing needs the gates that did not run — an abandonment with "
+                 "nothing named is the silent skip this record exists to prevent")
     append({
         "run_id": a.run_id,
         "phase": "finish",

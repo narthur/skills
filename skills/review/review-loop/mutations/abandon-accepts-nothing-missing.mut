@@ -1,0 +1,8 @@
+target: skills/review/review-loop/runlog.py
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  an abandonment with nothing named is rejected
+why:    argparse's required=True demands the FLAG, not content, so `--missing ""` exited 0 and wrote an empty reason -- precisely the silent skip the --missing help text claims this record prevents. An uninformative abandonment is indistinguishable from an unexplained one to every reader downstream.
+--- old
+    if not (a.missing or "").strip():
+--- new
+    if False:

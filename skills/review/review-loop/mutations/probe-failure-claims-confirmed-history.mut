@@ -1,0 +1,8 @@
+target: skills/review/review-loop/plan.py
+verify: bash skills/review/review-loop/plan.test.sh
+expect: FAIL  a failed probe does not claim it confirmed anything
+why:    github_reachable() exists to report WHICH reason Agent #10 is skipped for, and a gate reason is read later as evidence. Falling through a failed `gh pr list` to the unconditional success line asserted confirmed PR history identically whether the probe confirmed it or crashed -- the same defect the function's own docstring diagnoses one screen above.
+--- old
+        return True, ("gh authenticated, but could not confirm PR history "
+--- new
+        return True, ("gh authenticated, github remote present, PR history confirmed "

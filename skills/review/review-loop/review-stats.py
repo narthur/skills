@@ -121,10 +121,24 @@ ABANDON_REASONS_SHOWN = 3
 REASON_CLIP = 96
 
 
+def _flat(text):
+    """One line. This is the GROUPING key, not just a display step: keying the counter on
+    the raw text and flattening only at print time made three whitespace-variant copies of
+    one reason print as three separate `1x` lines — the exact failure the grouping was
+    added to fix, and able to push a repeated cause below ABANDON_REASONS_SHOWN. A
+    `--missing` reason is operator-typed free text, so that variance is ordinary."""
+    return " ".join(str(text).split())
+
+
 def _clip(text):
-    """One line, bounded. A --missing reason is free text and has run to several lines."""
-    flat = " ".join(str(text).split())
-    return flat if len(flat) <= REASON_CLIP else flat[:REASON_CLIP - 1] + "\u2026"
+    """Bounded for display, truncated in the MIDDLE. Two different reasons that share a
+    long prefix — likely here, since these name gates — clipped from the end alone printed
+    as identical lines with separate counts, which reads as the counter being broken."""
+    flat = _flat(text)
+    if len(flat) <= REASON_CLIP:
+        return flat
+    head = (REASON_CLIP - 1) * 2 // 3
+    return flat[:head] + "\u2026" + flat[head + 1 - REASON_CLIP:]
 
 
 def _naming(seen):
@@ -170,7 +184,7 @@ def cmd_alarm(runs):
             # signal. The record already carries `abandoned_missing` for every explicit
             # abandonment — not printing it was the whole defect. An inferred one has no
             # reason to print, and saying so IS the actionable fact about it.
-            abandon_why[run.get("abandoned_missing") or NO_ABANDON_RECORD] += 1
+            abandon_why[_flat(run.get("abandoned_missing") or NO_ABANDON_RECORD)] += 1
             continue
         for g, st in dropped_gates(run).items():
             # str(): a non-string status is not rejected at write time either, and
@@ -213,7 +227,11 @@ def cmd_alarm(runs):
                 print(f"      {k}x {_clip(why)}")
             rest = len(abandon_why) - ABANDON_REASONS_SHOWN
             if rest > 0:
-                print(f"      ...and {rest} other reason(s) — `review-stats.py --report` has them all")
+                # The pointer names the bare command because there is no `--report`
+                # flag (argparse exits 2 on one), and the full tally had to be ADDED to
+                # cmd_report — it printed no reasons at all, so the old line directed a
+                # reader to information that did not exist either way.
+                print(f"      ...and {rest} other reason(s) — `review-stats.py` has them all")
     print("  Repeat count beats calendar: fix the gate or change the plan, don't log it again.")
     return 0
 
@@ -315,6 +333,15 @@ def cmd_report(runs, repo):
         print("\nescalations above the computed floor (thresholds may be too loose):")
         for g, n in esc.most_common():
             print(f"  {n:3d}  {g}")
+
+    # Every abandonment reason, untruncated and ungrouped-by-cutoff. The alarm shows the
+    # top ABANDON_REASONS_SHOWN and points here for the rest; before this, here had none.
+    why = collections.Counter(_flat(r.get("abandoned_missing") or NO_ABANDON_RECORD)
+                              for r in lost)
+    if why:
+        print("\nwhy runs were abandoned:")
+        for reason, n in why.most_common():
+            print(f"  {n:3d}  {reason}")
 
     asks = sum(r.get("unresolved_asks") or 0 for r in runs)
     if asks:
