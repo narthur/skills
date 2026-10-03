@@ -95,8 +95,17 @@ def dropped_gates(run):
 # Derived from the docs, not from memory: references/report-format.md:64 enumerates the
 # measurement gate's outcomes as passed / waived / deferred / skipped / blocked, and
 # references/measurement-gate.md:65 says a waiver PASSES the gate. `blocked` is
-# deliberately absent — references/evidence-gate.md treats a blocked gate as a real
-# problem, so it belongs in the loud bucket.
+# deliberately absent, and the citation for that is references/finish.md's "When NOT to
+# auto-push", which contrasts the two directly — "The Step 13 evidence gate is blocked or
+# hit its restart cap… (A *waived* gate is not blocked — that one pushes.)" So the
+# asymmetry is the docs', not this code's. (An earlier version of this comment cited
+# evidence-gate.md, which never uses the word `blocked` at all.)
+#
+# `passed` appears in report-format.md:64's PROSE for a gate line but is in neither
+# GATE_OK nor this list, so it would read as a failure. Deferred rather than added: the
+# `--executed` template SKILL.md actually gives is the narrower done|skipped|failed|n/a,
+# where a passing gate has an obvious slot (`done`), and no run has ever written `passed`
+# as a status. See review-loop-deferred.md.
 #
 # Missing `waived` was the THIRD time this one decision went wrong: enumerate the
 # deliberate words and a failure spelling softens; enumerate the failures and a deliberate
