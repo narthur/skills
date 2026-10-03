@@ -4,6 +4,20 @@ expect: an abandoned run is counted again against each of its gates
 why:    an abandoned run has every planned gate unreported by construction, so counting it per gate as well turns one event into nine gate failures — which is how three gates crossed the alarm threshold with no real miss between them
 --- old
             dropped["(run abandoned)"] += 1
+            # Keep WHY. The count alone is not actionable and reads as broken: five
+            # abandonments with no reasons shown sent one reader hunting the store by
+            # hand, concluding the counter was wrong, and nearly softening a correct
+            # signal. The record already carries `abandoned_missing` for every explicit
+            # abandonment — not printing it was the whole defect. An inferred one has no
+            # reason to print, and saying so IS the actionable fact about it.
+            abandon_why[run.get("abandoned_missing") or NO_ABANDON_RECORD] += 1
             continue
 --- new
             dropped["(run abandoned)"] += 1
+            # Keep WHY. The count alone is not actionable and reads as broken: five
+            # abandonments with no reasons shown sent one reader hunting the store by
+            # hand, concluding the counter was wrong, and nearly softening a correct
+            # signal. The record already carries `abandoned_missing` for every explicit
+            # abandonment — not printing it was the whole defect. An inferred one has no
+            # reason to print, and saying so IS the actionable fact about it.
+            abandon_why[run.get("abandoned_missing") or NO_ABANDON_RECORD] += 1
