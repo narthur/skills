@@ -27,6 +27,13 @@ if [ -f "$lf" ]; then
   # one the compaction sweep emptied) crashed context.sh and truncated its own output to
   # 0 bytes, because Step 1 redirects into review-loop-context.json.
   learnings_entries=$(grep -c '^- ' "$lf" 2>/dev/null) || learnings_entries=0
+  # What the file counted the last time a sweep finished. The trigger below is a COUNT,
+  # but the sweep evicts by RELEVANCE — so a file of 40 recent, all-distinct entries has
+  # nothing to evict and used to re-spawn a compaction agent on every single run. Measured:
+  # one sweep took 42 to 36 with zero dead-path and zero stale evictions, and four new
+  # entries re-armed it within the same run. Storing the post-sweep count makes the cost
+  # scale with actual growth instead of with the threshold being crossed once.
+  learnings_swept_at=$(sed -n 's/^<!-- swept: \([0-9]\{1,\}\) -->$/\1/p' "$lf" 2>/dev/null | tail -1)
 fi
 
 today=$(date +%F)
@@ -161,7 +168,7 @@ fi
 BASE_BRANCH="$base_branch" LEARNINGS="$learnings" \
 DIFFSTAT="$diffstat" CHANGED_LINES="$changed_lines" TODAY="$today" \
 SEMANTIC_LINES="$semantic_lines" SIZING_EXCLUDED="$sizing_excluded" \
-LEARN_ENTRIES="$learnings_entries" python3 - <<'PY'
+LEARN_ENTRIES="$learnings_entries" LEARN_SWEPT_AT="${learnings_swept_at:-}" python3 - <<'PY'
 import json, os, re, pathlib
 
 def pkg_scripts():
@@ -204,6 +211,12 @@ changed = int(os.environ.get("CHANGED_LINES") or 0)
 semantic = int(os.environ.get("SEMANTIC_LINES") or 0)
 learn_entries = int(os.environ.get("LEARN_ENTRIES") or 0)
 LEARN_COMPACTION_THRESHOLD = 40  # sweep before the ~50-entry cap so it self-heals early
+# Re-sweeping needs real GROWTH since the last sweep, not just being over the threshold.
+# The sweep evicts by relevance, so a file already swept to 36 has nothing new to drop at
+# 37 — and re-running it every run is a compaction agent per run for no evictions.
+LEARN_REGROWTH = 8
+swept_at = os.environ.get("LEARN_SWEPT_AT") or ""
+swept_at = int(swept_at) if swept_at.isdigit() else None
 print(json.dumps({
     "base_branch": os.environ["BASE_BRANCH"] or None,
     "test_cmd": test_cmd,
@@ -211,7 +224,11 @@ print(json.dumps({
     "lint_fix": lint_fix,
     "learnings": os.environ.get("LEARNINGS") or None,
     "learnings_entries": learn_entries,
-    "learnings_compaction_due": learn_entries >= LEARN_COMPACTION_THRESHOLD,
+    "learnings_compaction_due": (
+        learn_entries >= LEARN_COMPACTION_THRESHOLD
+        and (swept_at is None or learn_entries >= swept_at + LEARN_REGROWTH)),
+    # So a reader can tell "not due" from "never swept".
+    "learnings_swept_at": swept_at,
     "today": os.environ.get("TODAY"),
     "diff_stat": os.environ.get("DIFFSTAT") or None,
     "changed_lines": changed,

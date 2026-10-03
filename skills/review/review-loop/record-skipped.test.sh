@@ -8,8 +8,9 @@ cd "$(dirname "$0")" || exit 1
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/record-skipped-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 fails=0
-ok() { echo "  ok  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+checks=0
+ok() { echo "  ok  $1"; checks=$((checks + 1)); }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 SCRIPT="$PWD/record-skipped.sh"
 repo="$TMP/repo"; mkdir -p "$repo"
@@ -50,5 +51,18 @@ run "" >/dev/null 2>&1
 [ $? -ne 0 ] && ok "an empty reason is refused" || bad "an empty reason is refused"
 
 echo
-[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works.
+EXPECTED_CHECKS=9
+if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
+	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+	fails=$((fails + 1))
+fi
+[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
 exit "$fails"

@@ -10,4 +10,12 @@ The learnings file is re-shipped to every review agent on every cycle, so its si
 2. **Stale one-off eviction** — drop non-PATTERN entries whose date is more than **90 days** before `today`. A one-off that hasn't been re-confirmed in a quarter (active entries get their date bumped when they actually match — see Step 11) has aged out of relevance. PATTERN entries are exempt; they're the durable rules that justify the file's existence.
 3. **Dedup + promote** — apply Step 11's dedup and "promote 3+ near-duplicates into one PATTERN" rules across the whole file, not just against the newest entry.
 
-Then it rewrites the file (same two-section structure) and returns a one-line summary: `dropped N (D dead-path, S stale), promoted P, now E entries`. Surface that line in the final report (Step 14). If the sweep can't run (subagent unavailable), fall back to Step 11's age-based cap — don't block the review.
+Then it rewrites the file (same two-section structure) and returns a one-line summary: `dropped N (D dead-path, S stale), promoted P, now E entries`. Surface that line in the final report (Step 14).
+
+**Then record what the sweep left behind**, as the last line of the learnings file:
+
+```
+<!-- swept: E -->
+```
+
+where `E` is the final entry count. `context.sh` reads it and will not re-arm the trigger until the file has grown by `LEARN_REGROWTH` (8) entries past that number. Without the marker the trigger is a bare `entries >= 40`, and because the sweep evicts by *relevance* rather than by count, a file of 40 recent, all-distinct entries has nothing to evict and spawns a compaction agent on **every run** for no result. Measured: one sweep went 42 → 36 with zero dead-path and zero stale evictions, and four entries added later in the same run re-armed it immediately. Replace any existing `<!-- swept: -->` line rather than appending a second one — `context.sh` takes the last, but two markers is a record of two different answers to one question. If the sweep can't run (subagent unavailable), fall back to Step 11's age-based cap — don't block the review.

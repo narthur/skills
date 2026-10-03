@@ -7,8 +7,9 @@
 set -uo pipefail
 SCRIPT="$(cd "$(dirname "$0")" && pwd)/context.sh"
 fails=0
-ok() { echo "  ok  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+checks=0
+ok() { echo "  ok  $1"; checks=$((checks + 1)); }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/ctx-sizing.XXXXXX") || { echo "mktemp failed"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
@@ -197,6 +198,42 @@ out=$(cd "$r" && "$SCRIPT" 2>/dev/null); rc=$?
 [ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_entries"])' <<<"$out")" = "0" ] \
 	&& ok "and counts zero entries" || bad "and counts zero entries"
 
+# --- the sweep trigger needs GROWTH since the last sweep, not just being over the
+# --- threshold. The sweep evicts by RELEVANCE, so a file already swept to 36 has nothing
+# --- new to drop at 40, and re-arming on the bare count spawned a compaction agent on
+# --- every run for zero evictions. The post-sweep count travels in the file itself.
+r=$(newrepo sweepmark)
+printf 'const a = 1;\n' > "$r/a.js"
+g -C "$r" add -A && g -C "$r" commit -qm add && g -C "$r" push -q origin main
+printf 'const a = 2;\n' > "$r/a.js"
+g -C "$r" add -A && g -C "$r" commit -qm edit
+mkdir -p "$r/.git/info"
+lf="$r/.git/info/review-loop-learnings.md"
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 42); do printf -- '- entry %s\n' "$i"; done; } > "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "True" ] \
+	&& ok "42 entries with no sweep marker is due" || bad "42 entries with no sweep marker is due"
+# Swept to 36 a moment ago: 42 is over the threshold but only 6 past the sweep, under the
+# 8-entry regrowth margin, so it must NOT re-arm.
+printf -- '<!-- swept: 36 -->\n' >> "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "False" ] \
+	&& ok "and not due again until it has grown past the last sweep" \
+	|| bad "and not due again until it has grown past the last sweep (due=$due)"
+# A reader must be able to tell "not due" from "never swept".
+[ "$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_swept_at"])' <<<"$out")" = "36" ] \
+	&& ok "and reports the count the last sweep left" \
+	|| bad "and reports the count the last sweep left"
+# Grown well past it: due again, so the memory delays the sweep rather than disabling it.
+for i in $(seq 43 50); do printf -- '- entry %s\n' "$i" >> "$lf"; done
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "True" ] \
+	&& ok "and due again once it has grown past the margin" \
+	|| bad "and due again once it has grown past the margin (due=$due)"
+
 # --- an indentation-sensitive file whose extension is not the LAST one, or is uppercase,
 # --- or is a make fragment: all previously fell through to -w and scored 0.
 # One repo per file so a failure names the rule that broke: the suffix walk (.yml.j2), the
@@ -273,5 +310,18 @@ else
 fi
 
 echo
-[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works.
+EXPECTED_CHECKS=33
+if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
+	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+	fails=$((fails + 1))
+fi
+[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
 exit "$fails"

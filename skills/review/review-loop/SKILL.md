@@ -64,7 +64,9 @@ Four booleans, because they are the only inputs a script can't measure — and b
 - `--runtime-change` — does runtime behavior change? Gates Steps 13 and 13.5.
 - `--attacker-reachable` — is any changed path attacker-reachable?
 
-It prints the plan and writes the **planned** half of the run record, then prints the `run_id`. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned.
+It prints the plan and writes the **planned** half of the run record, then prints the `run_id` on the last line. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned. Note the order: the JSON first, the id last, so `sed '$d'` gets you parseable JSON.
+
+**Call this ONCE per run.** Every invocation without `--dry-run` writes another planned run record, so re-running it to re-read or re-parse its own output forges runs that then have to be abandoned by hand — and each one lands in the Step 0 alarm's own denominator. If you need the plan again, use `--dry-run`, which computes and prints it and writes nothing.
 
 **The plan's `tier_floor` is a floor.** You may escalate above it (record the escalation at Step 14); you may never descend. Descending is what makes the skill impossible to iterate on, because no two runs then execute the same process. You do not name a tier — the script does.
 

@@ -863,7 +863,16 @@ def main():
 
     sa = sub.add_parser("abandon")
     sa.add_argument("--run-id", required=True)
-    sa.add_argument("--missing", required=True)
+    # Not `--reason`, which is what every sibling subcommand calls its free-text field and
+    # what a caller therefore reaches for first. This one wants the GATES, so it is named
+    # for them — but the distinction only helps if the flag says so, and a bare
+    # "the following arguments are required: --missing" does not.
+    sa.add_argument("--missing", required=True, metavar="GATES",
+                    help="which planned gates you are NOT running, and why — e.g. "
+                         "'agent_7, agent_8: fast path approved by the user'. Named "
+                         "--missing rather than --reason because the gates are the "
+                         "actionable part; an abandonment with no gates named is the "
+                         "silent skip this whole record exists to prevent")
     sa.set_defaults(func=cmd_abandon)
 
     sc = sub.add_parser("check")

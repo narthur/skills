@@ -1,0 +1,8 @@
+target: skills/review/review-loop/review-stats.py
+verify: bash skills/review/review-loop/review-stats.test.sh
+expect: FAIL  a repeated abandonment reason is grouped and counted
+why:    the alarm counted abandonments without printing WHY, and the record already carried the reason. The count alone is not actionable and reads as broken: five abandonments with no reasons shown sent a reader hunting the store by hand, concluding the counter was wrong, and nearly softening a correct signal. An uninformative true report gets misread as a false one.
+--- old
+        if g == "(run abandoned)":
+--- new
+        if False:

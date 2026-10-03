@@ -67,6 +67,15 @@ def pr_exists():
 
 
 def github_reachable():
+    """Can Agent #10 do its job here, and if not, WHICH reason.
+
+    The skill lists two separate skip conditions for #10 — gh cannot reach the API, and
+    the repo has no PR history to mine — and this used to report the first for both. That
+    sent a run record into the store saying gh was unauthenticated when `gh auth status`
+    succeeded; the real reason was a repo with no PRs at all. A gate reason is read as
+    evidence later, so naming the wrong cause is worse than naming none: the fixes differ
+    (authenticate vs. nothing to fix).
+    """
     rc, out, _ = run(["git", "remote", "-v"])
     if rc != 0 or "github.com" not in out:
         return False, "no github remote"
@@ -74,6 +83,15 @@ def github_reachable():
     if rc != 0:
         # Seen repeatedly: the sandbox proxy denies api.github.com while git push works.
         return False, "gh not authenticated here (retry unsandboxed before accepting this)"
+    # gh works, so the remaining question is whether there is anything to read. One API
+    # call, not per-file: a repo with zero PRs cannot have PR comments on any file, and
+    # that is the case this check exists to separate from an auth failure.
+    rc, out, _ = run(["gh", "pr", "list", "--state", "all", "--limit", "1",
+                      "--json", "number"], timeout=20)
+    if rc == 0 and out.strip() in ("[]", ""):
+        return False, ("gh works, but this repo has no pull requests at all — there are "
+                       "no review comments to mine, which is a different skip from an "
+                       "auth failure and needs no fix")
     return True, "gh authenticated, github remote present"
 
 

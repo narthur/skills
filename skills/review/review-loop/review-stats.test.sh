@@ -8,8 +8,9 @@ set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 PY=$(command -v python3.14 || command -v python3)
 fails=0
-ok() { echo "  ok  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+checks=0
+ok() { echo "  ok  $1"; checks=$((checks + 1)); }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/review-stats-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
@@ -155,6 +156,33 @@ done
 out=$(alarm aband)
 grep -q "(run abandoned) did not complete 3x" <<<"$out" \
 	&& ok "repeated abandonment raises" || bad "repeated abandonment raises"
+
+# ...and it says WHY, grouped. The count alone is not actionable and reads as broken: five
+# abandonments with no reasons shown sent a reader hunting the store by hand, concluding
+# the counter was wrong, and nearly softening a correct signal. The reasons are already in
+# the record; not printing them was the whole defect.
+for i in 1 2 3; do
+	arow awhy "{\"run_id\":\"w$i\",\"phase\":\"plan\",\"planned_at\":\"2026-03-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+	arow awhy "{\"run_id\":\"w$i\",\"phase\":\"finish\",\"outcome\":\"abandoned\",\"abandoned_missing\":\"plan.py re-invoked to re-read its own plan\"}"
+done
+# A fourth with a DIFFERENT reason, so grouping is visible as grouping.
+arow awhy "{\"run_id\":\"w4\",\"phase\":\"plan\",\"planned_at\":\"2026-03-04T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+arow awhy "{\"run_id\":\"w4\",\"phase\":\"finish\",\"outcome\":\"abandoned\",\"abandoned_missing\":\"agent_7: fast path approved\"}"
+# And a fifth nobody recorded at all — the one shape with no reason to print, where
+# saying so IS the actionable fact.
+arow awhy "{\"run_id\":\"w5\",\"phase\":\"plan\",\"planned_at\":\"2026-03-05T00:00:00\",\"session_id\":\"someone-else\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+out=$(alarm awhy)
+grep -q "3x plan.py re-invoked to re-read its own plan" <<<"$out" \
+	&& ok "a repeated abandonment reason is grouped and counted" \
+	|| bad "a repeated abandonment reason is grouped and counted"
+grep -q "1x agent_7: fast path approved" <<<"$out" \
+	&& ok "a distinct abandonment reason is listed separately" \
+	|| bad "a distinct abandonment reason is listed separately"
+# The inferred one must not borrow another run's reason, which is what a plain
+# `.get(reason)` over a shared counter would do.
+grep -q "nothing said why" <<<"$out" \
+	&& ok "an abandonment with no record says so rather than borrowing a reason" \
+	|| bad "an abandonment with no record says so rather than borrowing a reason"
 [ -n "$out" ] && ! grep -qE "record_reviewed|learnings_capture|upstream_drift_check" <<<"$out" \
 	&& ok "an abandoned run is not counted again against each of its gates" \
 	|| bad "an abandoned run is counted again against each of its gates"
@@ -315,5 +343,18 @@ done
 grep -q "evidence_gate did not complete (blocked) 3x" <<<"$(alarm blocked)" \
 	&& ok "a blocked gate is still loud" || bad "a blocked gate is still loud"
 
-[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works.
+EXPECTED_CHECKS=39
+if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
+	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+	fails=$((fails + 1))
+fi
+[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
 exit "$fails"

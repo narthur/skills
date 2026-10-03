@@ -116,6 +116,17 @@ def dropped_gates(run):
 DECLINED_STATES = ("skipped", "pending", "deferred", "waived")
 
 
+NO_ABANDON_RECORD = "no abandon record — the run stopped and nothing said why"
+ABANDON_REASONS_SHOWN = 3
+REASON_CLIP = 96
+
+
+def _clip(text):
+    """One line, bounded. A --missing reason is free text and has run to several lines."""
+    flat = " ".join(str(text).split())
+    return flat if len(flat) <= REASON_CLIP else flat[:REASON_CLIP - 1] + "\u2026"
+
+
 def _naming(seen):
     """The statuses behind a count, for the message — `unreported` adds nothing to read."""
     named = sorted(x for x in seen if x != "unreported")
@@ -127,6 +138,7 @@ def cmd_alarm(runs):
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
     dropped = collections.Counter()
     declined = collections.Counter()
+    abandon_why = collections.Counter()
     drop_why = collections.defaultdict(set)
     decline_why = collections.defaultdict(set)
     for run in recent:
@@ -136,7 +148,29 @@ def cmd_alarm(runs):
             # abandonment into nine gate failures — which is how three gates crossed the
             # threshold with no real miss between them. The abandonment is the actionable
             # signal and already has its own counter; `report` still shows per-gate detail.
+            #
+            # It was once argued that an EXPLICIT abandon (someone ran `runlog.py abandon`
+            # and named what was missing) is a deliberate declaration and belongs in the
+            # declined bucket, unlike an inferred one. That is wrong, and the test beside
+            # this went red when it was tried. Three explicit abandonments are three
+            # reviews that did not happen, which is as actionable as a signal gets —
+            # declaring it honestly makes the record truthful, not the outcome acceptable.
+            #
+            # The case that motivated the change was noise of a different origin: three
+            # phantom runs from re-invoking plan.py to re-read its own plan, each then
+            # abandoned by hand. Nothing in the record distinguishes those from a review
+            # abandoned before its first cycle, because they have the same shape. The fix
+            # belonged at the source — plan.py already has `--dry-run`, now documented in
+            # Step 0b — not here. Softening this counter would have suppressed a real
+            # signal to hide a self-inflicted one.
             dropped["(run abandoned)"] += 1
+            # Keep WHY. The count alone is not actionable and reads as broken: five
+            # abandonments with no reasons shown sent one reader hunting the store by
+            # hand, concluding the counter was wrong, and nearly softening a correct
+            # signal. The record already carries `abandoned_missing` for every explicit
+            # abandonment — not printing it was the whole defect. An inferred one has no
+            # reason to print, and saying so IS the actionable fact about it.
+            abandon_why[run.get("abandoned_missing") or NO_ABANDON_RECORD] += 1
             continue
         for g, st in dropped_gates(run).items():
             # str(): a non-string status is not rejected at write time either, and
@@ -172,6 +206,14 @@ def cmd_alarm(runs):
     print(f"review-loop alarm — over the last {len(recent)} runs:")
     for n, g, what in hits:
         print(f"  {g} {what} {n}x" if "varying ways" not in what else f"  {g} {what}")
+        if g == "(run abandoned)":
+            # Grouped, commonest first, so one cause repeated is visible as one cause
+            # repeated rather than as five separate failures.
+            for why, k in abandon_why.most_common(ABANDON_REASONS_SHOWN):
+                print(f"      {k}x {_clip(why)}")
+            rest = len(abandon_why) - ABANDON_REASONS_SHOWN
+            if rest > 0:
+                print(f"      ...and {rest} other reason(s) — `review-stats.py --report` has them all")
     print("  Repeat count beats calendar: fix the gate or change the plan, don't log it again.")
     return 0
 
