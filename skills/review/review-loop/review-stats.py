@@ -92,7 +92,19 @@ def dropped_gates(run):
 # Not fixed by widening runlog.GATE_OK, which is the right place for this distinction to
 # NOT exist: derive_tier reads it to decide `partial`, and a run that did not complete a
 # planned gate genuinely is partial. Widening it there would launder partial into full.
-DECLINED_STATES = ("skipped", "pending", "deferred")
+# Derived from the docs, not from memory: references/report-format.md:64 enumerates the
+# measurement gate's outcomes as passed / waived / deferred / skipped / blocked, and
+# references/measurement-gate.md:65 says a waiver PASSES the gate. `blocked` is
+# deliberately absent — references/evidence-gate.md treats a blocked gate as a real
+# problem, so it belongs in the loud bucket.
+#
+# Missing `waived` was the THIRD time this one decision went wrong: enumerate the
+# deliberate words and a failure spelling softens; enumerate the failures and a deliberate
+# one shouts; enumerate the deliberate words from memory and you miss one the prose
+# already documents. The loud default is what keeps the third kind survivable — an
+# omission here over-reports rather than hides, and the message names the status so the
+# omission is visible rather than silent.
+DECLINED_STATES = ("skipped", "pending", "deferred", "waived")
 
 
 def _naming(seen):

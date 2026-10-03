@@ -293,5 +293,27 @@ grep -q "g did not complete 3x" <<<"$out" && grep -q "g was declined with a reas
 	&& ok "and does not also print the combined line" \
 	|| bad "and does not also print the combined line"
 
+# `waived` is documented as a real outcome — references/measurement-gate.md:65, "A waiver
+# passes the gate" — and was missing from the allowlist, so a waived measurement gate read
+# as a failure to complete. Third occurrence of the same decision going wrong, this time
+# as an omission rather than a wrong side.
+for i in 1 2 3; do
+	arow waived "{\"run_id\":\"w$i\",\"phase\":\"plan\",\"planned_at\":\"2026-10-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"measurement_gate\":{\"planned\":\"run\"}}}"
+	arow waived "{\"run_id\":\"w$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"measurement_gate\":{\"status\":\"waived\",\"reason\":\"repo cannot measure this\"}}}"
+done
+out=$(alarm waived)
+grep -q "measurement_gate was declined with a reason (waived) 3x" <<<"$out" \
+	&& ok "a waived gate is declined, not reported as a failure" \
+	|| bad "a waived gate is declined, not reported as a failure (got: $out)"
+
+# And `blocked` stays loud: references/evidence-gate.md treats a blocked gate as a real
+# problem, so the asymmetry with `waived` is deliberate and needs pinning.
+for i in 1 2 3; do
+	arow blocked "{\"run_id\":\"bl$i\",\"phase\":\"plan\",\"planned_at\":\"2026-11-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"evidence_gate\":{\"planned\":\"run\"}}}"
+	arow blocked "{\"run_id\":\"bl$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"evidence_gate\":{\"status\":\"blocked\",\"reason\":\"gap\"}}}"
+done
+grep -q "evidence_gate did not complete (blocked) 3x" <<<"$(alarm blocked)" \
+	&& ok "a blocked gate is still loud" || bad "a blocked gate is still loud"
+
 [ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
 exit "$fails"

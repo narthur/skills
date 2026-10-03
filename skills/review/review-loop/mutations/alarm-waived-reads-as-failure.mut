@@ -1,0 +1,8 @@
+target: skills/review/review-loop/review-stats.py
+verify: cd skills/review/review-loop && ./review-stats.test.sh
+expect: a waived gate is declined, not reported as a failure
+why:    a waiver passes the gate (references/measurement-gate.md:65), so reporting it as a failure to complete is the third occurrence of this one decision going wrong — not a wrong side this time, but a word the prose already documents left off the allowlist
+--- old
+DECLINED_STATES = ("skipped", "pending", "deferred", "waived")
+--- new
+DECLINED_STATES = ("skipped", "pending", "deferred")
