@@ -283,6 +283,9 @@ BANNED_REASON = (
     "precedent", "already exists in the repo", "matches an existing pattern",
     "matches existing pattern", "same pattern as", "pattern copy", "pattern-copy",
     "copied from existing", "consistent with existing code", "follows the existing pattern",
+    # Caught by its own new width-reason test: the list had "matches an existing pattern"
+    # and "follows the existing pattern" but not this phrasing, so it was accepted.
+    "consistent with existing pattern",
     "established pattern in this repo",
     "how the rest of the codebase",
     "how the rest of this codebase",
@@ -324,7 +327,11 @@ def reasons_in(rec):
                        # field licensing reduced review that no check ever read, so it was
                        # also the one place a precedent argument could still be written.
                        ("sizing_excluded", "this sizing exclusion"),
-                       ("tier_reason", "this tier")):
+                       ("tier_reason", "this tier"),
+                       # Same reason sizing_excluded is here: a width reason licenses a
+                       # NARROWER fan-out, so it is a field that buys cheaper review and
+                       # therefore one a precedent argument would otherwise slip through.
+                       ("width_reason", "this fan-out width")):
         if rec.get(key):
             out.append((label, rec[key]))
     return out
@@ -548,6 +555,13 @@ def cmd_cycle(a):
         "comment_findings": a.comment_findings,
         "analysis_changed": bool(a.analysis_changed),
         "agents": a.agents,
+        # Why the fan-out was this wide. Step 3b tells the orchestrator to settle width by
+        # measurement rather than by asking, and said the reason was recorded — which was
+        # false: `--agents` was a bare integer with no reason anywhere in the record, so a
+        # recurring bad threshold had nothing to show up in. A width that keeps being
+        # justified the same way is the signal the threshold is wrong, and that is only
+        # visible if the justification is stored next to the count.
+        "width_reason": a.width_reason,
         # Recorded, never enforced. Agent count is the cap's unit because it is
         # derivable; tokens are the real cost. Logging both lets the proxy be checked
         # against actual spend before the cap moves to a token or weighted basis.
@@ -861,6 +875,11 @@ def main():
     sc.add_argument("--analysis-changed", action="store_true",
                     help="the Step 4a deterministic pass changed files or left unresolved findings")
     sc.add_argument("--agents", type=int, required=True, help="agents spawned this cycle")
+    sc.add_argument("--width-reason", help="the measurement that settled the fan-out width, "
+                    "e.g. 'semantic_lines=129, 3 batches, no near_duplicates'. Goes through "
+                    "the same BANNED_REASON funnel as every other free-text reason, which "
+                    "refuses the precedent phrasings it enumerates — a speed bump, not a "
+                    "guarantee: an unenumerated phrasing and a bare size hunch both pass")
     sc.add_argument("--tokens", type=int, help="observed subagent tokens, recorded not enforced")
     sc.set_defaults(func=cmd_cycle)
 

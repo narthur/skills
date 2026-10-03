@@ -384,6 +384,29 @@ else
 	bad "an abandonment with nothing named is rejected"
 fi
 
+# A width reason licenses a NARROWER fan-out, so it is a field that buys cheaper review and
+# has to go through the same funnel. It does — via append(), not a per-caller check — but
+# the LIST is what decides, and this phrasing walked straight through until it was added.
+ridw2=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+out=$("$PY" runlog.py cycle --run-id "$ridw2" --n 1 --applied 0 --agents 2 \
+	--width-reason "consistent with existing patterns in the repo" 2>&1)
+if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then
+	ok "a precedent width reason is refused"
+else
+	bad "a precedent width reason is refused"
+fi
+# ...and a measured one is stored next to the count, which is the whole point: a width that
+# keeps being justified the same way is the signal the threshold is wrong.
+"$PY" runlog.py cycle --run-id "$ridw2" --n 1 --applied 0 --agents 2 \
+	--width-reason "semantic_lines=129, 3 batches, no near_duplicates" >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridw2" | grep -q '"width_reason": "semantic_lines=129' \
+	&& ok "and a measured width reason is recorded beside the agent count" \
+	|| bad "and a measured width reason is recorded beside the agent count"
+# Close it, or the later "a skipped row leaves nothing open" check sees this fixture as an
+# in-flight run and fails for a reason that has nothing to do with what it asserts.
+"$PY" runlog.py finish --run-id "$ridw2" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
+
 # A finish is terminal: abandoning afterwards must not half-overwrite it.
 "$PY" runlog.py finish --run-id "$rida" --outcome clean --tier full \
 	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
@@ -431,6 +454,13 @@ ridw=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 	--executed '{"threat_model":{"status":"waived","reason":"repo cannot measure"}}' >/dev/null 2>&1
 "$PY" runlog.py show --run-id "$ridw" | grep -q '"tier_executed": "full"' \
 	&& ok "a waived gate does not force partial" || bad "a waived gate does not force partial"
+# The other half, and the half the catalog entry delegates elsewhere. review-stats'
+# fixtures append JSONL by hand and never call `runlog.py finish`, so nothing connected the
+# tier half to the visibility half: dropping waived entries from the persisted `executed`
+# left every suite green while laundering the waiver out of the record entirely.
+"$PY" runlog.py show --run-id "$ridw" | grep -q '"status": "waived"' \
+	&& ok "and the waiver is still in the record for the alarm to find" \
+	|| bad "and the waiver is still in the record for the alarm to find"
 
 # `passed` is NOT accounted, deliberately. It is report-line prose, not an `--executed`
 # status, and accounting for it made the two instruments contradict each other on one
@@ -765,7 +795,7 @@ done
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=121
+EXPECTED_CHECKS=124
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

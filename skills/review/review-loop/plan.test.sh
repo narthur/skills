@@ -82,7 +82,10 @@ grep -q '^\[true,' <<<"$got" && grep -q "could not confirm PR history" <<<"$got"
 
 # The fifth outcome. No github remote at all short-circuits before either `gh` call, so
 # a `gh` stub that would succeed must not change the answer.
-d=$(stubdir noremote "origin  git@gitlab.com:o/r.git (fetch)" '#!/bin/sh' 'exit 0')
+# The gh stub deliberately FAILS auth and returns PRs, so either gh call would visibly
+# change the answer. An `exit 0`-with-no-output stub pinned nothing: moving the remote
+# check after `gh auth status` left this suite fully green.
+d=$(stubdir noremote "origin  git@gitlab.com:o/r.git (fetch)" '#!/bin/sh' 'case "$1" in auth) exit 1 ;; pr) echo "[{\"number\":1}]" ;; esac')
 got=$(reason_for "$d")
 grep -q '^\[false,' <<<"$got" && grep -q "no github remote" <<<"$got" \
 	&& ! grep -qi "authenticat\|pull requests" <<<"$got" \

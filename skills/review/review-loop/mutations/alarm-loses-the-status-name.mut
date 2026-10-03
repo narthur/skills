@@ -1,6 +1,6 @@
 target: skills/review/review-loop/review-stats.py
 verify: cd skills/review/review-loop && ./review-stats.test.sh
-expect: an unrecognised status 'timeout' goes loud and is named
+expect: FAIL  an unrecognised status 'timeout' goes loud and is named
 why:    an unrecognised status is reported loudly so someone can act on it, and dropping its name from the message leaves "did not complete" with no way to tell a genuinely new failure spelling from a plain unreported gate — which is how a new deliberate word would get absorbed instead of added on purpose
 --- old
 def _naming(seen):

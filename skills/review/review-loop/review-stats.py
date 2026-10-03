@@ -103,8 +103,8 @@ def dropped_gates(run):
 #
 # `passed` appears in report-format.md:64's PROSE for a gate line but is in neither
 # GATE_OK nor this list, so it would read as a failure. That was carried as a deferred
-# finding for two days and is now CLOSED as not-a-defect, on the reasoning the entry had
-# already reached three times: the `--executed` vocabulary is done|skipped|failed|n/a, a
+# finding, re-read three times, and is now CLOSED as not-a-defect, on the reasoning the
+# entry had already reached each time: the `--executed` vocabulary is done|skipped|failed|n/a, a
 # passing gate has an obvious slot (`done`), and `passed` is report prose, not a status.
 # It was briefly added to runlog.GATE_ACCOUNTED and taken back out — accounting for it
 # made the tier read `full` while this alarm read `did not complete (passed)`, two

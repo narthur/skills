@@ -406,6 +406,21 @@ done
 grep -q "evidence_gate did not complete (blocked) 3x" <<<"$(alarm blocked)" \
 	&& ok "a blocked gate is still loud" || bad "a blocked gate is still loud"
 
+# `passed` stays loud too, and this is the half of that argument nothing pinned. runlog
+# deliberately does NOT account for `passed` (it is report-line prose, not an --executed
+# status), so the two instruments only agree while this list also leaves it out. Adding
+# `passed` to DECLINED_STATES re-creates the same disagreement in mirror image — tier
+# `partial` beside an alarm line reading "declined with a reason (passed)" — and every
+# suite stayed green when that was tried. The generic unrecognised-status case does not
+# cover it, because an explicitly enumerated `passed` is no longer unrecognised.
+for i in 1 2 3; do
+	arow passed "{\"run_id\":\"ps$i\",\"phase\":\"plan\",\"planned_at\":\"2026-12-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"measurement_gate\":{\"planned\":\"run\"}}}"
+	arow passed "{\"run_id\":\"ps$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"measurement_gate\":{\"status\":\"passed\",\"reason\":\"metric plan posted\"}}}"
+done
+grep -q "measurement_gate did not complete (passed) 3x" <<<"$(alarm passed)" \
+	&& ok "a passed status stays loud, matching the tier runlog derives" \
+	|| bad "a passed status stays loud, matching the tier runlog derives"
+
 # An assertion that VANISHES is invisible without a count. Two ways it has happened
 # here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
 # NEITHER branch runs, and assertions appended below this summary never execute at all
@@ -414,7 +429,7 @@ grep -q "evidence_gate did not complete (blocked) 3x" <<<"$(alarm blocked)" \
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=45
+EXPECTED_CHECKS=46
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

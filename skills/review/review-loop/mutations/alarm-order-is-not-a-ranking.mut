@@ -1,6 +1,6 @@
 target: skills/review/review-loop/review-stats.py
 verify: cd skills/review/review-loop && ./review-stats.test.sh
-expect: the more frequent offender is listed first across both buckets
+expect: FAIL  the more frequent offender is listed first across both buckets
 why:    two separately-sorted lists concatenated print a 3x drop above a 6x decline, and the order reads as a ranking
 --- old
     hits.sort(key=lambda h: (-h[0], h[1]))

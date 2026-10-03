@@ -1,0 +1,9 @@
+target: skills/review/review-loop/runlog.py
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  and the waiver is still in the record for the alarm to find
+why:    a waived gate must not force `partial` AND must stay visible to the alarm, because three runs waiving one gate is the signal the alarm exists to raise. Only the tier half was pinned: dropping waived entries from the persisted `executed` map left the tier reading `full` while the waiver vanished from the record entirely, and all four suites stayed green. That is laundering in the catalog's own vocabulary — the run reports as fully complete and nothing downstream can see what was waived.
+--- old
+        "executed": executed,
+--- new
+        "executed": {g: v for g, v in executed.items()
+                     if not (isinstance(v, dict) and v.get("status") == "waived")},

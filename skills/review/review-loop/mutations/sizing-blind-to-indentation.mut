@@ -1,6 +1,6 @@
 target: skills/review/review-loop/context.sh
 verify: cd skills/review/review-loop && ./context-sizing.test.sh
-expect: .py: an indentation change that moves control flow counts
+expect: FAIL  .py: an indentation change that moves control flow counts
 why:    `-w` applied to every file, so an indentation-only control-flow change scores 0 lines and skips the fan-out
 --- old
 semantic = sum(raw[f] if indent_sensitive(f) else blind.get(f, 0) for f in raw)

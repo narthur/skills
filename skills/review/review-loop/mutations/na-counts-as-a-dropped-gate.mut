@@ -1,6 +1,6 @@
 target: skills/review/review-loop/runlog.py
 verify: cd skills/review/review-loop && ./runlog.test.sh
-expect: a non-converged run records n/a for record_reviewed without going partial
+expect: FAIL  a non-converged run records n/a for record_reviewed without going partial
 why:    a gate with nothing to act on was not dropped, so `n/a` must not force partial. This exact defect shipped — runlog's own comment records that a `status == "done"` test made every n/a a dropped gate and the Step 0 alarm fired permanently on gates nobody could fix, which teaches a reader to scroll past the alarms that are right
 --- old
 GATE_OK = ("done", "n/a")
