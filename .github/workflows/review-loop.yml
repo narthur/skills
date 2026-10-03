@@ -136,7 +136,7 @@ jobs:
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 23 ] || { echo "only $n mutations, expected at least 23 — was one deleted?"; exit 1; }
+          [ "$n" -ge 24 ] || { echo "only $n mutations, expected at least 24 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       - name: mutation score

@@ -267,6 +267,21 @@ def _selftest():
         got = json.loads(out.getvalue())
         assert got["push"] is True, got                  # artifact present -> permitted
         assert got["disclose"], got                      # and still carries the disclosure
+
+        # The tier does not reach this gate, and four places in the docs claimed it did
+        # — including the comment inside derive_tier itself. The claim survived because
+        # nothing stated it as an assertion: prose about what some other module reads
+        # has no failing test when it goes wrong. So state it here. Re-finishing the
+        # same run as `partial` must change nothing about the decision; if someone makes
+        # push-check read the tier, this fails and the docs saying it doesn't are stale.
+        rl.append({"run_id": rid2, "phase": "finish", "outcome": "clean",
+                   "finished_at": rl.now(), "tier_executed": "partial",
+                   "executed": {"t": {"status": "done"}}})
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            main(["--run-id", rid2, "--branch", "feat/x", "--default-branch", "main",
+                  "--gate-state", "passed", "--repo", td])
+        assert json.loads(out.getvalue()) == got, "tier_executed changed the push decision"
     print("ok")
 
 

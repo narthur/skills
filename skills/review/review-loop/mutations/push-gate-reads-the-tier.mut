@@ -1,0 +1,14 @@
+target: skills/review/review-loop/push-check.py
+verify: python3 skills/review/review-loop/push-check.py --selftest
+expect: tier_executed changed the push decision
+why:    five places in the docs claimed the push gate reads the tier, and none of them was wrong in a way any test could notice — prose about what another module reads has no failing assertion when it rots. If the gate ever does start reading the tier, the docs saying it does not are stale, and this is what says so.
+--- old
+    push, reason = decide(conv, a.gate_state, a.unresolved_skip,
+                          a.branch, a.default_branch, _upstream_exists(a.repo),
+                          outcome=run.get("outcome"), unreported=unreported)
+--- new
+    push, reason = decide(conv, a.gate_state, a.unresolved_skip,
+                          a.branch, a.default_branch, _upstream_exists(a.repo),
+                          outcome=run.get("outcome"), unreported=unreported)
+    if run.get("tier_executed") == "partial":
+        push, reason = False, "the run was only partially reviewed"

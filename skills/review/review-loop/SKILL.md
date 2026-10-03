@@ -530,7 +530,10 @@ honesty rule, and the full "when NOT to auto-push" spec.
    the tier becomes `partial`. Use `n/a` — which does *not* force `partial` — when the gate had
    nothing to act on (no PR exists, the repo has no telemetry); use `skipped` when you chose not to
    run one that could have run. Every status but `done` needs a reason. `partial` is the tier when any planned agent
-   failed or any planned gate went unexecuted — the label and the push gate both read it that way.
+   failed or any planned gate went unexecuted. `runlog.py` derives that rather than accepting your
+   claim, and it has to, because nothing downstream enforces it: the push gate never reads the tier
+   and the PR label is keyed on `convergence`. The tier reaches the PR comment body and
+   `review-stats`, so a laundered `full` is wrong exactly where a human would read it.
    Non-interactive session with a non-empty ask bucket (`AskUserQuestion` aborts in headless and AO
    worker runs): leave those findings unapplied, list them in the PR as open questions, and pass the
    count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody

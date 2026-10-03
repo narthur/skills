@@ -480,9 +480,10 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
               f"{', '.join(broken)}", file=sys.stderr)
         return "partial"
     # The floor exists so a run cannot be reviewed less than the rule says. That
-    # is enforced per-gate above, but the recorded tier is what the label and the
-    # aggregation report, so a claim below the floor would describe the run
-    # falsely even with every gate accounted for.
+    # is enforced per-gate above, but the recorded tier is what the PR comment body
+    # and the aggregation report, so a claim below the floor would describe the run
+    # falsely even with every gate accounted for. (Not the label — that is keyed on
+    # convergence — and not the push gate, which never reads the tier at all.)
     if floor and TIER_RANK.get(claimed, 0) < TIER_RANK.get(floor, 0):
         sys.exit(
             f"runlog: refusing to record tier {claimed!r} — the plan computed a floor of "
