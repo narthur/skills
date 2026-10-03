@@ -274,7 +274,12 @@ def _selftest():
         # has no failing test when it goes wrong. So state it here. Re-finishing the
         # same run as `partial` must change nothing about the decision; if someone makes
         # push-check read the tier, this fails and the docs saying it doesn't are stale.
-        rl.append({"run_id": rid2, "phase": "finish", "outcome": "clean",
+        # Only tier_executed differs from the row above — the outcome stays
+        # `cycle-limit`. Writing `clean` here too passed, but for a confounded
+        # reason: it changed two fields decide() is given, and both of those
+        # outcomes happen to be non-blocking, so the test would have proved
+        # nothing about the tier had the outcome handling been what differed.
+        rl.append({"run_id": rid2, "phase": "finish", "outcome": "cycle-limit",
                    "finished_at": rl.now(), "tier_executed": "partial",
                    "executed": {"t": {"status": "done"}}})
         out = io.StringIO()
