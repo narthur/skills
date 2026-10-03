@@ -1,0 +1,8 @@
+target: skills/review/review-loop/runlog.py
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  a passed gate is not silently accounted, it goes loud
+why:    `passed` is report-line prose (references/report-format.md:64), not a word in the `--executed` vocabulary (done|skipped|failed|n/a), where a passing gate already has `done`. It was briefly accounted for and taken back out the same day: doing so made the tier read `full` while the alarm read "did not complete (passed)", because `passed` is in neither GATE_OK nor DECLINED_STATES. Two instruments contradicting each other about one record is worse than one of them being loud, and the loud default is the right handler for a status nobody should be writing.
+--- old
+GATE_ACCOUNTED = GATE_OK + ("waived",)
+--- new
+GATE_ACCOUNTED = GATE_OK + ("waived", "passed")

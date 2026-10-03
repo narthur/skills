@@ -18,9 +18,12 @@ files that must fall back to diff-plus-enclosing-scope so one giant file can't
 re-dilute a batch. Small PR -> one batch -> identical to the pre-batching flow.
 
 Files carrying the SAME edit are collapsed to one representative. Packing by
-file size alone measured the wrong thing: nine test suites receiving one
-identical two-line guard split across four batches and cost twelve agents, for
-a change there was only one of. `near_duplicates` maps each representative to
+file size alone measured the wrong thing: nine test suites received one
+identical check-count guard, split across four batches, and cost twelve agents
+for a change there was mostly one of. Measured on aaaebb4...1de3722: four
+batches without collapsing, three with, and six of the nine suites normalize to
+one fingerprint -- the other three carried extra edits and correctly do not
+group. That is one measurement on one range, not a ratio to expect. `near_duplicates` maps each representative to
 the siblings it stands for, and the caller reviews the representative whole
 plus each sibling's hunk. Reading nine copies of one edit does not find a
 tenth suite that should have had it and doesn't -- only counting suites does,

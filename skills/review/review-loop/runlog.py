@@ -455,11 +455,16 @@ GATE_OK = ("done", "n/a")
 # waiving the same gate is precisely the signal the alarm exists to raise, so it must not go
 # quiet either. Adding `waived` to GATE_OK would have done both at once and made its entry
 # in review-stats.DECLINED_STATES dead code, hiding a repeated waiver completely.
-# `passed` rides along for the same reason: it is report-line prose for a gate that passed
-# (references/report-format.md:64), and a gate that passed is not a non-completion. Anything
-# NOT listed here still forces partial and is still reported with its own name, which is the
-# loud default three separate omissions have now argued for.
-GATE_ACCOUNTED = GATE_OK + ("waived", "passed")
+# `passed` was briefly added here too and taken back out. It is report-line PROSE for a gate
+# line (references/report-format.md:64), not a word in the `--executed` vocabulary, which is
+# done|skipped|failed|n/a — a passing gate already has `done`. Accounting for it made the two
+# instruments contradict each other on one record: the tier read `full` while the alarm read
+# `measurement_gate did not complete (passed) 3x`, because `passed` is in neither GATE_OK nor
+# DECLINED_STATES. Two instruments disagreeing is worse than one being loud. Anything NOT
+# listed here still forces partial and is still reported with its own name, which is the loud
+# default three separate omissions have now argued for, and it is the right handler for a
+# status nobody should be writing.
+GATE_ACCOUNTED = GATE_OK + ("waived",)
 TIER_RANK = {"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}
 
 

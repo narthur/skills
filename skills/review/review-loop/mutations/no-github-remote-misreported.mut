@@ -1,0 +1,12 @@
+target: skills/review/review-loop/plan.py
+verify: bash skills/review/review-loop/plan.test.sh
+expect: FAIL  no github remote is reported as that
+why:    github_reachable() has five outcomes and exists to report WHICH one, because a gate reason is read later as evidence and the fixes differ. This branch was the one with no coverage: the test's `git` stub hardcoded a github URL for every case, so the short-circuit was unreachable while a comment in the suite claimed four-of-four coverage. Removing the branch makes a gitlab-only repo report "no pull requests at all", which is a different skip needing a different response.
+--- old
+    rc, out, _ = run(["git", "remote", "-v"])
+    if rc != 0 or "github.com" not in out:
+        return False, "no github remote"
+--- new
+    rc, out, _ = run(["git", "remote", "-v"])
+    if False:
+        return False, "no github remote"

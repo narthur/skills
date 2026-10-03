@@ -22,19 +22,22 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/plan-test.XXXXXX") || { echo "mktemp failed"; e
 trap 'rm -rf "$TMP"' EXIT
 export REVIEW_LOOP_RUNS="$TMP/ambient.jsonl"
 
-# github_reachable() had no coverage at all — not one of its four outcomes, and no
-# mutation entry — while being the function whose whole job is reporting WHICH reason
-# Agent #10 is skipped for. A gate reason is read later as evidence, so a wrong one costs
-# more than a missing one. Stubbed via PATH: `git` and `gh` are the only externals.
+# github_reachable() had no coverage at all — not one of its FIVE outcomes, and no mutation
+# entry — while being the function whose whole job is reporting WHICH reason Agent #10 is
+# skipped for. A gate reason is read later as evidence, so a wrong one costs more than a
+# missing one. All five are covered below. Stubbed via PATH: `git` and `gh` are the only
+# externals. `$2` is the remote line, because pinning it to a github URL for every case is
+# what left the no-remote branch uncovered while a comment claimed four-of-four.
 stubdir() {
-	local d="$TMP/stub-$1"; mkdir -p "$d"
-	printf '#!/bin/sh\necho "origin  git@github.com:o/r.git (fetch)"\n' > "$d/git"
+	local d="$TMP/stub-$1" remote="$2"; mkdir -p "$d"
+	printf '#!/bin/sh\necho "%s"\n' "$remote" > "$d/git"
 	chmod +x "$d/git"
-	shift
+	shift 2
 	printf '%s\n' "$@" > "$d/gh"
 	chmod +x "$d/gh"
 	printf '%s' "$d"
 }
+GH_REMOTE="origin  git@github.com:o/r.git (fetch)"
 reason_for() {
 	PATH="$1:$PATH" "$PY" -c '
 import json, sys
@@ -43,13 +46,13 @@ import plan
 print(json.dumps(plan.github_reachable()))'
 }
 
-d=$(stubdir ok '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "[{\"number\":1}]" ;; esac')
+d=$(stubdir ok "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "[{\"number\":1}]" ;; esac')
 got=$(reason_for "$d")
 grep -q '^\[true,' <<<"$got" && grep -q "PR history confirmed" <<<"$got" \
 	&& ok "a repo with PRs is reachable, and says the history was confirmed" \
 	|| bad "a repo with PRs is reachable ($got)"
 
-d=$(stubdir nopr '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "[]" ;; esac')
+d=$(stubdir nopr "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "[]" ;; esac')
 got=$(reason_for "$d")
 # Each negative matters as much as its positive: the whole function is about WHICH
 # reason, and reporting an auth failure for a repo that simply has no PRs is the bug
@@ -60,7 +63,7 @@ grep -q '^\[false,' <<<"$got" && grep -q "no pull requests at all" <<<"$got" \
 	&& ok "a repo with no PRs is skipped for having no PRs, not for auth" \
 	|| bad "a repo with no PRs is skipped for the right reason ($got)"
 
-d=$(stubdir noauth '#!/bin/sh' 'case "$1" in auth) exit 1 ;; pr) echo "[]" ;; esac')
+d=$(stubdir noauth "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 1 ;; pr) echo "[]" ;; esac')
 got=$(reason_for "$d")
 grep -q '^\[false,' <<<"$got" && grep -q "not authenticated" <<<"$got" \
 	&& ! grep -q "pull requests" <<<"$got" \
@@ -70,12 +73,21 @@ grep -q '^\[false,' <<<"$got" && grep -q "not authenticated" <<<"$got" \
 # The probe FAILING is the case that used to fall through to the unconditional success
 # line, asserting confirmed PR history that nothing had confirmed — the same defect the
 # function's own docstring diagnoses. Fail open, but say the probe failed.
-d=$(stubdir prfail '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "api down" >&2; exit 1 ;; esac')
+d=$(stubdir prfail "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "api down" >&2; exit 1 ;; esac')
 got=$(reason_for "$d")
 grep -q '^\[true,' <<<"$got" && grep -q "could not confirm PR history" <<<"$got" \
 	&& ! grep -q "PR history confirmed" <<<"$got" \
 	&& ok "a failed probe fails open but does not claim it confirmed anything" \
 	|| bad "a failed probe does not claim it confirmed anything ($got)"
+
+# The fifth outcome. No github remote at all short-circuits before either `gh` call, so
+# a `gh` stub that would succeed must not change the answer.
+d=$(stubdir noremote "origin  git@gitlab.com:o/r.git (fetch)" '#!/bin/sh' 'exit 0')
+got=$(reason_for "$d")
+grep -q '^\[false,' <<<"$got" && grep -q "no github remote" <<<"$got" \
+	&& ! grep -qi "authenticat\|pull requests" <<<"$got" \
+	&& ok "no github remote is reported as that, not as auth or missing PRs" \
+	|| bad "no github remote is reported as that ($got)"
 
 # $1 changed_lines, $2 fast_eligible, $3.. plan.py flags -> plan JSON
 plan() {
@@ -272,7 +284,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=39
+EXPECTED_CHECKS=40
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

@@ -426,13 +426,22 @@ rid5=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 # record carried this as unreachable for two days because nothing had ever recorded `waived`.
 # And it must still reach the alarm: three runs waiving one gate is the signal the alarm is
 # for, which is why `waived` is in GATE_ACCOUNTED (tier) and NOT in GATE_OK (silence).
-for st in waived passed; do
-	ridw=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-	"$PY" runlog.py finish --run-id "$ridw" --outcome clean --tier full \
-		--executed "{\"threat_model\":{\"status\":\"$st\",\"reason\":\"repo cannot measure\"}}" >/dev/null 2>&1
-	"$PY" runlog.py show --run-id "$ridw" | grep -q '"tier_executed": "full"' \
-		&& ok "a $st gate does not force partial" || bad "a $st gate does not force partial"
-done
+ridw=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$ridw" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"waived","reason":"repo cannot measure"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridw" | grep -q '"tier_executed": "full"' \
+	&& ok "a waived gate does not force partial" || bad "a waived gate does not force partial"
+
+# `passed` is NOT accounted, deliberately. It is report-line prose, not an `--executed`
+# status, and accounting for it made the two instruments contradict each other on one
+# record: tier `full` beside an alarm line reading "did not complete (passed)". The loud
+# default is the right handler for a word nobody should be writing as a status.
+ridp=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$ridp" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"passed","reason":"metric plan posted"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridp" | grep -q '"tier_executed": "partial"' \
+	&& ok "a passed gate is not silently accounted, it goes loud" \
+	|| bad "a passed gate is not silently accounted, it goes loud"
 # A status nobody enumerated still forces partial — the loud default the three omissions argued for.
 ridu=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 "$PY" runlog.py finish --run-id "$ridu" --outcome clean --tier full \

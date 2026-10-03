@@ -102,10 +102,14 @@ def dropped_gates(run):
 # evidence-gate.md, which never uses the word `blocked` at all.)
 #
 # `passed` appears in report-format.md:64's PROSE for a gate line but is in neither
-# GATE_OK nor this list, so it would read as a failure. Deferred rather than added: the
-# `--executed` template SKILL.md actually gives is the narrower done|skipped|failed|n/a,
-# where a passing gate has an obvious slot (`done`), and no run has ever written `passed`
-# as a status. See review-loop-deferred.md.
+# GATE_OK nor this list, so it would read as a failure. That was carried as a deferred
+# finding for two days and is now CLOSED as not-a-defect, on the reasoning the entry had
+# already reached three times: the `--executed` vocabulary is done|skipped|failed|n/a, a
+# passing gate has an obvious slot (`done`), and `passed` is report prose, not a status.
+# It was briefly added to runlog.GATE_ACCOUNTED and taken back out — accounting for it
+# made the tier read `full` while this alarm read `did not complete (passed)`, two
+# instruments contradicting each other about one record, which is worse than one of them
+# being loud. The loud default is the handler.
 #
 # Missing `waived` was the THIRD time this one decision went wrong: enumerate the
 # deliberate words and a failure spelling softens; enumerate the failures and a deliberate
