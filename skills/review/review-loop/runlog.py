@@ -16,13 +16,14 @@ run_id.
   runlog.py plan    --tier <floor> --model <m> [--base <b>] [--changed-lines <n>]
                     [--semantic-lines <n>] [--sizing-excluded <t>] [--tier-reason <t>]
                     [--agent-cap <n>] [--inputs <json>] [--gates <json>] [--head <sha>]
-                    [--run-id <id>]
+                    [--run-id <id>] [--session-kind <k>]
   runlog.py finish  --run-id <id> --outcome <o> [--tier <t>] [--executed <json>]
                     [--escalations <json>] [--agents <json>] [--findings <json>] [--asks <n>]
                     [--allow-unaccounted]
   runlog.py skipped --reason <r> [--model <m>]     one complete row, tier=skipped
-  runlog.py carried --from <sha> --to <sha> --how reviewed|skipped
-  runlog.py check   [--head <sha>] [--session <id>] [--force]   exit 1 on an unfinished run
+  runlog.py carried --from <sha> --to <sha> --how reviewed|skipped [--by <what>]
+  runlog.py check   [--head <sha>] [--session <id>] [--force] [--run-id <id>]
+                    exit 1 on an unfinished run
   runlog.py nudge   --run-id <id>
   runlog.py abandon --run-id <id> --missing <text>
   runlog.py cycle   --run-id <id> --n <k> --applied <n> --agents <n> [--asked <n>]
@@ -811,7 +812,17 @@ def cmd_show(a):
     print(json.dumps(run, indent=1, sort_keys=True))
 
 
-def main():
+def build_parser():
+    """The parser, built separately so a test can ASK it what each subcommand accepts.
+
+    The synopsis in this module's docstring is printed verbatim by `--help`, so it is a
+    user-facing flag list that can drift from the flags themselves — and did, four times
+    for one flag. The guard in runlog.test.sh compares the two, and it has to introspect
+    argparse to do that honestly: its first version regexed this source for
+    `add_argument("--...")`, which silently missed an underscore, a digit, a single-quoted
+    string, a wrapped line, a short option listed first, and anything declared after
+    `set_defaults`. Six ways to be undocumented and still green.
+    """
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -928,7 +939,11 @@ def main():
     ss.add_argument("--run-id", required=True)
     ss.set_defaults(func=cmd_show)
 
-    a = p.parse_args()
+    return p
+
+
+def main():
+    a = build_parser().parse_args()
     sys.exit(a.func(a) or 0)
 
 

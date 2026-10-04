@@ -384,28 +384,51 @@ else
 	bad "an abandonment with nothing named is rejected"
 fi
 
-# This synopsis is printed verbatim by `--help` (the parser is built with
-# description=__doc__), so it is a user-facing flag list, and it is the surface the
-# --width-reason fix missed. Four separate places document the cycle command and the flag
-# had to be added to each in turn, one review cycle apiece. Derived rather than restated:
-# argparse is asked what the subcommand actually accepts, so the NEXT flag added without
-# documenting it fails here instead of waiting for someone to notice.
+# The docstring synopsis is printed verbatim by `--help` (the parser is built with
+# description=__doc__), so it is a user-facing flag list that can drift from the flags
+# themselves — and did, four times for one flag, one review cycle apiece, because every
+# pass fixed the instance someone had noticed.
+#
+# This guard replaces one that was worse than nothing. It regexed the SOURCE for
+# `add_argument("--...")`, so six real declaration forms slipped past silently: an
+# underscore or digit in the name, a single-quoted string, a wrapped line, a short option
+# listed first, and anything declared after `set_defaults`. It used a SUBSTRING test, so
+# `--agent` read as documented because `--agents` was. And it FAILED OPEN: any exception
+# in the extraction printed nothing, and empty was read as "nothing undocumented" — it
+# reported ok while crashing, on the exact defect it exists to catch.
+#
+# So: ask argparse (build_parser() exists for this), cover EVERY subcommand rather than
+# `cycle` alone (plan, carried and check each had a live missing flag), compare whole
+# tokens, and print a sentinel on any exception so a broken guard is a red test.
 undoc=$("$PY" - <<'EOF'
-import re, sys
+import argparse, re, sys, traceback
 sys.path.insert(0, ".")
-import runlog
-src = open("runlog.py").read()
-blk = src[src.index('sub.add_parser("cycle"'):]
-blk = blk[:blk.index("set_defaults")]
-syn = re.search(r"^  runlog\.py cycle\b(.*?)(?=^  runlog\.py \w)",
-                runlog.__doc__, re.M | re.S).group(1)
-print(" ".join(f for f in sorted(set(re.findall(r'add_argument\("(--[a-z-]+)"', blk)))
-                if f not in syn))
+try:
+    import runlog
+    p = runlog.build_parser()
+    sub = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)][0]
+    bad = []
+    for name, sp in sub.choices.items():
+        m = re.search(r"^  runlog\.py %s\b(.*?)(?=^  runlog\.py \w|\Z)" % re.escape(name),
+                      runlog.__doc__, re.M | re.S)
+        if not m:
+            bad.append(f"{name}:NO-SYNOPSIS-ENTRY")
+            continue
+        documented = set(re.findall(r"--[a-z0-9][a-z0-9-]*", m.group(1)))
+        flags = {o for act in sp._actions for o in act.option_strings} - {"-h", "--help"}
+        for f in sorted(flags):
+            if f.startswith("--") and f not in documented:
+                bad.append(f"{name}:{f}")
+    print(" ".join(bad))
+except Exception:
+    # A guard that cannot run must be LOUD. The previous version printed nothing here,
+    # and nothing was indistinguishable from "all documented".
+    print("EXTRACTION-FAILED", traceback.format_exc().splitlines()[-1].strip())
 EOF
 )
 [ -z "$undoc" ] \
-	&& ok "every cycle flag argparse accepts is in the --help synopsis" \
-	|| bad "cycle flags missing from the --help synopsis: $undoc"
+	&& ok "every flag argparse accepts is in the --help synopsis, for every subcommand" \
+	|| bad "undocumented flags (or a broken check): $undoc"
 
 # A width reason licenses a NARROWER fan-out, so it is a field that buys cheaper review and
 # has to go through the same funnel. It does — via append(), not a per-caller check — but

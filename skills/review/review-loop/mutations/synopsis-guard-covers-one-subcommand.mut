@@ -1,0 +1,8 @@
+target: skills/review/review-loop/runlog.py
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  undocumented flags (or a broken check): plan:--session-kind
+why:    the first version of this guard checked `cycle` alone, which is one of ten subcommands, and plan, carried and check each had a live undocumented flag at that moment. The synopsis is printed verbatim by --help, so a reader sees a complete-looking flag list with one missing. Checking a single subcommand is fixing the instance that was noticed rather than the class, which is what produced four separate passes for one flag.
+--- old
+                    [--run-id <id>] [--session-kind <k>]
+--- new
+                    [--run-id <id>]
