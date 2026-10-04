@@ -1,6 +1,6 @@
 target: skills/review/review-loop/runlog.py
 verify: bash skills/review/review-loop/runlog.test.sh
-expect: FAIL  cycle flags missing from the --help synopsis
+expect: FAIL  undocumented flags (or a broken check): cycle:--width-reason
 why:    four separate surfaces document the cycle command — SKILL.md's Step 3b rule, its step j2 line, its Step 10 block, and this module docstring, which `--help` prints verbatim because the parser is built with description=__doc__. --width-reason had to be added to each in turn, one review cycle apiece, because every pass fixed the instance someone had noticed rather than the class. The guard derives the flag list from argparse instead of restating it, so the next flag added without documenting it fails here rather than waiting to be spotted.
 --- old
                     [--width-reason <t>] [--tokens <n>]
