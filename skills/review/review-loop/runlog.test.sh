@@ -454,8 +454,9 @@ ridw=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 	--executed '{"threat_model":{"status":"waived","reason":"repo cannot measure"}}' >/dev/null 2>&1
 "$PY" runlog.py show --run-id "$ridw" | grep -q '"tier_executed": "full"' \
 	&& ok "a waived gate does not force partial" || bad "a waived gate does not force partial"
-# The other half, and the half the catalog entry delegates elsewhere. review-stats'
-# fixtures append JSONL by hand and never call `runlog.py finish`, so nothing connected the
+# The other half, and the half the catalog entry delegates elsewhere. review-stats' WAIVED
+# fixture appends JSONL by hand rather than calling `runlog.py finish` (its spend fixture
+# does call it, so this is about that one fixture, not the suite), so nothing connected the
 # tier half to the visibility half: dropping waived entries from the persisted `executed`
 # left every suite green while laundering the waiver out of the record entirely.
 "$PY" runlog.py show --run-id "$ridw" | grep -q '"status": "waived"' \

@@ -171,7 +171,7 @@ When in doubt (any logic touched, or borderline size), do NOT take the fast path
 - **The question is WIDTH, not tier.** The tier floor is not yours to lower — `derive_tier` refuses a tier below the plan's floor with a hard exit, and Step 0b above says so. What *is* yours is how wide the fan-out goes inside that tier: how many batches, how many instances per file-scoped agent. That is the choice the ask was really about, and it is measurable. Measurable means a field in `context.sh`'s or `batch-files.py`'s output, or a count you can print: `semantic_lines`, `review_delta_lines`, `sizing_excluded`, `near_duplicates`, "no file in the diff is reachable from an entrypoint". Take the number and move, and record it: `runlog.py cycle --width-reason "<field>=<value>"` stores the measurement beside that cycle's `--agents` count. It goes through the same banned-reason funnel as every other free-text reason, so an enumerated precedent phrasing is refused there too.
 - **When no number decides it, take the WIDER option.** Not an ask. An unmeasurable hunch that a fan-out is excessive is exactly the hunch this skill exists to overrule, and the cost of being wrong is asymmetric: a redundant agent costs tokens, a skipped one ships the bug. This also makes the honest path and the cheap path the same path in a headless or subagent run, where there is no one to ask. Note that a size hunch is **not** rejected at write time — `BANNED_REASON` enumerates precedent and convention phrasings only, and it is a speed bump rather than a guarantee even for those: an unenumerated precedent phrasing passes too, which is how "consistent with existing patterns in the repo" walked through until it was added. Nothing downstream will catch "this looks small" for you. This bullet is the handler.
 
-Never narrow silently: whichever way it goes, `--width-reason` carries it in the run record. Nothing aggregates those reasons yet — `cmd_alarm` reads gate completions and abandonment reasons, never width — so a wrong threshold here surfaces through `review-stats.py`'s `cycles / agents / mean agents per run` figures plus reading the recorded reasons, not through an alarm. Note that `tier_executed` cannot show it: that is a tally over skipped/carried/fast/full/partial, and two runs of the same tier at three and thirty agents are indistinguishable in it.
+Never narrow silently: pass `--width-reason` when you record the cycle (Step 10 shows it), which is where a width reason goes. Nothing *requires* it — the flag is optional and an empty value is accepted — so a `width_reason: null` row is on you, not on the tool. Nothing aggregates those reasons yet — `cmd_alarm` reads gate completions and abandonment reasons, never width — so a wrong threshold here surfaces through `review-stats.py`'s `cycles / agents / mean agents per run` figures plus reading the recorded reasons, not through an alarm. Note that `tier_executed` cannot show it: that is a tally over skipped/carried/fast/full/partial, and two runs of the same tier at three and thirty agents are indistinguishable in it.
 
 **Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a code-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and the security review's Stage-1 finder — pass it the diff, the learnings file, the threat model, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
 
@@ -223,7 +223,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
     j. Append captured learnings to .git/info/review-loop-learnings.md (Step 11), deduping against existing entries.
-    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents ..`
+    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents .. --width-reason ".."`
         (Step 10). EVERY cycle, including a zero-fix one — convergence is derived from these rows,
         and a run with none of them reads as "did not converge" at Step 14. Pass `--asked`: a cycle
         that applied nothing but routed findings to the user has NOT converged, and omitting the
@@ -452,9 +452,11 @@ After committing, record this commit's sha (`git rev-parse HEAD`) as the previou
 python3 ~/.claude/skills/review-loop/runlog.py cycle --run-id <run_id> --n <N> \
   --applied <fixes applied> --asked <ask-bucket items> \
   --defect-findings <n> --comment-findings <n> \
-  --agents <agents spawned this cycle> [--tokens <observed subagent tokens>] \
-  [--analysis-changed]
+  --agents <agents spawned this cycle> --width-reason "<field>=<value>" \
+  [--tokens <observed subagent tokens>] [--analysis-changed]
 ```
+
+`--width-reason` is the measurement that settled this cycle's fan-out width — `semantic_lines=129, 3 batches, no near_duplicates`. Argparse does not require it and an empty string is accepted, so nothing stops you omitting it; a cycle row with `width_reason: null` is a width nobody can account for later, which is the state Step 3b's rule exists to remove. Keep to the `<field>=<value>` shape: the reason goes through the same banned-reason funnel as every other free-text field, and prose phrasings like "same pattern as the first file" or "mirrors the existing" hard-exit there because they read as precedent arguments.
 
 This is the only thing that answers "was the review finished, or did we stop?" — Step 14's push
 checker derives convergence from these rows rather than being told, and **a run with no cycle rows
