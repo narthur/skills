@@ -27,7 +27,7 @@ run_id.
   runlog.py abandon --run-id <id> --missing <text>
   runlog.py cycle   --run-id <id> --n <k> --applied <n> --agents <n> [--asked <n>]
                     [--defect-findings <n>] [--comment-findings <n>] [--analysis-changed]
-                    [--tokens <n>]
+                    [--width-reason <t>] [--tokens <n>]
   runlog.py convergence --run-id <id>              prints it; exit 0 only if converged
   runlog.py show    --run-id <id>
 """

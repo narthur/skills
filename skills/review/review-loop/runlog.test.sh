@@ -384,6 +384,29 @@ else
 	bad "an abandonment with nothing named is rejected"
 fi
 
+# This synopsis is printed verbatim by `--help` (the parser is built with
+# description=__doc__), so it is a user-facing flag list, and it is the surface the
+# --width-reason fix missed. Four separate places document the cycle command and the flag
+# had to be added to each in turn, one review cycle apiece. Derived rather than restated:
+# argparse is asked what the subcommand actually accepts, so the NEXT flag added without
+# documenting it fails here instead of waiting for someone to notice.
+undoc=$("$PY" - <<'EOF'
+import re, sys
+sys.path.insert(0, ".")
+import runlog
+src = open("runlog.py").read()
+blk = src[src.index('sub.add_parser("cycle"'):]
+blk = blk[:blk.index("set_defaults")]
+syn = re.search(r"^  runlog\.py cycle\b(.*?)(?=^  runlog\.py \w)",
+                runlog.__doc__, re.M | re.S).group(1)
+print(" ".join(f for f in sorted(set(re.findall(r'add_argument\("(--[a-z-]+)"', blk)))
+                if f not in syn))
+EOF
+)
+[ -z "$undoc" ] \
+	&& ok "every cycle flag argparse accepts is in the --help synopsis" \
+	|| bad "cycle flags missing from the --help synopsis: $undoc"
+
 # A width reason licenses a NARROWER fan-out, so it is a field that buys cheaper review and
 # has to go through the same funnel. It does — via append(), not a per-caller check — but
 # the LIST is what decides, and this phrasing walked straight through until it was added.
@@ -796,7 +819,7 @@ done
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=124
+EXPECTED_CHECKS=125
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))
