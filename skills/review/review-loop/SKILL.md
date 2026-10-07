@@ -656,8 +656,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
 | Bucket | Score | Risk profile (Step 8a) | Action |
 | --- | --- | --- | --- |
 | Ask user | ≥40 | structural finding from Agent #7 | Surface as proposal; never auto-apply |
-| Ask user | ≥40 | baseline smell from Agent #1 (name / duplication) | Heuristic — surface as proposal; never auto-apply |
-| Report-only | <40 | any always-ask finding (#7, #9, #1 baseline, `always_ask`) | Listed in the report (#7 nits / #9 questions), not asked; never auto-applied |
+| Auto-fix / Ask | by score | baseline smell from Agent #1 (name / duplication) | Routes on confidence like anything else — `always_ask: false`. Was always-ask until 2026-10-07; see `agent-roster.md` for why it changed and what still asks |
+| Report-only | <40 | any always-ask finding (#7, #9, `always_ask`) | Listed in the report (#7 nits / #9 questions), not asked; never auto-applied |
 | Auto-fix | ≥80 | (any) | Apply silently |
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
 | Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |
