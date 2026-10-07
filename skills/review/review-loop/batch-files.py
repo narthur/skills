@@ -20,10 +20,12 @@ re-dilute a batch. Small PR -> one batch -> identical to the pre-batching flow.
 Files carrying the SAME edit are collapsed to one representative. Packing by
 file size alone measured the wrong thing: nine test suites received one
 identical check-count guard, split across four batches, and cost twelve agents
-for a change there was mostly one of. Measured on aaaebb4...1de3722: four
-batches without collapsing, three with, and six of the nine suites normalize to
-one fingerprint -- the other three carried extra edits and correctly do not
-group. That is one measurement on one range, not a ratio to expect. `near_duplicates` maps each representative to
+for a change there was mostly one of. Six of those nine normalize to one
+fingerprint; the other three carried extra edits and correctly do not group.
+Batch counts are range-specific and not a ratio to expect: on aaaebb4...1de3722
+collapsing changes nothing, on the branch that added this it goes five to four.
+An earlier docstring claimed four-to-three on that first range -- a reduction
+that existed only while the budget ignored the sibling hunks the agents read. `near_duplicates` maps each representative to
 the siblings it stands for, and the caller reviews the representative whole
 plus each sibling's hunk. Reading nine copies of one edit does not find a
 tenth suite that should have had it and doesn't -- only counting suites does,
@@ -82,34 +84,46 @@ def _norm(line):
 
 
 def fingerprint(diff_range, path):
-    """Hash of a file's normalized hunk lines. Empty string when there is nothing
-    to hash (unreadable, or a diff with no +/- lines), which never groups."""
+    """(hash, hunk-line count) for a file's normalized hunk lines. Empty hash when
+    there is nothing to hash (unreadable, or a diff with no +/- lines), which never
+    groups. The count is returned because a collapsed group's agents still read every
+    SIBLING's hunk, and those lines have to reach the budget."""
     # :(top) because `changed_files` yields repo-root-relative paths while a bare
     # pathspec resolves against the cwd, which is not the root when run from a subdir.
     p = subprocess.run(["git", "diff", "-U0", diff_range, "--", f":(top){path}"],
                        capture_output=True, text=True)
     if p.returncode != 0:
-        return ""
+        return "", 0
     lines = [_norm(l) for l in p.stdout.splitlines()
              if l[:1] in ("+", "-") and not l.startswith(("+++", "---"))]
     if not lines:
-        return ""
-    return hashlib.sha1("\n".join(lines).encode()).hexdigest()
+        return "", 0
+    return hashlib.sha1("\n".join(lines).encode()).hexdigest(), len(lines)
 
 
-def collapse(sizes, prints):
+def collapse(sizes, prints, hunks=None):
     """Group files whose edits normalize identically. Returns (sizes, near_dups):
     sizes keeps one representative per group (the largest file -- most context for
-    the pattern), near_dups maps it to the siblings it stands for."""
+    the pattern), near_dups maps it to the siblings it stands for.
+
+    The representative's size CARRIES ITS SIBLINGS' HUNK LINES. The agents read the
+    representative whole plus each sibling's hunk, so counting the representative
+    alone under-reports what they are handed -- six siblings at twenty lines is 120
+    lines the budget never saw, and the oversized-file check never saw them either.
+    Under-counting buys a cheaper review, which is the direction a size measure must
+    never err in."""
+    hunks = hunks or {}
     groups = {}
     for path, n in sizes:
         groups.setdefault(prints.get(path) or path, []).append((path, n))
     kept, near_dups = [], {}
     for key, members in groups.items():
         members.sort(key=lambda x: (-x[1], x[0]))
-        kept.append(members[0])
-        if len(members) > 1:
-            near_dups[members[0][0]] = [p for p, _ in members[1:]]
+        rep, rep_n = members[0]
+        siblings = [p for p, _ in members[1:]]
+        kept.append((rep, rep_n + sum(hunks.get(p, 0) for p in siblings)))
+        if siblings:
+            near_dups[rep] = siblings
     kept.sort(key=lambda x: x[0])
     return kept, near_dups
 
@@ -158,6 +172,24 @@ def _selftest():
     assert [p for p, _ in kept] == ["s8.test.sh"], kept
     assert sorted(dups["s8.test.sh"]) == sorted(p for p, _ in nine[:8]), dups
 
+    # The representative's size must CARRY the siblings' hunk lines. Counting the
+    # representative alone handed the agents eight extra hunks the budget never saw,
+    # and the oversized check never saw them either -- an under-count, which is the
+    # direction a size measure must never err in.
+    kept, _ = collapse(nine, {p: "same" for p, _ in nine},
+                       {p: 20 for p, _ in nine})
+    assert kept == [("s8.test.sh", 208 + 8 * 20)], kept
+    # A lone file has no siblings, so nothing is added to it.
+    kept, dups = collapse([("solo.py", 100)], {"solo.py": "x"}, {"solo.py": 20})
+    assert kept == [("solo.py", 100)] and dups == {}, (kept, dups)
+    # Over the hardcap only BECAUSE of its siblings: the group still falls back
+    # rather than silently riding inside a batch it does not fit.
+    big = [(f"b{i}.py", 1200) for i in range(3)]
+    kept, _ = collapse(big, {p: "same" for p, _ in big}, {p: 900 for p, _ in big})
+    b, f = pack(kept, 1500, 2500)
+    # b0 is the representative: equal sizes tie-break on path, not on order.
+    assert f and f[0]["file"] == "b0.py" and f[0]["lines"] == 1200 + 2 * 900, (b, f)
+
     # a differing integer literal is still the same edit
     a = _norm("+\tEXPECTED_CHECKS=20")
     assert a == _norm("+        EXPECTED_CHECKS=33"), a
@@ -194,8 +226,10 @@ def main(argv):
     for path in changed_files(args.diff_range):
         n = file_lines(head, path)
         (sizes if n is not None else unreadable).append((path, n))
-    prints = {p: fingerprint(args.diff_range, p) for p, _ in sizes}
-    sizes, near_dups = collapse(sizes, prints)
+    fps = {p: fingerprint(args.diff_range, p) for p, _ in sizes}
+    prints = {p: fp for p, (fp, _) in fps.items()}
+    hunks = {p: n for p, (_, n) in fps.items()}
+    sizes, near_dups = collapse(sizes, prints, hunks)
     batches, fallback = pack(sizes, args.target, args.hardcap)
     print(json.dumps({
         "target": args.target,

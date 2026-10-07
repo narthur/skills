@@ -12,8 +12,10 @@ disagree with the file it is written into.
   mark-swept.py <learnings-file>
   mark-swept.py --selftest
 """
+import os
 import re
 import sys
+import tempfile
 
 MARKER = re.compile(r"^[ \t]*<!--[ \t]*[Ss]wept:")
 
@@ -58,8 +60,27 @@ def main(argv):
     path = argv[0]
     with open(path) as f:
         out, n = restamp(f.read())
-    with open(path, "w") as f:
-        f.write(out)
+    # Write a temp file and rename, rather than truncating in place. `open(path, "w")`
+    # empties the learnings file before writing a byte, so an interruption there loses
+    # every entry it holds — and this file is the only place the loop's accumulated
+    # learnings live. A unique name, not a fixed `.tmp`: concurrent worktree sessions
+    # share this path, which is the same concurrency the run store is append-only for.
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", dir=os.path.dirname(path) or ".",
+            prefix=".mark-swept-", delete=False,
+        ) as f:
+            tmp = f.name
+            f.write(out)
+        os.replace(tmp, path)
+        tmp = None
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
     print(f"marked swept at {n} entries: {path}")
     return 0
 
