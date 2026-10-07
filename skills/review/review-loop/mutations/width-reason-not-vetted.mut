@@ -1,0 +1,8 @@
+target: skills/review/review-loop/runlog.py
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  a precedent width reason is refused
+why:    a width reason licenses a NARROWER fan-out, so like sizing_excluded it is a field that buys cheaper review and is therefore one a precedent argument would otherwise slip through. Step 3b settles width by measurement instead of by asking the user, which only works if the measurement is recorded and vetted; dropping width_reason from reasons_in() leaves the field stored but unchecked, so "consistent with existing patterns in the repo" becomes a legitimate basis for a narrow fan-out.
+--- old
+                       ("width_reason", "this fan-out width")):
+--- new
+                       ):

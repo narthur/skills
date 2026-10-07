@@ -12,10 +12,11 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/review-loop-test.XXXXXX") || { echo "mktemp fai
 trap 'rm -rf "$TMP"' EXIT
 export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 fails=0
+checks=0
 NL=$'\n'
 TAB=$'	'
-ok() { echo "  ok  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+ok() { echo "  ok  $1"; checks=$((checks + 1)); }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 GATES='{"threat_model":{"planned":"run","reason":"2 stale claims"},"staleness_sweep":{"planned":"skip","reason":"12 entries"}}'
 
@@ -373,6 +374,85 @@ rida=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 out=$("$PY" runlog.py abandon --run-id "$rida" --missing "consistent with existing code" 2>&1)
 if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent rejected on the abandon path"; else bad "precedent rejected on the abandon path"; fi
 
+# An empty --missing is the silent skip this record exists to prevent, and the --missing
+# help text says so. argparse's required=True only demands the FLAG: `--missing ""` exited
+# 0 and wrote an empty reason, so the claim was unenforced prose.
+out=$("$PY" runlog.py abandon --run-id "$rida" --missing "   " 2>&1)
+if [ $? -ne 0 ] && grep -qi "nothing named" <<<"$out"; then
+	ok "an abandonment with nothing named is rejected"
+else
+	bad "an abandonment with nothing named is rejected"
+fi
+
+# The docstring synopsis is printed verbatim by `--help` (the parser is built with
+# description=__doc__), so it is a user-facing flag list that can drift from the flags
+# themselves — and did, four times for one flag, one review cycle apiece, because every
+# pass fixed the instance someone had noticed.
+#
+# This guard replaces one that was worse than nothing. It regexed the SOURCE for
+# `add_argument("--...")`, so six real declaration forms slipped past silently: an
+# underscore or digit in the name, a single-quoted string, a wrapped line, a short option
+# listed first, and anything declared after `set_defaults`. It used a SUBSTRING test, so
+# `--agent` read as documented because `--agents` was. And it FAILED OPEN: any exception
+# in the extraction printed nothing, and empty was read as "nothing undocumented" — it
+# reported ok while crashing, on the exact defect it exists to catch.
+#
+# So: ask argparse (build_parser() exists for this), cover EVERY subcommand rather than
+# `cycle` alone (plan, carried and check each had a live missing flag), compare whole
+# tokens, and print a sentinel on any exception so a broken guard is a red test.
+undoc=$("$PY" - <<'EOF'
+import argparse, re, sys, traceback
+sys.path.insert(0, ".")
+try:
+    import runlog
+    p = runlog.build_parser()
+    sub = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)][0]
+    bad = []
+    for name, sp in sub.choices.items():
+        m = re.search(r"^  runlog\.py %s\b(.*?)(?=^  runlog\.py \w|\Z)" % re.escape(name),
+                      runlog.__doc__, re.M | re.S)
+        if not m:
+            bad.append(f"{name}:NO-SYNOPSIS-ENTRY")
+            continue
+        documented = set(re.findall(r"--[a-z0-9][a-z0-9-]*", m.group(1)))
+        flags = {o for act in sp._actions for o in act.option_strings} - {"-h", "--help"}
+        for f in sorted(flags):
+            if f.startswith("--") and f not in documented:
+                bad.append(f"{name}:{f}")
+    print(" ".join(bad))
+except Exception:
+    # A guard that cannot run must be LOUD. The previous version printed nothing here,
+    # and nothing was indistinguishable from "all documented".
+    print("EXTRACTION-FAILED", traceback.format_exc().splitlines()[-1].strip())
+EOF
+)
+[ -z "$undoc" ] \
+	&& ok "every flag argparse accepts is in the --help synopsis, for every subcommand" \
+	|| bad "undocumented flags (or a broken check): $undoc"
+
+# A width reason licenses a NARROWER fan-out, so it is a field that buys cheaper review and
+# has to go through the same funnel. It does — via append(), not a per-caller check — but
+# the LIST is what decides, and this phrasing walked straight through until it was added.
+ridw2=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+out=$("$PY" runlog.py cycle --run-id "$ridw2" --n 1 --applied 0 --agents 2 \
+	--width-reason "consistent with existing patterns in the repo" 2>&1)
+if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then
+	ok "a precedent width reason is refused"
+else
+	bad "a precedent width reason is refused"
+fi
+# ...and a measured one is stored next to the count, which is the whole point: a width that
+# keeps being justified the same way is the signal the threshold is wrong.
+"$PY" runlog.py cycle --run-id "$ridw2" --n 1 --applied 0 --agents 2 \
+	--width-reason "semantic_lines=129, 3 batches, no near_duplicates" >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridw2" | grep -q '"width_reason": "semantic_lines=129' \
+	&& ok "and a measured width reason is recorded beside the agent count" \
+	|| bad "and a measured width reason is recorded beside the agent count"
+# Close it, or the later "a skipped row leaves nothing open" check sees this fixture as an
+# in-flight run and fails for a reason that has nothing to do with what it asserts.
+"$PY" runlog.py finish --run-id "$ridw2" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
+
 # A finish is terminal: abandoning afterwards must not half-overwrite it.
 "$PY" runlog.py finish --run-id "$rida" --outcome clean --tier full \
 	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
@@ -410,6 +490,41 @@ rid5=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 	--agents '[{"id":"2-bugs","status":"failed"}]' >/dev/null 2>&1
 "$PY" runlog.py show --run-id "$rid5" | grep -q '"tier_executed": "partial"' \
 	&& ok "a failed agent forces tier partial" || bad "a failed agent forces tier partial"
+
+# A waiver PASSES the measurement gate, so it must not force partial — the deferred-findings
+# record carried this as unreachable for two days because nothing had ever recorded `waived`.
+# And it must still reach the alarm: three runs waiving one gate is the signal the alarm is
+# for, which is why `waived` is in GATE_ACCOUNTED (tier) and NOT in GATE_OK (silence).
+ridw=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$ridw" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"waived","reason":"repo cannot measure"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridw" | grep -q '"tier_executed": "full"' \
+	&& ok "a waived gate does not force partial" || bad "a waived gate does not force partial"
+# The other half, and the half the catalog entry delegates elsewhere. review-stats' WAIVED
+# fixture appends JSONL by hand rather than calling `runlog.py finish` (its spend fixture
+# does call it, so this is about that one fixture, not the suite), so nothing connected the
+# tier half to the visibility half: dropping waived entries from the persisted `executed`
+# left every suite green while laundering the waiver out of the record entirely.
+"$PY" runlog.py show --run-id "$ridw" | grep -q '"status": "waived"' \
+	&& ok "and the waiver is still in the record for the alarm to find" \
+	|| bad "and the waiver is still in the record for the alarm to find"
+
+# `passed` is NOT accounted, deliberately. It is report-line prose, not an `--executed`
+# status, and accounting for it made the two instruments contradict each other on one
+# record: tier `full` beside an alarm line reading "did not complete (passed)". The loud
+# default is the right handler for a word nobody should be writing as a status.
+ridp=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$ridp" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"passed","reason":"metric plan posted"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridp" | grep -q '"tier_executed": "partial"' \
+	&& ok "a passed gate is not silently accounted, it goes loud" \
+	|| bad "a passed gate is not silently accounted, it goes loud"
+# A status nobody enumerated still forces partial — the loud default the three omissions argued for.
+ridu=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
+"$PY" runlog.py finish --run-id "$ridu" --outcome clean --tier full \
+	--executed '{"threat_model":{"status":"probably fine","reason":"2 stale claims re-read"}}' >/dev/null 2>&1
+"$PY" runlog.py show --run-id "$ridu" | grep -q '"tier_executed": "partial"' \
+	&& ok "an unenumerated status still forces partial" || bad "an unenumerated status still forces partial"
 
 # The other half, which nothing checked: a run where every agent SUCCEEDED must not
 # be partial. Gates say `done`, so a caller writing the agent roster reaches for
@@ -719,5 +834,18 @@ done
 [ -z "$("$PY" review-stats.py --alarm)" ] \
 	&& ok "three n/a runs raise no alarm" || bad "three n/a runs raise no alarm"
 
-[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works.
+EXPECTED_CHECKS=125
+if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
+	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+	fails=$((fails + 1))
+fi
+[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
 exit "$fails"

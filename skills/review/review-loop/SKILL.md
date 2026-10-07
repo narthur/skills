@@ -32,6 +32,8 @@ It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* de
 - `semantic_lines` — the raw count minus whitespace-only changes, lockfiles, and files the repo declares `linguist-generated`. This is the **review surface**, and it is what every size threshold in this skill keys on. A pure rename already counts 0 raw, so it needs no special handling.
 - `sizing_excluded` — what was dropped from the raw count and how much. Quote it whenever you cite a size: under-counting buys a cheaper review, so an unexplained smaller number is the silent-skip problem one level down.
 - `fast_path_eligible_by_size` — `true` if there is a diff at all and its *semantic* size is under ~30 lines (the *size* half of Step 3b's gate; you still judge whether logic was touched)
+- `last_reviewed_sha`, `review_delta_lines`, `fast_path_eligible_by_delta` — the newest ancestor of HEAD this loop has already reviewed, and the raw size of everything since. **Key the re-entry path on `fast_path_eligible_by_delta`, which already requires a non-null sha** — `context.sh` computes it as `bool(last_reviewed) and 0 < delta < 30`, so the sha decides whether re-entry applies at all and the delta then sizes it. Only `last_reviewed_sha` is nullable; `null` there means nothing on this branch has been reviewed, so the branch-wide numbers are all there are. Do not gate on the delta alone: it is `0` both when nothing has been reviewed and when HEAD is identical to the reviewed sha, and it cannot tell those apart. Once the sha is non-null, sizing the follow-up against the delta is the point — a follow-up commit after a clean exit is a trivial-diff question about the *follow-up*, and sizing it against the whole unpushed branch is what turned that into a judgment call to ask about. The delta count is raw — no lockfile or generated-file exclusions — so it only ever over-counts, which makes the delta fast path harder to reach rather than easier.
+- `learnings_swept_entries` — the entry count the last staleness sweep left behind, or `null` for never-swept (`_entries`, not `_at`: it is a count, and `_at` is an ISO timestamp everywhere else in this record)
 
 Workspace detection and Steps 1–3 are documented in `references/context-fallback.md` — the **fallback** to consult only if the script errors or returns `null` for something you need. Don't re-run their bash by hand when the JSON already has the answer.
 
@@ -64,7 +66,9 @@ Four booleans, because they are the only inputs a script can't measure — and b
 - `--runtime-change` — does runtime behavior change? Gates Steps 13 and 13.5.
 - `--attacker-reachable` — is any changed path attacker-reachable?
 
-It prints the plan and writes the **planned** half of the run record, then prints the `run_id`. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned.
+It prints the plan and writes the **planned** half of the run record, then prints the `run_id` on the last line. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned. Note the order: the JSON first, the id last, so `sed '$d'` gets you parseable JSON.
+
+**Call this ONCE per run.** Every invocation without `--dry-run` writes another planned run record, so re-running it to re-read or re-parse its own output forges runs that then have to be abandoned by hand — and each one lands in the Step 0 alarm's own denominator. If you need the plan again, use `--dry-run`, which computes and prints it and writes nothing.
 
 **The plan's `tier_floor` is a floor.** You may escalate above it (record the escalation at Step 14); you may never descend. Descending is what makes the skill impossible to iterate on, because no two runs then execute the same process. You do not name a tier — the script does.
 
@@ -162,7 +166,12 @@ Before entering the main loop, check the diff size. Step 0's `context.sh` alread
 
 When in doubt (any logic touched, or borderline size), do NOT take the fast path — run the full loop. The fan-out's value is independent perspectives on substantial code; a typo or a version bump doesn't earn six agents plus scorers.
 
-**Think the full loop is overkill for a diff that fails this test? Ask; don't decide.** E.g. a one-call stdlib swap plus its test. Before spawning anything, send one 🔀 AskUserQuestion: the diff stat, what logic changed, and why you think the fan-out isn't warranted. Offer "Full loop (Recommended per skill)" and "Fast path". Take the fast path only on an explicit yes, and record that approval in the report. In a headless or subagent run where you can't ask, run the full loop. Never downgrade silently.
+**Think the full loop is overkill for a diff that fails this test? Measure, or go wider — do not ask.** This used to send a 🔀 AskUserQuestion. It was the wrong instrument: every such ask this skill has produced traced back to a number here measuring the wrong thing, so the user was being asked to adjudicate a mismeasurement rather than a judgment. Two rules replace it:
+
+- **The question is WIDTH, not tier.** The tier floor is not yours to lower — `derive_tier` refuses a tier below the plan's floor with a hard exit, and Step 0b above says so. What *is* yours is how wide the fan-out goes inside that tier: how many batches, how many instances per file-scoped agent. That is the choice the ask was really about, and it is measurable. Measurable means a field in `context.sh`'s or `batch-files.py`'s output, or a count you can print: `semantic_lines`, `review_delta_lines`, `sizing_excluded`, `near_duplicates`, "no file in the diff is reachable from an entrypoint". Take the number and move, and record it: `runlog.py cycle --width-reason "<field>=<value>"` stores the measurement beside that cycle's `--agents` count. It goes through the same banned-reason funnel as every other free-text reason, so an enumerated precedent phrasing is refused there too.
+- **When no number decides it, take the WIDER option.** Not an ask. An unmeasurable hunch that a fan-out is excessive is exactly the hunch this skill exists to overrule, and the cost of being wrong is asymmetric: a redundant agent costs tokens, a skipped one ships the bug. This also makes the honest path and the cheap path the same path in a headless or subagent run, where there is no one to ask. Note that a size hunch is **not** rejected at write time — `BANNED_REASON` enumerates precedent and convention phrasings only, and it is a speed bump rather than a guarantee even for those: an unenumerated precedent phrasing passes too, which is how "consistent with existing patterns in the repo" walked through until it was added. Nothing downstream will catch "this looks small" for you. This bullet is the handler.
+
+Never narrow silently: pass `runlog.py cycle --width-reason` when you record the cycle (Step 10 shows it), which is where a width reason goes. Nothing *requires* it — the flag is optional and an empty value is accepted — so a `width_reason: null` row is on you, not on the tool. Nothing aggregates those reasons yet — `cmd_alarm` reads gate completions and abandonment reasons, never width — so a wrong threshold here surfaces through `review-stats.py`'s `cycles / agents / mean agents per run` figures plus reading the recorded reasons, not through an alarm. Note that `tier_executed` cannot show it: that is a tally over skipped/carried/fast/full/partial, and two runs of the same tier at three and thirty agents are indistinguishable in it.
 
 **Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a code-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and the security review's Stage-1 finder — pass it the diff, the learnings file, the threat model, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
 
@@ -170,9 +179,9 @@ When in doubt (any logic touched, or borderline size), do NOT take the fast path
 
 You already ran the loop this session, reached a clean exit, then made a **small follow-up commit** (a comment, a doc line, a config tweak) — often to satisfy review feedback or your own polish. The pre-push gate will (correctly) block it: the tip changed, so this exact state hasn't been reviewed. **Do not** reach for `record-reviewed.sh` by hand to clear it — that stamps "reviewed" on something the loop never saw (see Step 14).
 
-Instead, re-enter here cheaply. Diff the new commit against the last reviewed sha (`git diff <last-reviewed-sha>...HEAD`), then:
+Instead, re-enter here cheaply. Step 0 already found the sha and sized the delta — `last_reviewed_sha` and `review_delta_lines`, with `fast_path_eligible_by_delta` as the size verdict. Diff against it (`git diff <last_reviewed_sha>..HEAD`) and then:
 
-- **Fast-path-eligible** (Step 3b's test on that delta: under ~30 changed lines, no program logic) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then Step 14 as normal (post or defer the summary comment, `record-reviewed.sh`, push check). This is ~10 seconds and ends with a *legitimate* reviewed stamp.
+- **Fast-path-eligible** (`fast_path_eligible_by_delta` is true, and no program logic in the delta) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then Step 14 as normal (post or defer the summary comment, `record-reviewed.sh`, push check). This is ~10 seconds and ends with a *legitimate* reviewed stamp.
 - **Genuinely beneath even that** (e.g. a one-word typo fix in a comment) → `record-skipped.sh "<reason>"` (Step 14). Honest, auditable, one line.
 - **The tip changed only because of a rebase or amend, with no content change** → nothing to do. The `post-rewrite` hook already carried the record by `patch-id`. Do not reach for `record-skipped.sh` to paper over a rewritten sha. If the record did not carry, treat the delta as unreviewed — usually because the patch differs, but confirm the hook is actually installed here before concluding that, since an uninstalled hook is silent in exactly the same way.
 - **Touches logic, or you're unsure** → run the full loop from cycle 1 on the delta. The re-entry is a shortcut for *trivial* follow-ups, not a way to shrink review of real changes.
@@ -214,7 +223,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
     j. Append captured learnings to .git/info/review-loop-learnings.md (Step 11), deduping against existing entries.
-    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents ..`
+    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents .. --width-reason ".."`
         (Step 10). EVERY cycle, including a zero-fix one — convergence is derived from these rows,
         and a run with none of them reads as "did not converge" at Step 14. Pass `--asked`: a cycle
         that applied nothing but routed findings to the user has NOT converged, and omitting the
@@ -287,6 +296,8 @@ python3 ~/.claude/skills/review-loop/batch-files.py <this-cycle's diff-range>
 ```
 
 It bin-packs the changed files into **batches under a ~1500-line whole-file budget** and lists any oversized file to handle by diff-plus-enclosing-scope. **Spawn one instance of each file-scoped agent per batch, in parallel**, each receiving the whole contents of its batch's files plus the diff of what changed in them. On a normal PR this is a single batch = one instance each (identical to before); it only fans out when the changed files exceed the budget — which is exactly where attention-splitting starts to hurt. Batches are disjoint file sets, so instances of the same agent never produce duplicate findings.
+
+**`near_duplicates` is the width answer, so don't re-derive it by eye.** Packing by file *size* alone measured the wrong thing: nine test suites received one identical check-count guard, split across four batches, and cost twelve agents for a change there was mostly one of — and the width then looked like something to ask about. Six of the nine suites normalize to one fingerprint there; `runlog.test.sh`, `context-sizing.test.sh` and `review-stats.test.sh` carried additional edits and correctly do not group. Any batch figure here is range-specific and not a general ratio — on `aaaebb4...1de3722` collapsing changes nothing (four batches either way), while on this branch it is five without and four with. An earlier version of this paragraph advertised four-to-three on that first range; that reduction existed only because the budget was not counting the sibling hunks the agents are told to read, and it disappeared once they were counted. The mechanism is sound, the saving is smaller than first claimed, and it is the collapsed *agent count* that reliably drops rather than the batch count. The script normalizes each file's hunks (whitespace collapsed, integer literals folded) and keeps one representative per identical-edit group. For each entry in `near_duplicates`, give the representative's agents the whole representative file as usual, plus **each sibling's hunk and the value that differs in it** — nothing else. Reading nine copies of one edit does not find a tenth file that should have had the edit and doesn't; only enumerating the files that should carry it does, which is a separate check and belongs in the mechanical batch.
 
 **Shared agent inputs go in one fixed place:** `<git-common-dir>/info/review-loop-run/` (clear it at the start of each run). Write the diff, the spec artifact, and any shared brief there and pass agents the path. Not `$TMPDIR`: it resolves to a different directory with the sandbox on vs. off, so a file written by an unsandboxed fetch can silently miss the copy the agents read.
 
@@ -441,9 +452,11 @@ After committing, record this commit's sha (`git rev-parse HEAD`) as the previou
 python3 ~/.claude/skills/review-loop/runlog.py cycle --run-id <run_id> --n <N> \
   --applied <fixes applied> --asked <ask-bucket items> \
   --defect-findings <n> --comment-findings <n> \
-  --agents <agents spawned this cycle> [--tokens <observed subagent tokens>] \
-  [--analysis-changed]
+  --agents <agents spawned this cycle> --width-reason "<field>=<value>" \
+  [--tokens <observed subagent tokens>] [--analysis-changed]
 ```
+
+`--width-reason` is the measurement that settled this cycle's fan-out width — `semantic_lines=129, 3 batches, no near_duplicates`. Argparse does not require it and an empty string is accepted, so nothing stops you omitting it; a cycle row with `width_reason: null` is a width nobody can account for later, which is the state Step 3b's rule exists to remove. Keep to the `<field>=<value>` shape: the reason goes through the same banned-reason funnel as every other free-text field, and prose phrasings like "same pattern as the first file" or "mirrors the existing" hard-exit there because they read as precedent arguments.
 
 This is the only thing that answers "was the review finished, or did we stop?" — Step 14's push
 checker derives convergence from these rows rather than being told, and **a run with no cycle rows
@@ -643,8 +656,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
 | Bucket | Score | Risk profile (Step 8a) | Action |
 | --- | --- | --- | --- |
 | Ask user | ≥40 | structural finding from Agent #7 | Surface as proposal; never auto-apply |
-| Ask user | ≥40 | baseline smell from Agent #1 (name / duplication) | Heuristic — surface as proposal; never auto-apply |
-| Report-only | <40 | any always-ask finding (#7, #9, #1 baseline, `always_ask`) | Listed in the report (#7 nits / #9 questions), not asked; never auto-applied |
+| Auto-fix / Ask | by score | baseline smell from Agent #1 (name / duplication) | Routes on confidence like anything else — `always_ask: false`. Was always-ask until 2026-10-07; see `agent-roster.md` for why it changed and what still asks |
+| Report-only | <40 | any always-ask finding (#7, #9, `always_ask`) | Listed in the report (#7 nits / #9 questions), not asked; never auto-applied |
 | Auto-fix | ≥80 | (any) | Apply silently |
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
 | Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |

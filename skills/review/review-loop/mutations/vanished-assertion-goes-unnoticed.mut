@@ -1,0 +1,7 @@
+target: skills/review/review-loop/learn.test.sh
+verify: bash skills/review/review-loop/learn.test.sh
+expect: ran 6 checks, expected 7
+why:    an assertion that VANISHES is invisible without a count, and it has happened twice here: a syntax error inside a `cond && ok || bad` list abandons the whole list so NEITHER branch runs, and six assertions appended below a suite's summary-and-exit never executed at all. shellcheck flags that idiom ~109 times across these suites and cannot tell a deliberate one from a broken one. This entry deletes one assertion from the smallest suite and requires the count guard to notice — without it the suite reports "all checks passed" one check lighter, which is exactly the silent hole the guard exists to close.
+--- old
+grep -q "on purpose" "$F" && ok "its text reaches the file" || bad "its text reaches the file"
+--- new

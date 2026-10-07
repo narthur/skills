@@ -1,0 +1,11 @@
+target: skills/review/review-loop/context.sh
+verify: bash skills/review/review-loop/context-sizing.test.sh
+expect: FAIL  a CRLF file with odd marker spacing and case is still read
+why:    nothing in this repo wrote the sweep marker for most of its life -- the only producer was an instruction to an LLM -- so an exact `^<!-- swept: N -->$` match meant a stray CR from a CRLF file, a missing space, or a different capitalisation silently reverted the trigger to its bare-count behaviour with nothing reporting it. The reader is the only place that can absorb a variant.
+--- old
+  learnings_swept_entries=$(sed -n \
+    's/^[[:space:]]*<!--[[:space:]]*[Ss]wept:[[:space:]]*\([0-9]\{1,\}\).*$/\1/p' \
+    "$lf" 2>/dev/null | tail -1)
+--- new
+  learnings_swept_entries=$(sed -n 's/^<!-- swept: \([0-9]\{1,\}\) -->$/\1/p' \
+    "$lf" 2>/dev/null | tail -1)

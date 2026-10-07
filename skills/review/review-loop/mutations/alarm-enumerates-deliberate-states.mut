@@ -1,6 +1,6 @@
 target: skills/review/review-loop/review-stats.py
 verify: cd skills/review/review-loop && ./review-stats.test.sh
-expect: an unrecognised status 'error' goes loud and is named
+expect: FAIL  an unrecognised status 'error' goes loud and is named
 why:    defaulting an unrecognised status to the DELIBERATE bucket softens every failure spelling nobody listed — error, timeout, crashed, blocked, incomplete, and FAILED all read as "declined with a reason". Neither vocabulary is closed, so the default is the whole decision, and it must be loud
 --- old
             if st in DECLINED_STATES:

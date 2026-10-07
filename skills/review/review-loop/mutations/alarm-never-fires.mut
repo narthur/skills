@@ -1,6 +1,6 @@
 target: skills/review/review-loop/review-stats.py
 verify: cd skills/review/review-loop && ./review-stats.test.sh
-expect: three unreported runs raise the gate
+expect: FAIL  three unreported runs raise the gate
 why:    the alarm going silent is indistinguishable from the alarm working, so a change that disables it entirely must be caught by something other than reading the output of a healthy store. Mutates the threshold itself rather than one bucket's comparison: the combined-count rule backstops a single bucket, so disabling one bucket alone is no longer observable — which is the right behaviour and means this entry has to reach the constant that actually governs firing
 --- old
 ALARM_THRESHOLD = 3

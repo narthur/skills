@@ -105,7 +105,12 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          ref: 2e9b1a885441113dc8c98fda085e2a6e1e711363 # v0.1.2
+          # Ahead of v0.1.2, deliberately untagged: this commit fixes `looper docs`
+          # attributing a flag to every script named on a line, which failed this very
+          # workflow on prose that correctly read `runlog.py cycle --width-reason`.
+          # Cutting a release is a separate call; the pin is a commit either way, which
+          # is the whole point of the paragraph above.
+          ref: 2c6ce8541bd35c9d464e34087744a1a1dce3b399 # main, 2026-10-07
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -136,7 +141,7 @@ jobs:
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 24 ] || { echo "only $n mutations, expected at least 24 — was one deleted?"; exit 1; }
+          [ "$n" -ge 49 ] || { echo "only $n mutations, expected at least 49 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       - name: mutation score

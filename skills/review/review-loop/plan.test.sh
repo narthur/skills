@@ -8,8 +8,9 @@ set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 PY=$(command -v python3.14 || command -v python3)
 fails=0
-ok() { echo "  ok  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+checks=0
+ok() { echo "  ok  $1"; checks=$((checks + 1)); }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 # Isolated from the first invocation, not from line 133. Every plan() and sem() call below
 # ran against the ambient store, with --dry-run the only thing keeping them out of the real
@@ -20,6 +21,76 @@ bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/plan-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
 export REVIEW_LOOP_RUNS="$TMP/ambient.jsonl"
+
+# github_reachable() had no coverage at all — not one of its FIVE outcomes, and no mutation
+# entry — while being the function whose whole job is reporting WHICH reason Agent #10 is
+# skipped for. A gate reason is read later as evidence, so a wrong one costs more than a
+# missing one. All five are covered below. Stubbed via PATH: `git` and `gh` are the only
+# externals. `$2` is the remote line, because pinning it to a github URL for every case is
+# what left the no-remote branch uncovered while a comment claimed four-of-four.
+stubdir() {
+	local d="$TMP/stub-$1" remote="$2"; mkdir -p "$d"
+	printf '#!/bin/sh\necho "%s"\n' "$remote" > "$d/git"
+	chmod +x "$d/git"
+	shift 2
+	printf '%s\n' "$@" > "$d/gh"
+	chmod +x "$d/gh"
+	printf '%s' "$d"
+}
+GH_REMOTE="origin  git@github.com:o/r.git (fetch)"
+reason_for() {
+	PATH="$1:$PATH" "$PY" -c '
+import json, sys
+sys.path.insert(0, ".")
+import plan
+print(json.dumps(plan.github_reachable()))'
+}
+
+d=$(stubdir ok "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "[{\"number\":1}]" ;; esac')
+got=$(reason_for "$d")
+grep -q '^\[true,' <<<"$got" && grep -q "PR history confirmed" <<<"$got" \
+	&& ok "a repo with PRs is reachable, and says the history was confirmed" \
+	|| bad "a repo with PRs is reachable ($got)"
+
+d=$(stubdir nopr "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "[]" ;; esac')
+got=$(reason_for "$d")
+# Each negative matters as much as its positive: the whole function is about WHICH
+# reason, and reporting an auth failure for a repo that simply has no PRs is the bug
+# it was written to fix. A test that only checks the right phrase is present passes a
+# reason that also claims the wrong one.
+grep -q '^\[false,' <<<"$got" && grep -q "no pull requests at all" <<<"$got" \
+	&& ! grep -qi "authenticat" <<<"$got" \
+	&& ok "a repo with no PRs is skipped for having no PRs, not for auth" \
+	|| bad "a repo with no PRs is skipped for the right reason ($got)"
+
+d=$(stubdir noauth "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 1 ;; pr) echo "[]" ;; esac')
+got=$(reason_for "$d")
+grep -q '^\[false,' <<<"$got" && grep -q "not authenticated" <<<"$got" \
+	&& ! grep -q "pull requests" <<<"$got" \
+	&& ok "an auth failure is reported as an auth failure" \
+	|| bad "an auth failure is reported as an auth failure ($got)"
+
+# The probe FAILING is the case that used to fall through to the unconditional success
+# line, asserting confirmed PR history that nothing had confirmed — the same defect the
+# function's own docstring diagnoses. Fail open, but say the probe failed.
+d=$(stubdir prfail "$GH_REMOTE" '#!/bin/sh' 'case "$1" in auth) exit 0 ;; pr) echo "api down" >&2; exit 1 ;; esac')
+got=$(reason_for "$d")
+grep -q '^\[true,' <<<"$got" && grep -q "could not confirm PR history" <<<"$got" \
+	&& ! grep -q "PR history confirmed" <<<"$got" \
+	&& ok "a failed probe fails open but does not claim it confirmed anything" \
+	|| bad "a failed probe does not claim it confirmed anything ($got)"
+
+# The fifth outcome. No github remote at all short-circuits before either `gh` call, so
+# a `gh` stub that would succeed must not change the answer.
+# The gh stub deliberately FAILS auth and returns PRs, so either gh call would visibly
+# change the answer. An `exit 0`-with-no-output stub pinned nothing: moving the remote
+# check after `gh auth status` left this suite fully green.
+d=$(stubdir noremote "origin  git@gitlab.com:o/r.git (fetch)" '#!/bin/sh' 'case "$1" in auth) exit 1 ;; pr) echo "[{\"number\":1}]" ;; esac')
+got=$(reason_for "$d")
+grep -q '^\[false,' <<<"$got" && grep -q "no github remote" <<<"$got" \
+	&& ! grep -qi "authenticat\|pull requests" <<<"$got" \
+	&& ok "no github remote is reported as that, not as auth or missing PRs" \
+	|| bad "no github remote is reported as that ($got)"
 
 # $1 changed_lines, $2 fast_eligible, $3.. plan.py flags -> plan JSON
 plan() {
@@ -62,6 +133,28 @@ sem() {
 	printf '{"changed_lines":%s,"semantic_lines":%s,"sizing_excluded":"890 line(s) in lockfiles or generated files","fast_path_eligible_by_size":%s,"base_branch":"","learnings_entries":0,"learnings_compaction_due":false}' \
 		"$raw" "$semantic" "$fast" | "$PY" plan.py --model test --dry-run "$@" 2>/dev/null
 }
+# The sweep gate's reason must name the condition that actually decided it. `due` stopped
+# being the bare threshold when the regrowth margin was added and this text did not follow:
+# at 40 entries last swept to 36 it said "40 learnings entries — under the 40 threshold",
+# false on its face, and sent a reader hunting an off-by-one that did not exist.
+sweepreason() {
+	printf '{"changed_lines":10,"fast_path_eligible_by_size":false,"base_branch":"","learnings_entries":%s,"learnings_compaction_due":%s,"learnings_swept_entries":%s}' \
+		"$1" "$2" "$3" | "$PY" plan.py --model test --dry-run $BOOLS_OFF 2>/dev/null \
+		| "$PY" -c 'import json,sys; print(json.load(sys.stdin)["gates"]["staleness_sweep"]["reason"])'
+}
+r=$(sweepreason 40 false 36)
+grep -q "last sweep left 36" <<<"$r" && ! grep -q "under the 40" <<<"$r" \
+	&& ok "at the threshold but under the regrowth margin, the reason says so" \
+	|| bad "at the threshold but under the regrowth margin, the reason says so ($r)"
+r=$(sweepreason 12 false null)
+grep -q "under the 40 threshold" <<<"$r" \
+	&& ok "genuinely under the threshold still says under the threshold" \
+	|| bad "genuinely under the threshold still says under the threshold ($r)"
+r=$(sweepreason 44 true 36)
+grep -q "at/over the 40 threshold" <<<"$r" && ! grep -q "last sweep" <<<"$r" \
+	&& ok "and a due sweep says the threshold was crossed" \
+	|| bad "and a due sweep says the threshold was crossed ($r)"
+
 p=$(sem 900 10 true $BOOLS_OFF)
 [ "$(gate agent_7_structural <<<"$p")" = "skip" ] && ok "a 900-raw/10-semantic diff is under the structural floor" 	|| bad "a 900-raw/10-semantic diff is under the structural floor"
 [ "$(tier <<<"$p")" = "fast" ] && ok "and is fast-path eligible on the semantic count" || bad "and is fast-path eligible on the semantic count"
@@ -186,5 +279,18 @@ plan 10 true $BOOLS_OFF >/dev/null
 export REVIEW_LOOP_RUNS="$TMP/ambient.jsonl"
 
 echo
-[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works.
+EXPECTED_CHECKS=40
+if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
+	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+	fails=$((fails + 1))
+fi
+[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
 exit "$fails"

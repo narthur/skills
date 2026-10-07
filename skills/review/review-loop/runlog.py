@@ -16,18 +16,19 @@ run_id.
   runlog.py plan    --tier <floor> --model <m> [--base <b>] [--changed-lines <n>]
                     [--semantic-lines <n>] [--sizing-excluded <t>] [--tier-reason <t>]
                     [--agent-cap <n>] [--inputs <json>] [--gates <json>] [--head <sha>]
-                    [--run-id <id>]
+                    [--run-id <id>] [--session-kind <k>]
   runlog.py finish  --run-id <id> --outcome <o> [--tier <t>] [--executed <json>]
                     [--escalations <json>] [--agents <json>] [--findings <json>] [--asks <n>]
                     [--allow-unaccounted]
   runlog.py skipped --reason <r> [--model <m>]     one complete row, tier=skipped
-  runlog.py carried --from <sha> --to <sha> --how reviewed|skipped
-  runlog.py check   [--head <sha>] [--session <id>] [--force]   exit 1 on an unfinished run
+  runlog.py carried --from <sha> --to <sha> --how reviewed|skipped [--by <what>]
+  runlog.py check   [--head <sha>] [--session <id>] [--force] [--run-id <id>]
+                    exit 1 on an unfinished run
   runlog.py nudge   --run-id <id>
   runlog.py abandon --run-id <id> --missing <text>
   runlog.py cycle   --run-id <id> --n <k> --applied <n> --agents <n> [--asked <n>]
                     [--defect-findings <n>] [--comment-findings <n>] [--analysis-changed]
-                    [--tokens <n>]
+                    [--width-reason <t>] [--tokens <n>]
   runlog.py convergence --run-id <id>              prints it; exit 0 only if converged
   runlog.py show    --run-id <id>
 """
@@ -283,6 +284,9 @@ BANNED_REASON = (
     "precedent", "already exists in the repo", "matches an existing pattern",
     "matches existing pattern", "same pattern as", "pattern copy", "pattern-copy",
     "copied from existing", "consistent with existing code", "follows the existing pattern",
+    # Caught by its own new width-reason test: the list had "matches an existing pattern"
+    # and "follows the existing pattern" but not this phrasing, so it was accepted.
+    "consistent with existing pattern",
     "established pattern in this repo",
     "how the rest of the codebase",
     "how the rest of this codebase",
@@ -324,7 +328,11 @@ def reasons_in(rec):
                        # field licensing reduced review that no check ever read, so it was
                        # also the one place a precedent argument could still be written.
                        ("sizing_excluded", "this sizing exclusion"),
-                       ("tier_reason", "this tier")):
+                       ("tier_reason", "this tier"),
+                       # Same reason sizing_excluded is here: a width reason licenses a
+                       # NARROWER fan-out, so it is a field that buys cheaper review and
+                       # therefore one a precedent argument would otherwise slip through.
+                       ("width_reason", "this fan-out width")):
         if rec.get(key):
             out.append((label, rec[key]))
     return out
@@ -449,6 +457,22 @@ SUBCOMMAND_STATES = ("skipped", "carried")
 # and the Step 0 alarm fired permanently on gates nobody could fix, which teaches a
 # reader to scroll past the alarms that are right.
 GATE_OK = ("done", "n/a")
+# Two different questions were being asked of one tuple. "Did the gate complete?" decides
+# the tier; "should it be silent?" decides whether the alarm shows it. A waiver PASSES the
+# gate (references/measurement-gate.md:65), so it must not force `partial` — but three runs
+# waiving the same gate is precisely the signal the alarm exists to raise, so it must not go
+# quiet either. Adding `waived` to GATE_OK would have done both at once and made its entry
+# in review-stats.DECLINED_STATES dead code, hiding a repeated waiver completely.
+# `passed` was briefly added here too and taken back out. It is report-line PROSE for a gate
+# line (references/report-format.md:64), not a word in the `--executed` vocabulary, which is
+# done|skipped|failed|n/a — a passing gate already has `done`. Accounting for it made the two
+# instruments contradict each other on one record: the tier read `full` while the alarm read
+# `measurement_gate did not complete (passed) 3x`, because `passed` is in neither GATE_OK nor
+# DECLINED_STATES. Two instruments disagreeing is worse than one being loud. Anything NOT
+# listed here still forces partial and is still reported with its own name, which is the loud
+# default three separate omissions have now argued for, and it is the right handler for a
+# status nobody should be writing.
+GATE_ACCOUNTED = GATE_OK + ("waived",)
 TIER_RANK = {"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}
 
 
@@ -466,7 +490,7 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     # Only gates the plan said to run count. An entry for a gate the plan already
     # marked skip is redundant, not a failure, and shouldn't drag the tier down.
     broken = [g for g, v in executed.items()
-              if isinstance(v, dict) and v.get("status") not in GATE_OK
+              if isinstance(v, dict) and v.get("status") not in GATE_ACCOUNTED
               and (planned is None or g in planned)]
     # "done" and "ok" are the same claim. Gates say `done`, so a caller writing the
     # agent roster reaches for `done` too — and counted every successful agent as a
@@ -532,6 +556,13 @@ def cmd_cycle(a):
         "comment_findings": a.comment_findings,
         "analysis_changed": bool(a.analysis_changed),
         "agents": a.agents,
+        # Why the fan-out was this wide. Step 3b tells the orchestrator to settle width by
+        # measurement rather than by asking, and said the reason was recorded — which was
+        # false: `--agents` was a bare integer with no reason anywhere in the record, so a
+        # recurring bad threshold had nothing to show up in. A width that keeps being
+        # justified the same way is the signal the threshold is wrong, and that is only
+        # visible if the justification is stored next to the count.
+        "width_reason": a.width_reason,
         # Recorded, never enforced. Agent count is the cap's unit because it is
         # derivable; tokens are the real cost. Logging both lets the proxy be checked
         # against actual spend before the cap moves to a token or weighted basis.
@@ -702,6 +733,13 @@ def cmd_abandon(a):
     existing = load(limit=None).get(a.run_id) or {}
     if existing.get("outcome"):
         sys.exit(f"runlog: {a.run_id} already finished as {existing['outcome']!r} — not overwriting")
+    # argparse's required=True only demands the flag, not content: `--missing ""` wrote an
+    # empty reason and exited 0, which is precisely the silent skip the --missing help text
+    # says this record prevents. Enforce the claim rather than soften it; cmd_plan and
+    # cmd_finish already hold their own reason fields to this bar.
+    if not (a.missing or "").strip():
+        sys.exit("runlog: --missing needs the gates that did not run — an abandonment with "
+                 "nothing named is the silent skip this record exists to prevent")
     append({
         "run_id": a.run_id,
         "phase": "finish",
@@ -774,7 +812,17 @@ def cmd_show(a):
     print(json.dumps(run, indent=1, sort_keys=True))
 
 
-def main():
+def build_parser():
+    """The parser, built separately so a test can ASK it what each subcommand accepts.
+
+    The synopsis in this module's docstring is printed verbatim by `--help`, so it is a
+    user-facing flag list that can drift from the flags themselves — and did, four times
+    for one flag. The guard in runlog.test.sh compares the two, and it has to introspect
+    argparse to do that honestly: its first version regexed this source for
+    `add_argument("--...")`, which silently missed an underscore, a digit, a single-quoted
+    string, a wrapped line, a short option listed first, and anything declared after
+    `set_defaults`. Six ways to be undocumented and still green.
+    """
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = p.add_subparsers(dest="cmd", required=True)
 
@@ -838,6 +886,11 @@ def main():
     sc.add_argument("--analysis-changed", action="store_true",
                     help="the Step 4a deterministic pass changed files or left unresolved findings")
     sc.add_argument("--agents", type=int, required=True, help="agents spawned this cycle")
+    sc.add_argument("--width-reason", help="the measurement that settled the fan-out width, "
+                    "e.g. 'semantic_lines=129, 3 batches, no near_duplicates'. Goes through "
+                    "the same BANNED_REASON funnel as every other free-text reason, which "
+                    "refuses the precedent phrasings it enumerates — a speed bump, not a "
+                    "guarantee: an unenumerated phrasing and a bare size hunch both pass")
     sc.add_argument("--tokens", type=int, help="observed subagent tokens, recorded not enforced")
     sc.set_defaults(func=cmd_cycle)
 
@@ -863,7 +916,16 @@ def main():
 
     sa = sub.add_parser("abandon")
     sa.add_argument("--run-id", required=True)
-    sa.add_argument("--missing", required=True)
+    # Not `--reason`, which is what every sibling subcommand calls its free-text field and
+    # what a caller therefore reaches for first. This one wants the GATES, so it is named
+    # for them — but the distinction only helps if the flag says so, and a bare
+    # "the following arguments are required: --missing" does not.
+    sa.add_argument("--missing", required=True, metavar="GATES",
+                    help="which planned gates you are NOT running, and why — e.g. "
+                         "'agent_7, agent_8: fast path approved by the user'. Named "
+                         "--missing rather than --reason because the gates are the "
+                         "actionable part; an abandonment with no gates named is the "
+                         "silent skip this whole record exists to prevent")
     sa.set_defaults(func=cmd_abandon)
 
     sc = sub.add_parser("check")
@@ -877,7 +939,11 @@ def main():
     ss.add_argument("--run-id", required=True)
     ss.set_defaults(func=cmd_show)
 
-    a = p.parse_args()
+    return p
+
+
+def main():
+    a = build_parser().parse_args()
     sys.exit(a.func(a) or 0)
 
 

@@ -1,0 +1,8 @@
+target: skills/review/review-loop/mark-swept.py
+verify: bash skills/review/review-loop/context-sizing.test.sh
+expect: FAIL  what mark-swept.py writes is what context.sh reads
+why:    the marker format had no producer under test at all, only prose telling an LLM what to type, so nothing would have noticed the writer and the reader drifting apart -- and the drift is silent in exactly one direction: the trigger reverts to a bare count and re-spawns a compaction agent every run.
+--- old
+    lines.append(f"<!-- swept: {entries} -->")
+--- new
+    lines.append(f"<!--swept={entries}-->")

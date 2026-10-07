@@ -67,6 +67,15 @@ def pr_exists():
 
 
 def github_reachable():
+    """Can Agent #10 do its job here, and if not, WHICH reason.
+
+    The skill lists two separate skip conditions for #10 — gh cannot reach the API, and
+    the repo has no PR history to mine — and this used to report the first for both. That
+    sent a run record into the store saying gh was unauthenticated when `gh auth status`
+    succeeded; the real reason was a repo with no PRs at all. A gate reason is read as
+    evidence later, so naming the wrong cause is worse than naming none: the fixes differ
+    (authenticate vs. nothing to fix).
+    """
     rc, out, _ = run(["git", "remote", "-v"])
     if rc != 0 or "github.com" not in out:
         return False, "no github remote"
@@ -74,7 +83,25 @@ def github_reachable():
     if rc != 0:
         # Seen repeatedly: the sandbox proxy denies api.github.com while git push works.
         return False, "gh not authenticated here (retry unsandboxed before accepting this)"
-    return True, "gh authenticated, github remote present"
+    # gh works, so the remaining question is whether there is anything to read. One API
+    # call, not per-file: a repo with zero PRs cannot have PR comments on any file, and
+    # that is the case this check exists to separate from an auth failure.
+    rc, out, err = run(["gh", "pr", "list", "--state", "all", "--limit", "1",
+                        "--json", "number"], timeout=20)
+    if rc != 0:
+        # Fail OPEN on a failed probe — #10 can discover an empty repo itself — but say
+        # that is what happened. Falling through to the unconditional success line below
+        # made this function do the very thing its docstring diagnoses one screen up:
+        # assert a checked fact (`gh authenticated, github remote present`) identically
+        # whether the probe confirmed PR history or crashed and the check was abandoned.
+        return True, ("gh authenticated, but could not confirm PR history "
+                      f"({(err or '').strip().splitlines()[0] if err and err.strip() else f'exit {rc}'}) "
+                      "— assuming reachable")
+    if out.strip() in ("[]", ""):
+        return False, ("gh works, but this repo has no pull requests at all — there are "
+                       "no review comments to mine, which is a different skip from an "
+                       "auth failure and needs no fix")
+    return True, "gh authenticated, github remote present, PR history confirmed"
 
 
 def biggest_changed_file(base):
@@ -143,11 +170,23 @@ def build(ctx, a):
     gates["record_reviewed"] = gate("run", "on clean exit")
 
     # --- computable from context.sh ------------------------------------------
+    # The reason has to name the condition that actually decided it. `due` stopped being
+    # the bare threshold when the regrowth margin was added, and this text did not follow:
+    # at 40 entries last swept to 36 it printed "40 learnings entries — under the 40
+    # threshold", which is false on its face and sent a reader looking for an off-by-one
+    # that was not there. Two conditions gate this now, so say which one held.
     due = bool(ctx.get("learnings_compaction_due"))
-    gates["staleness_sweep"] = gate(
-        "run" if due else "skip",
-        f"{ctx.get('learnings_entries', 0)} learnings entries"
-        + (" — at/over the 40 threshold" if due else " — under the 40 threshold"))
+    entries = ctx.get("learnings_entries", 0)
+    swept = ctx.get("learnings_swept_entries")
+    if due:
+        why = f"{entries} learnings entries — at/over the 40 threshold"
+    elif entries < 40:
+        why = f"{entries} learnings entries — under the 40 threshold"
+    else:
+        why = (f"{entries} learnings entries, at/over the 40 threshold, but the last sweep "
+               f"left {swept} and the file has not grown far enough past it to be worth "
+               f"re-sweeping")
+    gates["staleness_sweep"] = gate("run" if due else "skip", why)
 
     # --- threat model ---------------------------------------------------------
     tm = threat_model_state()

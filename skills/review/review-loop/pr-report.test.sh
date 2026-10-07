@@ -8,8 +8,9 @@ set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 PY=$(command -v python3.14 || command -v python3)
 fails=0
-ok() { echo "  ok  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+checks=0
+ok() { echo "  ok  $1"; checks=$((checks + 1)); }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/pr-report-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
@@ -225,5 +226,18 @@ pend="$repo/.git/info/review-loop-pending-report.$rid6.md"
 grep -q 'review-loop:run=' "$pend" 2>/dev/null && ok "and the deferred file names its run" || bad "and the deferred file names its run"
 
 echo
-[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works.
+EXPECTED_CHECKS=25
+if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
+	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+	fails=$((fails + 1))
+fi
+[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
 exit "$fails"

@@ -8,8 +8,9 @@ set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 PY=$(command -v python3.14 || command -v python3)
 fails=0
-ok() { echo "  ok  $1"; }
-bad() { echo "  FAIL  $1"; fails=$((fails + 1)); }
+checks=0
+ok() { echo "  ok  $1"; checks=$((checks + 1)); }
+bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/review-stats-test.XXXXXX") || { echo "mktemp failed"; exit 1; }
 trap 'rm -rf "$TMP"' EXIT
@@ -116,7 +117,12 @@ echo
 # pin that it still fires — and with which message.
 ALARM_TMP="$TMP/alarm"
 mkdir -p "$ALARM_TMP"
-alarm() { REVIEW_LOOP_RUNS="$ALARM_TMP/$1.jsonl" "$PY" review-stats.py --alarm 2>&1; }
+# The session id is PINNED, not inherited. The w5 case below is abandoned only by
+# derivation from the session, and is_abandoned() answers False unconditionally when the
+# var is unset — so that assertion passed in an interactive shell (which always exports it)
+# and failed under CI, which does not. `env -u CLAUDE_CODE_SESSION_ID` reproduces it. The
+# same hazard is already in this repo's learnings from one test earlier.
+alarm() { CLAUDE_CODE_SESSION_ID=s1 REVIEW_LOOP_RUNS="$ALARM_TMP/$1.jsonl" "$PY" review-stats.py --alarm 2>&1; }
 arow() { printf '%s\n' "$2" >> "$ALARM_TMP/$1.jsonl"; }
 
 # Three runs that left a planned gate unreported: a gate to FIX.
@@ -155,9 +161,94 @@ done
 out=$(alarm aband)
 grep -q "(run abandoned) did not complete 3x" <<<"$out" \
 	&& ok "repeated abandonment raises" || bad "repeated abandonment raises"
+
+# ...and it says WHY, grouped. The count alone is not actionable and reads as broken: five
+# abandonments with no reasons shown sent a reader hunting the store by hand, concluding
+# the counter was wrong, and nearly softening a correct signal. The reasons are already in
+# the record; not printing them was the whole defect.
+for i in 1 2 3; do
+	arow awhy "{\"run_id\":\"w$i\",\"phase\":\"plan\",\"planned_at\":\"2026-03-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+	arow awhy "{\"run_id\":\"w$i\",\"phase\":\"finish\",\"outcome\":\"abandoned\",\"abandoned_missing\":\"plan.py re-invoked to re-read its own plan\"}"
+done
+# A fourth with a DIFFERENT reason, so grouping is visible as grouping.
+arow awhy "{\"run_id\":\"w4\",\"phase\":\"plan\",\"planned_at\":\"2026-03-04T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+arow awhy "{\"run_id\":\"w4\",\"phase\":\"finish\",\"outcome\":\"abandoned\",\"abandoned_missing\":\"agent_7: fast path approved\"}"
+# And a fifth nobody recorded at all — the one shape with no reason to print, where
+# saying so IS the actionable fact.
+arow awhy "{\"run_id\":\"w5\",\"phase\":\"plan\",\"planned_at\":\"2026-03-05T00:00:00\",\"session_id\":\"someone-else\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+out=$(alarm awhy)
+grep -q " 3x plan.py re-invoked to re-read its own plan" <<<"$out" \
+	&& ok "a repeated abandonment reason is grouped and counted" \
+	|| bad "a repeated abandonment reason is grouped and counted"
+grep -q " 1x agent_7: fast path approved" <<<"$out" \
+	&& ok "a distinct abandonment reason is listed separately" \
+	|| bad "a distinct abandonment reason is listed separately"
+# The inferred one must not borrow another run's reason, which is what a plain
+# `.get(reason)` over a shared counter would do.
+grep -q "nothing said why" <<<"$out" \
+	&& ok "an abandonment with no record says so rather than borrowing a reason" \
+	|| bad "an abandonment with no record says so rather than borrowing a reason"
 [ -n "$out" ] && ! grep -qE "record_reviewed|learnings_capture|upstream_drift_check" <<<"$out" \
 	&& ok "an abandoned run is not counted again against each of its gates" \
 	|| bad "an abandoned run is counted again against each of its gates"
+
+# Grouping is on the FLATTENED text, not the raw field. Keying the counter on the raw
+# reason and flattening only at print time made three whitespace-variant copies of one
+# cause print as three separate `1x` lines — defeating the grouping outright, and able to
+# push a repeated cause below ABANDON_REASONS_SHOWN. Operators type this text by hand.
+i=0
+for variant in "a  double  space" "a double space" "   a double space  "; do
+	i=$((i + 1))
+	arow aflat "{\"run_id\":\"f$i\",\"phase\":\"plan\",\"planned_at\":\"2026-04-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+	arow aflat "{\"run_id\":\"f$i\",\"phase\":\"finish\",\"outcome\":\"abandoned\",\"abandoned_missing\":\"$variant\"}"
+done
+out=$(alarm aflat)
+grep -q " 3x a double space" <<<"$out" \
+	&& ok "whitespace variants of one reason group as one reason" \
+	|| bad "whitespace variants of one reason group as one reason"
+
+# A long reason is clipped in the MIDDLE. Clipping from the end alone printed two reasons
+# sharing a long prefix — likely, since these name gates — as identical lines with
+# separate counts, which reads as the counter being broken. Nothing asserted the clip at
+# all before: removing truncation entirely left this suite green.
+pre="record_reviewed and learnings_capture and upstream_drift_check and threat_model_update both planned and"
+for i in 1 2 3; do
+	arow aclip "{\"run_id\":\"q$i\",\"phase\":\"plan\",\"planned_at\":\"2026-05-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+	arow aclip "{\"run_id\":\"q$i\",\"phase\":\"finish\",\"outcome\":\"abandoned\",\"abandoned_missing\":\"$pre never reached cycle $i of the fan-out\"}"
+done
+out=$(alarm aclip)
+grep -q "…" <<<"$out" && ok "an overlong reason is clipped" || bad "an overlong reason is clipped"
+# The two differ only in their TAIL, so end-clipping alone would print them identically.
+clipped=$(grep -c "1x record_reviewed and learnings" <<<"$out")
+distinct=$(grep "1x record_reviewed and learnings" <<<"$out" | sort -u | wc -l | tr -d ' ')
+[ "$clipped" = "3" ] && [ "$distinct" = "3" ] \
+	&& ok "two reasons sharing a long prefix stay distinguishable once clipped" \
+	|| bad "two reasons sharing a long prefix stay distinguishable ($clipped shown, $distinct distinct)"
+# The reason itself is bounded by REASON_CLIP. Measured in characters, via $PY: the
+# ellipsis is three BYTES, so awk's byte-wise length() reports 98 for a correct 96-char
+# clip and the check would fail on the thing it is meant to pass.
+longest=$($PY -c 'import re,sys; print(max((len(re.sub(r"^ *\d+x ","",l)) for l in sys.stdin.read().splitlines()), default=0))' <<<"$out")
+[ "$longest" -le 96 ] \
+	&& ok "and the clip actually bounds the reason" \
+	|| bad "and the clip actually bounds the reason (longest $longest)"
+
+# More distinct reasons than the alarm shows: the overflow line must name the count and
+# point somewhere real. It used to point at `review-stats.py --report`, which argparse
+# rejects, and the report printed no reasons at all — a message directing a reader to
+# information that did not exist, inside the fix for exactly that defect.
+for i in 1 2 3 4 5; do
+	arow amany "{\"run_id\":\"n$i\",\"phase\":\"plan\",\"planned_at\":\"2026-06-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"record_reviewed\":{\"planned\":\"run\"}}}"
+	arow amany "{\"run_id\":\"n$i\",\"phase\":\"finish\",\"outcome\":\"abandoned\",\"abandoned_missing\":\"cause number $i\"}"
+done
+out=$(alarm amany)
+grep -q "and 2 other reason(s)" <<<"$out" \
+	&& ok "the overflow line counts the reasons it is not showing" \
+	|| bad "the overflow line counts the reasons it is not showing"
+# The pointer has to work. `--report` is not a flag; the bare command is the report.
+rep=$(CLAUDE_CODE_SESSION_ID=s1 REVIEW_LOOP_RUNS="$ALARM_TMP/amany.jsonl" "$PY" review-stats.py 2>&1)
+grep -q "why runs were abandoned" <<<"$rep" && grep -q "cause number 5" <<<"$rep" \
+	&& ok "and the report it points at really lists every reason" \
+	|| bad "and the report it points at really lists every reason"
 
 # And the shape that was firing falsely: two correct skips plus one real miss of the
 # same gate is below the threshold in BOTH buckets, so it must stay silent.
@@ -315,5 +406,33 @@ done
 grep -q "evidence_gate did not complete (blocked) 3x" <<<"$(alarm blocked)" \
 	&& ok "a blocked gate is still loud" || bad "a blocked gate is still loud"
 
-[ "$fails" -eq 0 ] && echo "all checks passed" || echo "$fails check(s) failed"
+# `passed` stays loud too, and this is the half of that argument nothing pinned. runlog
+# deliberately does NOT account for `passed` (it is report-line prose, not an --executed
+# status), so the two instruments only agree while this list also leaves it out. Adding
+# `passed` to DECLINED_STATES re-creates the same disagreement in mirror image — tier
+# `partial` beside an alarm line reading "declined with a reason (passed)" — and every
+# suite stayed green when that was tried. The generic unrecognised-status case does not
+# cover it, because an explicitly enumerated `passed` is no longer unrecognised.
+for i in 1 2 3; do
+	arow passed "{\"run_id\":\"ps$i\",\"phase\":\"plan\",\"planned_at\":\"2026-12-0${i}T00:00:00\",\"session_id\":\"s1\",\"repo\":\"r\",\"gates\":{\"measurement_gate\":{\"planned\":\"run\"}}}"
+	arow passed "{\"run_id\":\"ps$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"measurement_gate\":{\"status\":\"passed\",\"reason\":\"metric plan posted\"}}}"
+done
+grep -q "measurement_gate did not complete (passed) 3x" <<<"$(alarm passed)" \
+	&& ok "a passed status stays loud, matching the tier runlog derives" \
+	|| bad "a passed status stays loud, matching the tier runlog derives"
+
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works.
+EXPECTED_CHECKS=46
+if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
+	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+	fails=$((fails + 1))
+fi
+[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
 exit "$fails"

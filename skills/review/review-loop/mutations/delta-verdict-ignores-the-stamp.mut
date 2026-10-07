@@ -1,0 +1,8 @@
+target: skills/review/review-loop/context.sh
+verify: bash skills/review/review-loop/context-sizing.test.sh
+expect: FAIL  and a one-line follow-up is delta-fast-path eligible
+why:    the delta verdict is an ADDITIONAL measure beside the branch-wide one. Collapsing it back onto the branch-wide numbers removes the only field that can tell a trivial follow-up from the branch it sits on, and would let a 200-line branch answer a question asked about one line.
+--- old
+    "fast_path_eligible_by_delta": bool(last_reviewed) and 0 < delta < 30,
+--- new
+    "fast_path_eligible_by_delta": 0 < changed and semantic < 30,

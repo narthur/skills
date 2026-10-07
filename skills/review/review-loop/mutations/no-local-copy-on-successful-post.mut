@@ -1,6 +1,6 @@
 target: skills/review/review-loop/pr-report.py
 verify: cd skills/review/review-loop && ./pr-report.test.sh
-expect: a successful post still leaves the local artifact
+expect: FAIL  a successful post still leaves the local artifact
 why:    a post that succeeded while the read-back failed refuses the push forever and posts a duplicate on every retry
 --- old
         write_pending(body, a.run_id, conv, a.repo)

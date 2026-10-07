@@ -1,0 +1,8 @@
+target: skills/review/review-loop/context.sh
+verify: bash skills/review/review-loop/context-sizing.test.sh
+expect: FAIL  and a one-line follow-up is delta-fast-path eligible
+why:    a follow-up commit after a clean exit is a trivial-diff question about the FOLLOW-UP. Sizing it against the whole unpushed branch made a nine-line comment edit read as fan-out-sized, which is what turned a measurable call into a question someone had to be asked.
+--- old
+  review_delta_lines=$(git diff --numstat "$last_reviewed..HEAD" 2>/dev/null \
+--- new
+  review_delta_lines=$(git diff --numstat "origin/$base_branch..HEAD" 2>/dev/null \

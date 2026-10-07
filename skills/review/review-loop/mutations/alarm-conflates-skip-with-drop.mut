@@ -1,6 +1,6 @@
 target: skills/review/review-loop/review-stats.py
 verify: cd skills/review/review-loop && ./review-stats.test.sh
-expect: a deliberate skip is not reported as a failure to complete
+expect: FAIL  a deliberate skip is not reported as a failure to complete
 why:    collapsing the two buckets reports every accounted-for decline as a failure to complete, which is the original defect — all five of the alarm's reported misses of record_reviewed were of exactly this kind, and none was real
 --- old
             if st in DECLINED_STATES:

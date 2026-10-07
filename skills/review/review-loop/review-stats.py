@@ -102,10 +102,14 @@ def dropped_gates(run):
 # evidence-gate.md, which never uses the word `blocked` at all.)
 #
 # `passed` appears in report-format.md:64's PROSE for a gate line but is in neither
-# GATE_OK nor this list, so it would read as a failure. Deferred rather than added: the
-# `--executed` template SKILL.md actually gives is the narrower done|skipped|failed|n/a,
-# where a passing gate has an obvious slot (`done`), and no run has ever written `passed`
-# as a status. See review-loop-deferred.md.
+# GATE_OK nor this list, so it would read as a failure. That was carried as a deferred
+# finding, re-read three times, and is now CLOSED as not-a-defect, on the reasoning the
+# entry had already reached each time: the `--executed` vocabulary is done|skipped|failed|n/a, a
+# passing gate has an obvious slot (`done`), and `passed` is report prose, not a status.
+# It was briefly added to runlog.GATE_ACCOUNTED and taken back out — accounting for it
+# made the tier read `full` while this alarm read `did not complete (passed)`, two
+# instruments contradicting each other about one record, which is worse than one of them
+# being loud. The loud default is the handler.
 #
 # Missing `waived` was the THIRD time this one decision went wrong: enumerate the
 # deliberate words and a failure spelling softens; enumerate the failures and a deliberate
@@ -114,6 +118,31 @@ def dropped_gates(run):
 # omission here over-reports rather than hides, and the message names the status so the
 # omission is visible rather than silent.
 DECLINED_STATES = ("skipped", "pending", "deferred", "waived")
+
+
+NO_ABANDON_RECORD = "no abandon record — the run stopped and nothing said why"
+ABANDON_REASONS_SHOWN = 3
+REASON_CLIP = 96
+
+
+def _flat(text):
+    """One line. This is the GROUPING key, not just a display step: keying the counter on
+    the raw text and flattening only at print time made three whitespace-variant copies of
+    one reason print as three separate `1x` lines — the exact failure the grouping was
+    added to fix, and able to push a repeated cause below ABANDON_REASONS_SHOWN. A
+    `--missing` reason is operator-typed free text, so that variance is ordinary."""
+    return " ".join(str(text).split())
+
+
+def _clip(text):
+    """Bounded for display, truncated in the MIDDLE. Two different reasons that share a
+    long prefix — likely here, since these name gates — clipped from the end alone printed
+    as identical lines with separate counts, which reads as the counter being broken."""
+    flat = _flat(text)
+    if len(flat) <= REASON_CLIP:
+        return flat
+    head = (REASON_CLIP - 1) * 2 // 3
+    return flat[:head] + "\u2026" + flat[head + 1 - REASON_CLIP:]
 
 
 def _naming(seen):
@@ -127,6 +156,7 @@ def cmd_alarm(runs):
     here = os.environ.get("CLAUDE_CODE_SESSION_ID") or os.environ.get("AO_SESSION_ID")
     dropped = collections.Counter()
     declined = collections.Counter()
+    abandon_why = collections.Counter()
     drop_why = collections.defaultdict(set)
     decline_why = collections.defaultdict(set)
     for run in recent:
@@ -136,7 +166,29 @@ def cmd_alarm(runs):
             # abandonment into nine gate failures — which is how three gates crossed the
             # threshold with no real miss between them. The abandonment is the actionable
             # signal and already has its own counter; `report` still shows per-gate detail.
+            #
+            # It was once argued that an EXPLICIT abandon (someone ran `runlog.py abandon`
+            # and named what was missing) is a deliberate declaration and belongs in the
+            # declined bucket, unlike an inferred one. That is wrong, and the test beside
+            # this went red when it was tried. Three explicit abandonments are three
+            # reviews that did not happen, which is as actionable as a signal gets —
+            # declaring it honestly makes the record truthful, not the outcome acceptable.
+            #
+            # The case that motivated the change was noise of a different origin: three
+            # phantom runs from re-invoking plan.py to re-read its own plan, each then
+            # abandoned by hand. Nothing in the record distinguishes those from a review
+            # abandoned before its first cycle, because they have the same shape. The fix
+            # belonged at the source — plan.py already has `--dry-run`, now documented in
+            # Step 0b — not here. Softening this counter would have suppressed a real
+            # signal to hide a self-inflicted one.
             dropped["(run abandoned)"] += 1
+            # Keep WHY. The count alone is not actionable and reads as broken: five
+            # abandonments with no reasons shown sent one reader hunting the store by
+            # hand, concluding the counter was wrong, and nearly softening a correct
+            # signal. The record already carries `abandoned_missing` for every explicit
+            # abandonment — not printing it was the whole defect. An inferred one has no
+            # reason to print, and saying so IS the actionable fact about it.
+            abandon_why[_flat(run.get("abandoned_missing") or NO_ABANDON_RECORD)] += 1
             continue
         for g, st in dropped_gates(run).items():
             # str(): a non-string status is not rejected at write time either, and
@@ -172,6 +224,18 @@ def cmd_alarm(runs):
     print(f"review-loop alarm — over the last {len(recent)} runs:")
     for n, g, what in hits:
         print(f"  {g} {what} {n}x" if "varying ways" not in what else f"  {g} {what}")
+        if g == "(run abandoned)":
+            # Grouped, commonest first, so one cause repeated is visible as one cause
+            # repeated rather than as five separate failures.
+            for why, k in abandon_why.most_common(ABANDON_REASONS_SHOWN):
+                print(f"      {k}x {_clip(why)}")
+            rest = len(abandon_why) - ABANDON_REASONS_SHOWN
+            if rest > 0:
+                # The pointer names the bare command because there is no `--report`
+                # flag (argparse exits 2 on one), and the full tally had to be ADDED to
+                # cmd_report — it printed no reasons at all, so the old line directed a
+                # reader to information that did not exist either way.
+                print(f"      ...and {rest} other reason(s) — `review-stats.py` has them all")
     print("  Repeat count beats calendar: fix the gate or change the plan, don't log it again.")
     return 0
 
@@ -273,6 +337,15 @@ def cmd_report(runs, repo):
         print("\nescalations above the computed floor (thresholds may be too loose):")
         for g, n in esc.most_common():
             print(f"  {n:3d}  {g}")
+
+    # Every abandonment reason, untruncated and ungrouped-by-cutoff. The alarm shows the
+    # top ABANDON_REASONS_SHOWN and points here for the rest; before this, here had none.
+    why = collections.Counter(_flat(r.get("abandoned_missing") or NO_ABANDON_RECORD)
+                              for r in lost)
+    if why:
+        print("\nwhy runs were abandoned:")
+        for reason, n in why.most_common():
+            print(f"  {n:3d}  {reason}")
 
     asks = sum(r.get("unresolved_asks") or 0 for r in runs)
     if asks:

@@ -3,7 +3,7 @@ verify: cd skills/review/review-loop && ./review-stats.test.sh
 expect: an abandoned run is counted again against each of its gates
 why:    an abandoned run has every planned gate unreported by construction, so counting it per gate as well turns one event into nine gate failures — which is how three gates crossed the alarm threshold with no real miss between them
 --- old
-            dropped["(run abandoned)"] += 1
+            abandon_why[_flat(run.get("abandoned_missing") or NO_ABANDON_RECORD)] += 1
             continue
 --- new
-            dropped["(run abandoned)"] += 1
+            abandon_why[_flat(run.get("abandoned_missing") or NO_ABANDON_RECORD)] += 1

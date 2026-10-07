@@ -1,0 +1,8 @@
+target: skills/review/review-loop/batch-files.py
+verify: python3 skills/review/review-loop/batch-files.py --selftest
+expect: AssertionError
+why:    a collapsed group's agents read the representative whole file PLUS every sibling's hunk, but only the representative's size reached pack() and its oversized-file check. Six siblings at twenty lines is 120 lines the budget never saw, so a group could push an agent's input over the target without being counted -- an under-count, and under-counting buys a cheaper review, the one direction a size measure must never err in. Found by CodeRabbit on PR #1. Counting them honestly also erased the four-to-three batch reduction this feature had been advertising, which was an artifact of the same gap.
+--- old
+        kept.append((rep, rep_n + sum(hunks.get(p, 0) for p in siblings)))
+--- new
+        kept.append((rep, rep_n))
