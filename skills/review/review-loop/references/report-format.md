@@ -22,10 +22,10 @@ Then:
 
 ```bash
 printf '%s\n' "<your findings narrative>" \
-  | python3 ~/.claude/skills/review-loop/pr-report.py --run-id <run_id> --post --label
+  | looper pr-report --run-id <run_id> --post --label
 ```
 
-`pr-report.py` reads the run record and renders the factual half itself — convergence,
+`looper pr-report` reads the run record and renders the factual half itself — convergence,
 the disclosure verbatim, every gate with planned-vs-actual and its reason, the cycle
 sequence, both sizing numbers with what was excluded, the agent roster, token spend —
 then appends your narrative from stdin unchanged. It also applies the
@@ -110,16 +110,20 @@ Remaining <50 findings (low confidence, not surfaced):
 
 ## Backfilling a deferred report (Step 0c)
 
-The deferred file ends with an HTML comment naming the `review:<convergence>` label still owed. The
-label block in `pr-report.py` sits after the no-PR branch returns, so on a fresh branch — the common
-case, since the push gate forces loop-then-push-then-PR — the at-a-glance signal is never applied by
-the deferring run. Re-running `pr-report.py --run-id <id> --post --label` once the PR exists is
-therefore preferred over pasting the file by hand: it posts the body *and* applies the label.
+The deferred file ends with an HTML comment naming the `review:<convergence>` label still owed: with
+no PR there was nothing to label, so on a fresh branch — the common case, since the push gate forces
+loop-then-push-then-PR — the deferring run never applied it. Post the file **as it is**, because it
+carries the narrative and a re-render would not (`looper pr-report` re-renders the record but reads
+the narrative from stdin, which a later session no longer has). Then apply the label by hand. The
+note's own suggestion, `looper pr-report --run-id <id> --label`, does not do this: `--label` takes
+effect only with `--post`, and `--post` would add a second comment.
 
 Reached when any `.git/info/review-loop-pending-report.*.md` exists **and** a PR now exists for the
 branch. (Pending file but still no PR → leave it in place and continue the run.)
 
-1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file <the pending file>`).
+1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file <the pending file>`),
+   then label it: `gh pr edit <n> --add-label review:<convergence>` with the convergence the note
+   names, removing any other `review:*` label so two cannot stand at once.
 2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
 3. Delete the pending file.
 4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.

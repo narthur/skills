@@ -254,7 +254,7 @@ def disclosure(conv, run):
             + ". The loop had not stopped finding things — another cycle would likely find more.")
 
 # All four states convergence() can report, "unknown" standing for None. Exported so
-# consumers key off this rather than restating the vocabulary: pr-report.py's labels used
+# consumers key off this rather than restating the vocabulary: the retired pr-report.py's labels used
 # to list all four independently while this tuple listed three, which is the divergence
 # the export exists to prevent.
 CONVERGENCE = ("converged", "capped", "halted", "unknown")
@@ -480,7 +480,7 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     """`partial` is a fact about the run, not a label the caller picks.
 
     Any planned agent that failed, or any gate that did not complete, makes the run
-    partial. The PR comment body reports it (`pr-report.py`, the **tier** field) and
+    partial. The PR comment body reports it (`looper pr-report`, the **tier** field) and
     `review-stats` tallies it, so letting a caller write `full` over it launders the
     run in the record humans actually read. The push gate does NOT read it — nothing
     here blocks a push — and the PR *label* is keyed on `convergence`, not on tier.

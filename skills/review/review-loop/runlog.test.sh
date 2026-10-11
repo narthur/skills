@@ -263,7 +263,7 @@ cy "$r" 1 0 6
 # The disclosure gate is no longer here: the `disclosed` phase and disclosure_pending were
 # deleted because the marker they wrote could be satisfied by `runlog.py disclosed --where
 # "trust me"` with no report anywhere — the shape --clean-exit was retired for, rebuilt inside
-# its own replacement. push-check.py --selftest owns that coverage now, and checks the
+# its own replacement. `looper push-check` owns that coverage now (internal/push in the looper repo), and checks the
 # artifact (a PR comment or the pending file carrying the run's marker) instead of a claim.
 # The precedent ban matched raw text, so whitespace walked straight through it: a reason
 # long enough to wrap carries a newline mid-phrase, which is the ordinary case rather than

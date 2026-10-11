@@ -13,7 +13,15 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 
 ## Step 0: Gather Context (scripted)
 
-Run the context gatherer once at the start:
+First, require the `looper` binary — Step 14's report and push gate are subcommands of it, and there is no fallback:
+
+```bash
+command -v looper >/dev/null || { echo "review-loop needs looper: GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.1" >&2; false; }
+```
+
+If it is missing, stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+
+Then run the context gatherer once:
 
 ```bash
 ~/.claude/skills/review-loop/context.sh > "$(git rev-parse --git-dir)/review-loop-context.json"
@@ -564,7 +572,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    ```bash
    printf '%s\n' "<your findings narrative>" \
-     | python3 ~/.claude/skills/review-loop/pr-report.py --run-id <run_id> --post --label
+     | looper pr-report --run-id <run_id> --post --label
    ```
 
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
@@ -574,7 +582,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    **This is not optional, and not on your honour.** Step 2 refuses the push until this run's
    report is actually present — in a PR comment or in the pending file, matched by the
-   `<!-- review-loop:run=<id> -->` marker this script writes into every body. It checks the
+   `<!-- review-loop:run=<id> -->` marker this command writes into every body. It checks the
    artifact, not a claim that one exists: an earlier version recorded a marker row written by the
    orchestrator's own toolchain, which a since-deleted `disclosed` subcommand satisfied with no
    report anywhere. Required on **every** terminal exit, not only the unconverged ones — the
@@ -584,13 +592,13 @@ honesty rule, and the full "when NOT to auto-push" spec.
 2. **Decide the push with the checker**, never by re-deriving the checklist:
 
    ```bash
-   python3 ~/.claude/skills/review-loop/push-check.py --run-id <run_id> \
+   looper push-check --run-id <run_id> \
      --gate-state <passed|skipped|blocked> [--unresolved-skip] \
      --branch <current> --default-branch <default>
    ```
 
    **You do not tell it whether the loop converged — it reads that from the record.** There is no
-   `--clean-exit` any more: the one question this script exists to answer used to be answered by
+   `--clean-exit` any more: the one question this command exists to answer used to be answered by
    the orchestrator asserting a flag, which is how a run recorded `clean` while its own author
    reported it had not converged. Convergence is derived from the `cycle` rows you recorded at
    Step 10, so **a run with no cycle rows reads as "did not converge"** — recording them is how
