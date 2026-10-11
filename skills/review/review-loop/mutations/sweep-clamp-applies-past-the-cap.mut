@@ -1,0 +1,8 @@
+target: skills/review/review-loop/context.sh
+verify: bash skills/review/review-loop/context-sizing.test.sh
+expect: FAIL  a file swept past the cap is not due again with no growth
+why:    the re-arm point is clamped below the cap so a low-yield sweep still fires before prune takes over, but a sweep that ENDED past the clamp then re-armed at 48 against a file of 56, and was due on every run for zero evictions -- measured on 2026-10-11 in the skills and looper repos at once, where every fast-path run that skipped it recorded as partial.
+--- old
+    if swept_entries < LEARN_CAP - 2:
+--- new
+    if True:
