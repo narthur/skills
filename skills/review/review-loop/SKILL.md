@@ -573,9 +573,11 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    Publish it **from the record, not from memory**:
 
+   `--findings-file -` is what makes looper read the piped narrative. From v0.2.3 stdin is read only when asked for, so an idle inherited pipe cannot hang the call. Without the flag the narrative is dropped.
+
    ```bash
    printf '%s\n' "<your findings narrative>" \
-     | ~/.local/bin/looper pr-report --run-id <run_id> --post --label
+     | ~/.local/bin/looper pr-report --run-id <run_id> --findings-file - --post --label
    ```
 
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
