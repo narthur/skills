@@ -114,7 +114,7 @@ the narrative from stdin, which a later session no longer has). Then apply the l
 note's own suggestion, `looper pr-report --run-id <id> --label`, does not do this: `--label` takes
 effect only with `--post`, and `--post` would add a second comment.
 
-Reached when any `<git-common-dir>/info/review-loop-pending-report.*.md` exists **and** a PR now exists for the
+Reached when `runlog.py pending` lists a file for this branch **and** a PR now exists for the
 branch. (Pending file but still no PR → leave it in place and continue the run.)
 
 1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file <the pending file>`),

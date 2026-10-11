@@ -806,6 +806,24 @@ done
 [ -z "$("$PY" review-stats.py --alarm)" ] \
 	&& ok "three n/a runs raise no alarm" || bad "three n/a runs raise no alarm"
 
+# --- pending: Step 0c's worklist is this branch's files only. The pending files sit under the
+# common dir every branch and worktree shares; listing them all posted another branch's report
+# onto this PR (CodeRabbit, skills PR #2). Detached HEAD and unknown runs list nothing.
+pr="$TMP/pending-repo"; git init -q -b feat "$pr" && git -C "$pr" commit -q --allow-empty -m i
+pmine=$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" plan --tier full --model m --gates "$GATES" --inputs '{}')
+git -C "$pr" checkout -q -b other
+pother=$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" plan --tier full --model m --gates "$GATES" --inputs '{}')
+git -C "$pr" checkout -q feat
+for id in "$pmine" "$pother" nosuchrun; do : >"$pr/.git/info/review-loop-pending-report.$id.md"; done
+pl=$(cd "$pr/" && "$PY" "$OLDPWD/runlog.py" pending 2>"$TMP/pending.err")
+[ "$pl" = "$(cd "$pr" && pwd -P)/.git/info/review-loop-pending-report.$pmine.md" ] || [ "$pl" = "$pr/.git/info/review-loop-pending-report.$pmine.md" ] \
+	&& ok "pending lists only this branch's file, absolute" || bad "pending lists only this branch's file, absolute: $pl"
+grep -q "no run record for .*nosuchrun" "$TMP/pending.err" \
+	&& ok "pending names a file with no run record instead of dropping it silently" || bad "pending names a file with no run record: $(cat "$TMP/pending.err")"
+git -C "$pr" checkout -q --detach
+[ -z "$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" pending 2>"$TMP/pending.err")" ] && grep -q "no current branch" "$TMP/pending.err" \
+	&& ok "pending lists nothing on a detached HEAD" || bad "pending lists nothing on a detached HEAD"
+
 # --- the record as looper reads it. pr-report.test.sh and push-check.py's selftest drove
 # rows written by THIS file through the real readers; looper's own tests use hand-written
 # rows and frozen goldens, so a field renamed here would break the push gate and the report
@@ -841,7 +859,7 @@ fi
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=122
+EXPECTED_CHECKS=125
 if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
 	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

@@ -31,8 +31,10 @@ run_id.
                     [--width-reason <t>] [--tokens <n>]
   runlog.py convergence --run-id <id>              prints it; exit 0 only if converged
   runlog.py show    --run-id <id>
+  runlog.py pending                                 this branch's pending-report files, one per line
 """
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -780,6 +782,29 @@ def cmd_show(a):
     print(json.dumps(run, indent=1, sort_keys=True))
 
 
+def cmd_pending(a):
+    """Step 0c's worklist: pending-report files whose run was planned on THIS branch.
+
+    The files live under the common dir, which every branch and linked worktree shares, so
+    listing them all would post another branch's report and label onto this PR. Branch is
+    compared the way `plan` recorded it (`--abbrev-ref HEAD`), so a detached HEAD reads
+    "HEAD" and lists nothing. A file whose run is not in the store is left in place and
+    named on stderr rather than guessed at."""
+    br = git("rev-parse", "--abbrev-ref", "HEAD")
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not br or br == "HEAD" or not common:
+        print("runlog: no current branch — pending reports left in place", file=sys.stderr)
+        return
+    runs = load(limit=None)
+    for f in sorted(glob.glob(os.path.join(common, "info", "review-loop-pending-report.*.md"))):
+        rid = os.path.basename(f)[len("review-loop-pending-report."):-len(".md")]
+        run = runs.get(rid)
+        if not run:
+            print(f"runlog: no run record for {f} — left in place", file=sys.stderr)
+        elif run.get("branch") == br:
+            print(f)
+
+
 def build_parser():
     """The parser, built separately so a test can ASK it what each subcommand accepts.
 
@@ -906,6 +931,9 @@ def build_parser():
     ss = sub.add_parser("show")
     ss.add_argument("--run-id", required=True)
     ss.set_defaults(func=cmd_show)
+
+    sp = sub.add_parser("pending")
+    sp.set_defaults(func=cmd_pending)
 
     return p
 

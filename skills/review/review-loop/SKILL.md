@@ -89,15 +89,11 @@ If `plan.py` prints an alarm on stderr, a gate has failed to complete three or m
 The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
-br=$(git branch --show-current)
-for f in "$(git rev-parse --git-common-dir)"/info/review-loop-pending-report.*.md; do
-  [ -e "$f" ] || continue; id=${f##*pending-report.}; id=${id%.md}
-  [ "$(python3 ~/.claude/skills/review-loop/runlog.py show --run-id "$id" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("branch") or "")' 2>/dev/null)" = "$br" ] && echo "$f"
-done
+python3 ~/.claude/skills/review-loop/runlog.py pending
 gh pr view --json number -q .number 2>/dev/null
 ```
 
-The pending files live under `<git-common-dir>`, which every branch and linked worktree shares, so the loop lists only files whose run was planned on **this** branch. A file from another branch stays where it is for that branch's own Step 0c; posting it here would put another branch's report and convergence label on this PR. A file whose run record cannot be read is not listed either: leave it in place and mention it, rather than guess its branch.
+The pending files live under `<git-common-dir>`, which every branch and linked worktree shares, so `pending` prints (as absolute paths) only files whose run was planned on **this** branch. A file from another branch stays where it is for that branch's own Step 0c; posting it here would put another branch's report and convergence label on this PR. A file with no run record is named on stderr and left in place: mention it rather than guess its branch. On a detached HEAD it lists nothing.
 
 Nothing listed, or still no PR → continue (leave the files in place). Both present → first drop any file that already landed: a successful post keeps a local copy, so a pending file whose `<!-- review-loop:run=<id> -->` marker already appears in a PR comment (`gh pr view --json comments -q '.comments[].body' | grep -qF '<!-- review-loop:run=<id> -->'`) is deleted, not posted again. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
 
