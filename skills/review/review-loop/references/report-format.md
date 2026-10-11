@@ -28,7 +28,7 @@ printf '%s\n' "<your findings narrative>" \
 `looper pr-report` reads the run record and renders the factual half itself — convergence,
 the disclosure verbatim, every gate with planned-vs-actual and its reason, the cycle
 sequence, both sizing numbers with what was excluded, the agent roster, token spend —
-then appends your narrative from stdin unchanged. It also applies the
+then appends the narrative from `--findings-file` (`-` is stdin, read only when named) unchanged. It also applies the
 `review:converged|capped|halted|unknown` label.
 
 This exists because hand-rendering this block is the most-dropped step in the skill: it
@@ -110,7 +110,7 @@ The deferred file ends with an HTML comment naming the `review:<convergence>` la
 no PR there was nothing to label, so on a fresh branch — the common case, since the push gate forces
 loop-then-push-then-PR — the deferring run never applied it. Post the file **as it is**, because it
 carries the narrative and a re-render would not (`looper pr-report` re-renders the record but reads
-the narrative from stdin, which a later session no longer has). Then apply the label by hand. The
+the narrative only from `--findings-file`, which a later session no longer has). Then apply the label by hand. The
 note's own suggestion, `looper pr-report --run-id <id> --label`, does not do this: `--label` takes
 effect only with `--post`, and `--post` would add a second comment.
 
