@@ -283,7 +283,8 @@ due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compact
 	&& ok "and due again once it has grown past the margin" \
 	|| bad "and due again once it has grown past the margin (due=$due)"
 
-# The clamp: a sweep that ended at 44 re-arms at 48, not 52, so it fires before the cap.
+# The clamp (LEARN_CAP - 2 = 48): a sweep that ended at 44 re-arms at 48, not 52, so it fires
+# before learn.py's 50-entry prune. "The cap line" in these check names means that 48.
 { printf '# Review-loop learnings\n\n'; for i in $(seq 1 48); do printf -- '- entry %s\n' "$i"; done
   printf -- '<!-- swept: 44 -->\n'; } > "$lf"
 out=$(cd "$r" && "$SCRIPT" 2>/dev/null)

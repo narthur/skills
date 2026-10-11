@@ -265,11 +265,12 @@ swept_entries = int(swept_entries) if swept_entries.isdigit() else None
 # as never-swept: the cost of one redundant sweep beats a permanently disarmed one.
 if swept_entries is not None and swept_entries > learn_entries:
     swept_entries = None
-# The re-arm point. Clamped below the cap so a low-yield sweep (36 + 8 = 44) still re-arms
-# before the blunt age-based `prune` takes over — but ONLY when the last sweep ended below
-# that clamp. One that ended past it (a file of 56 relevant entries has nothing to evict)
-# otherwise re-armed at 48 < 56 and was due on every run for zero evictions, measured on
-# 2026-10-11 in two repos at once. Past the cap, only real regrowth re-arms it.
+# The re-arm point. Clamped to LEARN_CAP - 2 (48) so a low-yield sweep (44 + 8 = 52) still
+# re-arms before the blunt age-based `prune` takes over at 50 — but ONLY when the last sweep
+# ended below that clamp. One that ended at or past it (a file of 56 relevant entries has
+# nothing to evict) otherwise re-armed at 48 < 56 and was due on every run for zero
+# evictions, measured on 2026-10-11 in two repos at once. At or past 48, only the plain
+# regrowth margin re-arms it.
 rearm_at = None
 if swept_entries is not None:
     rearm_at = swept_entries + LEARN_REGROWTH
