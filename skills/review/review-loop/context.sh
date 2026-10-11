@@ -265,6 +265,16 @@ swept_entries = int(swept_entries) if swept_entries.isdigit() else None
 # as never-swept: the cost of one redundant sweep beats a permanently disarmed one.
 if swept_entries is not None and swept_entries > learn_entries:
     swept_entries = None
+# The re-arm point. Clamped below the cap so a low-yield sweep (36 + 8 = 44) still re-arms
+# before the blunt age-based `prune` takes over — but ONLY when the last sweep ended below
+# that clamp. One that ended past it (a file of 56 relevant entries has nothing to evict)
+# otherwise re-armed at 48 < 56 and was due on every run for zero evictions, measured on
+# 2026-10-11 in two repos at once. Past the cap, only real regrowth re-arms it.
+rearm_at = None
+if swept_entries is not None:
+    rearm_at = swept_entries + LEARN_REGROWTH
+    if swept_entries < LEARN_CAP - 2:
+        rearm_at = min(rearm_at, LEARN_CAP - 2)
 print(json.dumps({
     "base_branch": os.environ["BASE_BRANCH"] or None,
     "test_cmd": test_cmd,
@@ -274,12 +284,7 @@ print(json.dumps({
     "learnings_entries": learn_entries,
     "learnings_compaction_due": (
         learn_entries >= LEARN_COMPACTION_THRESHOLD
-        # min() against the cap so the regrowth margin cannot eat the headroom it sits in:
-        # a low-yield sweep (36 + 8 = 44) already lands near LEARN_CAP, and a sweep that
-        # evicts less would push the re-arm point past it — handing the job to the blunt
-        # age-based `prune` fallback, the opposite of sweeping early.
-        and (swept_entries is None
-             or learn_entries >= min(swept_entries + LEARN_REGROWTH, LEARN_CAP - 2))),
+        and (rearm_at is None or learn_entries >= rearm_at)),
     # So a reader can tell "not due" from "never swept". Named `_entries`, not `_at`:
     # `_at` is an ISO timestamp everywhere else in this record and this is a count.
     "learnings_swept_entries": swept_entries,

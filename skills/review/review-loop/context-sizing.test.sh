@@ -283,6 +283,31 @@ due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compact
 	&& ok "and due again once it has grown past the margin" \
 	|| bad "and due again once it has grown past the margin (due=$due)"
 
+# The clamp: a sweep that ended at 44 re-arms at 48, not 52, so it fires before the cap.
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 48); do printf -- '- entry %s\n' "$i"; done
+  printf -- '<!-- swept: 44 -->\n'; } > "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "True" ] \
+	&& ok "a sweep that ended below the cap re-arms early, at the cap line" \
+	|| bad "a sweep that ended below the cap re-arms early, at the cap line (due=$due)"
+# Past the cap, the clamp must not apply: swept to 56 with nothing to evict, still 56.
+# Re-arming at 48 made this due on every run for zero evictions (two repos, 2026-10-11).
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 56); do printf -- '- entry %s\n' "$i"; done
+  printf -- '<!-- swept: 56 -->\n'; } > "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "False" ] \
+	&& ok "a file swept past the cap is not due again with no growth" \
+	|| bad "a file swept past the cap is not due again with no growth (due=$due)"
+{ printf '# Review-loop learnings\n\n'; for i in $(seq 1 64); do printf -- '- entry %s\n' "$i"; done
+  printf -- '<!-- swept: 56 -->\n'; } > "$lf"
+out=$(cd "$r" && "$SCRIPT" 2>/dev/null)
+due=$(python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_compaction_due"])' <<<"$out")
+[ "$due" = "True" ] \
+	&& ok "and due once it regrows by the margin past the cap" \
+	|| bad "and due once it regrows by the margin past the cap (due=$due)"
+
 # --- the follow-up-commit delta. A trivial commit on an already-reviewed branch is a
 # --- question about the FOLLOW-UP; sizing it against the whole branch is what turned that
 # --- into a judgment call someone had to be asked about.
@@ -405,7 +430,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=42
+EXPECTED_CHECKS=45
 if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
 	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))
