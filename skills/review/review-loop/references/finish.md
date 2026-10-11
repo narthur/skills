@@ -58,7 +58,7 @@ That includes a `capped` or `halted` run. This used to read "clean exit only", w
 exactly the commits the disclosure mechanism exists to let through: `push-check` authorises the
 push, the gate accepts only a recorded tip, and nothing was allowed to record it. A capped run
 **was** reviewed — often more thoroughly than a converged one — and how far is the PR comment's job
-to say, which is why `push-check` refuses until the disclosure is recorded. Filing it with
+to say, which is why `push-check` refuses until the run's report has landed. Filing it with
 `record-skipped.sh` instead would be a lie in the other direction: that store means "judged beneath
 the loop", and using it here corrupts the skipped-vs-reviewed ratio `review-stats.py` reports.
 

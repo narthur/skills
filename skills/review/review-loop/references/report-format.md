@@ -41,7 +41,8 @@ With no PR it writes the pending file by itself (see below), so there is nothing
 to remember on a fresh branch. If the post fails it says so and continues; never retry.
 
 The format it produces is documented below so you know what it covers and what your
-narrative needs to add. Hand-render it only if the script is unavailable.
+narrative needs to add. Do not hand-render it: `looper` is required (SKILL.md Step 0), and a
+report assembled from memory is the failure this command exists to prevent.
 
 When a PR exists for the branch (`gh pr view` succeeds), post the same **Report format** below as a PR comment so the review outcome is visible on GitHub. Runs on any terminal exit — clean, cycle-limit, or test-failure — since each is a finished review. This includes fast-path and fast-path re-entry runs (Step 3b): a single-reviewer run still posts its summary, marked as a fast-path cycle, along with the user's approval if they chose to downgrade a diff that wasn't eligible.
 
@@ -122,8 +123,21 @@ Reached when any `.git/info/review-loop-pending-report.*.md` exists **and** a PR
 branch. (Pending file but still no PR → leave it in place and continue the run.)
 
 1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file <the pending file>`),
-   then label it: `gh pr edit <n> --add-label review:<convergence>` with the convergence the note
-   names, removing any other `review:*` label so two cannot stand at once.
+   then label it with the convergence the note names (`label review:<convergence> still owed`).
+   Notes written by the retired Python name `pr-report.py` in their suggested command; read only
+   the label from them. Create the label first, since `gh pr edit` will not add one the repo does
+   not have, and remove the other three so two cannot stand at once:
+
+   ```bash
+   gh label create review:<convergence> --color <colour> 2>/dev/null || true
+   gh pr edit <n> --add-label review:<convergence>
+   for c in converged capped halted unknown; do
+     [ "$c" = <convergence> ] || gh pr edit <n> --remove-label "review:$c" 2>/dev/null
+   done
+   ```
+
+   Colours match what `looper pr-report` uses: converged `0e8a16`, capped `fbca04`, halted
+   `d93f0b`, unknown `b60205`.
 2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
 3. Delete the pending file.
 4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.

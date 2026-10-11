@@ -124,6 +124,18 @@ jobs:
           git config --global init.defaultBranch main
           git config --global commit.gpgsign false
 
+      # runlog.test.sh's runlog-to-looper checks skip where looper is not on PATH, which is
+      # the suites job. This is where looper is built, so they run here: rows written by
+      # runlog.py, read by the push gate and the report the skill installs.
+      - name: runlog rows, as looper reads them
+        # Required to have RUN, not merely passed: without looper they skip, and the suite
+        # still exits 0 — the skip-reads-as-success hazard this workflow guards elsewhere.
+        run: |
+          set -o pipefail
+          PATH="$RUNNER_TEMP:$PATH" ./skills/review/review-loop/runlog.test.sh | tee "$RUNNER_TEMP/runlog.log"
+          grep -q "ok  looper push-check reads the same convergence" "$RUNNER_TEMP/runlog.log" \
+            || { echo "the runlog-to-looper checks did not run"; exit 1; }
+
       # The suites passing says nothing on its own: twelve assertions in them turned
       # out to be incapable of failing. This reintroduces each defect in the catalog — ones
       # that actually shipped here — and requires the suites to notice every one. A survivor

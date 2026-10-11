@@ -92,7 +92,7 @@ The push-gate forces the order `loop → push → create PR` for a fresh branch,
 ls .git/info/review-loop-pending-report.*.md 2>/dev/null && gh pr view --json number -q .number 2>/dev/null
 ```
 
-Nothing pending, or still no PR → continue (leave the file in place). Both present → **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
+Nothing pending, or still no PR → continue (leave the file in place). Both present → first drop any file that already landed: a successful post keeps a local copy, so a pending file whose `<!-- review-loop:run=<id> -->` marker already appears in a PR comment (`gh pr view --json comments -q '.comments[].body' | grep -qF '<!-- review-loop:run=<id> -->'`) is deleted, not posted again. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
 
 ## Step 2a: Cheap record checks (always), then the learnings sweep (triggered)
 
@@ -578,7 +578,9 @@ honesty rule, and the full "when NOT to auto-push" spec.
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
    numbers and the roster from the run record, appends your narrative verbatim, labels the PR
    `review:<convergence>`, and writes the pending-report file by itself when there is no PR — or
-   when the post *fails*, so a transient GitHub error cannot destroy the report.
+   when the post *fails*, so a transient GitHub error cannot destroy the report. It keeps that
+   local copy after a *successful* post too, and labels the PR whenever one exists, even if the
+   comment failed.
 
    **This is not optional, and not on your honour.** Step 2 refuses the push until this run's
    report is actually present — in a PR comment or in the pending file, matched by the
