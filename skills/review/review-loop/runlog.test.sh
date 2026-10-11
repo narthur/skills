@@ -826,7 +826,7 @@ if command -v looper >/dev/null 2>&1; then
 	pc=$(looper push-check --run-id "$lrid" --branch feat/x --default-branch main 2>/dev/null)
 	grep -q '"convergence":"capped"' <<<"$pc" \
 		&& ok "looper push-check reads the same convergence" || bad "looper push-check reads the same convergence: $pc"
-	grep -q '"push":false' <<<"$pc" \
+	grep -q '"push":false' <<<"$pc" && grep -q 'report has not reached' <<<"$pc" \
 		&& ok "looper push-check refuses a run whose report has not landed" || bad "looper push-check refuses a run whose report has not landed: $pc"
 	export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 else

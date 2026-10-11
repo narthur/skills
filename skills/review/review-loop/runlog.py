@@ -172,7 +172,7 @@ def cycles_of(run):
 
     It exists as a function rather than inline so that its readers cannot read the list
     different ways — which is exactly what had happened: the retired disclosure() read the
-    raw list and the other two read this one, so a rendered
+    raw list while convergence() and the retired pr-report.py read this one, so a rendered
     report said "CAPPED at 11 of 8 agents" above a table showing 8. (Reproduced in a fixture,
     not seen on a real PR — the live record has only ever held one cycle row, and blurring
     "reproduced" into "observed" is how an invented measurement got committed here twice.)
