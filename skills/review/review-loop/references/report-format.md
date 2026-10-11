@@ -22,7 +22,7 @@ Then:
 
 ```bash
 printf '%s\n' "<your findings narrative>" \
-  | looper pr-report --run-id <run_id> --post --label
+  | ~/.local/bin/looper pr-report --run-id <run_id> --post --label
 ```
 
 `looper pr-report` reads the run record and renders the factual half itself — convergence,

@@ -16,10 +16,10 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-looper version >/dev/null 2>&1 || { echo "review-loop needs looper v0.2.2 or later: GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.2" >&2; false; }
+~/.local/bin/looper version >/dev/null 2>&1 || { echo "review-loop needs looper v0.2.2 or later: GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.2" >&2; false; }
 ```
 
-If it fails, whether looper is missing or older than v0.2.2 (older ones exit 2 on `version`), stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.2 (older ones exit 2 on `version`), stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every call in this skill names `~/.local/bin/looper` by path, never a bare `looper`: the binary decides whether the push goes ahead, so resolving it through PATH would let any executable called `looper` earlier on PATH, such as a repo's own `bin/` added by direnv, approve its own push. Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then run the context gatherer once:
 
@@ -230,7 +230,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
     g. If ask-user bucket is non-empty, batch them into one AskUserQuestion (Step 8b). Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
-    j. Append captured learnings to .git/info/review-loop-learnings.md (Step 11), deduping against existing entries.
+    j. Append captured learnings to <git-common-dir>/info/review-loop-learnings.md (Step 11), deduping against existing entries.
     j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents .. --width-reason ".."`
         (Step 10). EVERY cycle, including a zero-fix one — convergence is derived from these rows,
         and a run with none of them reads as "did not converge" at Step 14. Pass `--asked`: a cycle
@@ -311,7 +311,7 @@ It bin-packs the changed files into **batches under a ~1500-line whole-file budg
 
 Each agent must also receive:
 
-- The contents of `.git/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
+- The contents of `<git-common-dir>/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
 - The agent's specific focus (below)
 - The style default below (verbatim)
 - A required output shape: a JSON-like list of `{file, line_range, description, suggested_fix, reasoning}`
@@ -478,7 +478,7 @@ against real spend later.
 
 ## Step 11: Capture Learnings
 
-On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
+On Step 8b outcomes, record learnings in `<git-common-dir>/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
 
 **Also record every Agent #10 finding that survived** — including ones auto-fixed at Step 7, which never reach Step 8b. #10 is the only agent whose findings come from outside the repo (`gh` review history), and it runs at most once per branch, so an unrecorded #10 finding costs the same API calls to rediscover next time. Write it to **Accepted patterns** with its citation intact ("PR #1042, @jakecoble: don't call this from the request path"). This is how a repo's most-repeated human review feedback migrates from GitHub into the local learnings file, where Agents #1–#4 and #6 see it for free on every subsequent run.
 
@@ -494,7 +494,7 @@ For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping
 
 ## Step 12: "Remember X" Requests During the Session
 
-If the user says "remember X", "always check Y here", "this repo cares about Z", or similar at any point during the session, immediately append to `.git/info/review-loop-learnings.md` under the appropriate section (Dismissed for "stop flagging…", Accepted for "always flag…"). Acknowledge with one sentence. Do not derail the loop.
+If the user says "remember X", "always check Y here", "this repo cares about Z", or similar at any point during the session, immediately append to `<git-common-dir>/info/review-loop-learnings.md` under the appropriate section (Dismissed for "stop flagging…", Accepted for "always flag…"). Acknowledge with one sentence. Do not derail the loop.
 
 If what the user wants remembered is a **security** concern anchored to a location ("keep an eye on this", "this spot is sensitive", "don't let anything widen that"), write it under `## Watch this spot` in the threat model instead, with a `[path:line @ sha]` pin. Those entries *override* the vendored exclusion list: a finding landing on a watched location is reported even when a generic precedent would drop it. This is the channel that keeps a repo-specific risk (e.g. a Sentry depth limit that is load-bearing PII containment) from being filtered away as routine.
 
@@ -572,7 +572,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    ```bash
    printf '%s\n' "<your findings narrative>" \
-     | looper pr-report --run-id <run_id> --post --label
+     | ~/.local/bin/looper pr-report --run-id <run_id> --post --label
    ```
 
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
@@ -594,7 +594,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
 2. **Decide the push with the checker**, never by re-deriving the checklist:
 
    ```bash
-   looper push-check --run-id <run_id> \
+   ~/.local/bin/looper push-check --run-id <run_id> \
      --gate-state <passed|skipped|blocked> [--unresolved-skip] \
      --branch <current> --default-branch <default>
    ```

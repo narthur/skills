@@ -90,7 +90,7 @@ beneath the loop is a legitimate call; making that call *silently look like a re
 ## 3. The push decision
 
 ```bash
-looper push-check --run-id <run_id> \
+~/.local/bin/looper push-check --run-id <run_id> \
   --gate-state <passed|skipped|blocked> [--unresolved-skip] \
   --branch <current> --default-branch <default>
 ```
