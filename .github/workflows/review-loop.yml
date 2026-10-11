@@ -105,9 +105,10 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.1: the release SKILL.md installs, carrying the push-check and pr-report
-          # subcommands that replaced push-check.py and pr-report.py.
-          ref: 010e7fd9dd639eb31b1983a32f1557e2d5882906 # v0.2.1
+          # v0.2.2: the release SKILL.md installs, carrying the push-check and pr-report
+          # subcommands that replaced push-check.py and pr-report.py, and the `version`
+          # subcommand Step 0's preflight runs.
+          ref: 05c8ea1f17aecbdcff3c2df625e92575c1250110 # v0.2.2
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

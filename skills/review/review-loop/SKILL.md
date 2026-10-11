@@ -16,10 +16,10 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-command -v looper >/dev/null || { echo "review-loop needs looper: GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.1" >&2; false; }
+looper version >/dev/null 2>&1 || { echo "review-loop needs looper v0.2.2 or later: GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.2" >&2; false; }
 ```
 
-If it is missing, stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.2 (older ones exit 2 on `version`), stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then run the context gatherer once:
 
