@@ -18,8 +18,8 @@ where improvisation re-enters wearing a manifest.
       --logic yes --behavioral-goal yes --runtime-change yes --attacker-reachable no \
       [--spec-artifact yes] [--dry-run]
 
-Prints the plan as JSON. Unless --dry-run, also writes the `plan` run record and
-prints its run_id on the last line.
+Prints the plan as JSON. Unless --dry-run, also writes the `plan` run record through
+`~/.local/bin/looper record plan` and prints its run_id on the last line.
 """
 import argparse
 import json
@@ -33,6 +33,9 @@ import sys
 import runlog
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# The release SKILL.md Step 0 installs, named in the install hint printed when it is missing.
+LOOPER_VERSION = "v0.2.4"
 
 STRUCTURAL_LINES = 150  # Agent #7's "substantial diff" floor, per SKILL.md
 BIG_FILE_LINES = 800
@@ -325,12 +328,21 @@ def main():
     if a.dry_run:
         return
 
+    # By absolute path, never PATH, for the reason SKILL.md Step 0 gives: the looper that
+    # writes the record must be the one the preflight checked, not whatever a repo's bin/
+    # or a dev build puts first.
+    looper = os.path.expanduser("~/.local/bin/looper")
+    if not os.access(looper, os.X_OK):
+        print(f"plan: COMPUTED BUT NOT RECORDED — {looper} is missing, and it writes the run "
+              "record. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install "
+              f"github.com/pinepeakdigital/looper/cmd/looper@{LOOPER_VERSION}", file=sys.stderr)
+        sys.exit(1)
     # Capture rather than inherit stdout: the child writes to fd 1 unbuffered while
     # our own print() is buffered, so letting it inherit puts the run_id BEFORE the
     # plan JSON — the opposite of the documented order, and unparseable for anyone
     # reading "the JSON, then the id".
     rc = subprocess.run([
-        sys.executable, os.path.join(HERE, "runlog.py"), "plan",
+        looper, "record", "plan",
         "--tier", plan["tier_floor"],
         "--model", a.model,
         "--base", plan["base_branch"] or "",

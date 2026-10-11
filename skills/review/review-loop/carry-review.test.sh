@@ -11,6 +11,26 @@ fails=0
 checks=0
 ok() { echo "  ok  $1"; checks=$((checks + 1)); }
 bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
+# An assertion that VANISHES is invisible without a count. Two ways it has happened
+# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
+# NEITHER branch runs, and assertions appended below this summary never execute at all
+# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
+# tell a deliberate one from a broken one — this can.
+#
+# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
+# trail, the same way the mutation-catalog floor works. looper_checks counts the ones that
+# drive looper, which run only where it is on PATH.
+EXPECTED_CHECKS=3
+looper_checks=0
+summary() {
+	echo
+	if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
+		echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+		fails=$((fails + 1))
+	fi
+	[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
+	exit "$fails"
+}
 
 export HOME="$TMP/home"
 export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
@@ -34,6 +54,33 @@ g checkout -q -; g rebase -q other >/dev/null 2>&1
 feat_new=$(g rev-parse HEAD)
 [ "$feat_old" != "$feat_new" ] || { bad "the rebase rewrote the sha"; exit 1; }
 
+# --- no looper: the audit row cannot be written, so the gate store must not change. The
+# --- audit block used to be wrapped in `if [ -f "$RUNLOG" ]`, so a partial install that
+# --- shipped the shell scripts without their record writer stamped every carry with no
+# --- audit row at all. HOME is the fixture's, which has no ~/.local/bin/looper yet.
+printf '%s\n' "$feat_old" > "$REVIEWED"
+out=$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>&1)
+grep -qxF "$feat_new" "$REVIEWED" \
+	&& bad "with no looper, the gate store must not change" \
+	|| ok "with no looper, the gate store does not change"
+grep -q "cannot record the carry.*no $HOME/.local/bin/looper" <<<"$out" \
+	&& ok "and it says why" || bad "and it says why: $out"
+: > "$REVIEWED"
+
+# Outside a work tree it must do nothing rather than error.
+out=$(cd "$TMP" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>&1); rc=$?
+[ "$rc" -eq 0 ] && [ -z "$out" ] && ok "silent outside a git repo" || bad "silent outside a git repo"
+
+# Everything below carries, so it needs the real writer. Without it every "must not carry"
+# check passes for the wrong reason, so they skip as a block rather than run hollow. CI's
+# trust job runs this suite with looper on PATH and requires the skip line to be absent.
+real_looper=$(command -v looper) || {
+	echo "  skip  looper not on PATH — the carry checks did not run"
+	summary
+}
+looper_checks=15
+mkdir -p "$HOME/.local/bin" && ln -s "$real_looper" "$HOME/.local/bin/looper"
+
 # Nothing recorded for the old sha => nothing to carry.
 (cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>/dev/null)
 [ ! -s "$REVIEWED" ] && ok "carries nothing when nothing was recorded" || bad "carries nothing when nothing was recorded"
@@ -42,7 +89,7 @@ feat_new=$(g rev-parse HEAD)
 printf '%s\n' "$feat_old" > "$REVIEWED"
 (cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>/dev/null)
 grep -qxF "$feat_new" "$REVIEWED" && ok "a clean rebase carries a reviewed record" || bad "a clean rebase carries a reviewed record"
-# The store writes compact JSON; only `runlog.py show` adds the pretty spacing.
+# The store writes compact JSON; only `looper record show` adds the pretty spacing.
 grep -q '"outcome":"carried"' "$REVIEW_LOOP_RUNS" 2>/dev/null \
 	&& ok "the carry is recorded as its own state" || bad "the carry is recorded as its own state"
 grep -q "\"carried_from\":\"$feat_old\"" "$REVIEW_LOOP_RUNS" 2>/dev/null \
@@ -187,44 +234,6 @@ else
 	bad "could not pause a rebase — the mid-rebase amend guard is not being exercised"
 fi
 
-# No audit row, no gate change — including when there is no python at all to
-# write one. The store write must not outlive the record that explains it.
-: > "$REVIEWED"; : > "$SKIPPED"
-printf '%s\n' "$feat_old" > "$REVIEWED"
-nopath="$TMP/nopy"; mkdir -p "$nopath"
-# Everything the script needs EXCEPT python. Miss one and the script dies earlier
-# for an unrelated reason, and both assertions below pass without exercising the
-# python path at all — which is how the first version of this check was hollow.
-for t in git grep awk sed cut head tail wc date sort mv rm basename dirname cat tr env; do
-	src=$(command -v "$t" 2>/dev/null) && ln -sf "$src" "$nopath/$t"
-done
-# No separate fixture-soundness probe: the message grep below IS the proof the
-# script reached the check, and it cannot be satisfied by incidental stderr. A
-# probe asserting merely that something was printed passed when `sort` was
-# dropped from the fake PATH and the script died long before the python block.
-: > "$REVIEWED"; printf '%s\n' "$feat_old" > "$REVIEWED"
-out=$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | PATH="$nopath" "$SCRIPT" rebase 2>&1)
-grep -qxF "$feat_new" "$REVIEWED" \
-	&& bad "with no python, the gate store must not change" \
-	|| ok "with no python, the gate store does not change"
-grep -q "cannot record the carry" <<<"$out" \
-	&& ok "and it says so rather than failing silently" || bad "and it says so rather than failing silently"
-
-# --- no runlog.py beside the script: the other half of the same hole. The audit
-# --- block used to be wrapped in `if [ -f "$RUNLOG" ]`, so a partial install that
-# --- shipped the shell scripts without the python ones stamped every carry with no
-# --- audit row at all. The hook runs whatever ~/.claude/skills/review-loop/ happens
-# --- to contain, which a partial sync can leave without the python half.
-lonely="$TMP/lonely"; mkdir -p "$lonely"; cp "$SCRIPT" "$lonely/carry-review.sh"
-[ ! -e "$lonely/runlog.py" ] || { echo "setup failed: runlog.py must not be beside the copy"; exit 1; }
-: > "$REVIEWED"; printf '%s\n' "$feat_old" > "$REVIEWED"
-out=$(cd "$repo" && printf '%s %s\n' "$feat_old" "$feat_new" | "$lonely/carry-review.sh" rebase 2>&1)
-grep -qxF "$feat_new" "$REVIEWED" \
-	&& bad "with no runlog.py, the gate store must not change" \
-	|| ok "with no runlog.py, the gate store does not change"
-grep -q "cannot record the carry" <<<"$out" \
-	&& ok "and it says why" || bad "and it says why"
-
 # --- whitespace is not cosmetic: patch-id --stable strips it before hashing, so an
 # --- indentation-only rewrite shared an id with the reviewed original and carried a
 # --- stamp onto code the loop never saw. In Python that changes which block a
@@ -253,23 +262,4 @@ grep -qxF "$ws_new" "$REVIEWED" \
 	&& bad "an indentation-only rewrite must not carry a reviewed stamp" \
 	|| ok "an indentation-only rewrite does not carry a reviewed stamp"
 
-# Outside a work tree it must do nothing rather than error.
-out=$(cd "$TMP" && printf '%s %s\n' "$feat_old" "$feat_new" | "$SCRIPT" rebase 2>&1); rc=$?
-[ "$rc" -eq 0 ] && [ -z "$out" ] && ok "silent outside a git repo" || bad "silent outside a git repo"
-
-echo
-# An assertion that VANISHES is invisible without a count. Two ways it has happened
-# here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
-# NEITHER branch runs, and assertions appended below this summary never execute at all
-# (six did, once). shellcheck flags the idiom ~109 times across these suites and cannot
-# tell a deliberate one from a broken one — this can.
-#
-# Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
-# trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=20
-if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
-	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
-	fails=$((fails + 1))
-fi
-[ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
-exit "$fails"
+summary

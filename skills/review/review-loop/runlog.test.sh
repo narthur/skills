@@ -1,6 +1,13 @@
 #!/bin/bash
-# Smallest thing that fails if the two-phase record or its guards break.
+# Smallest thing that fails if the record's reader, its vocabulary, or the Stop hook breaks.
 #   ./runlog.test.sh
+#
+# runlog.py's command line is `looper record` now, and its behaviour — the rows, the
+# refusals, the exit statuses — is pinned by the 37 scenarios frozen in looper's
+# internal/record/testdata/oracle. What is left here is what this directory still owns:
+# the library the Python scripts import (load, cycles_of, convergence, reject_banned), the
+# alarm review-stats.py derives from it, and the Stop hook. Rows are written as JSONL by
+# hand except in the looper block at the end, which writes them through the real writer.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 PY=$(command -v python3.14 || command -v python3)
@@ -20,719 +27,201 @@ bad() { echo "  FAIL  $1"; fails=$((fails + 1)); checks=$((checks + 1)); }
 
 GATES='{"threat_model":{"planned":"run","reason":"2 stale claims"},"staleness_sweep":{"planned":"skip","reason":"12 entries"}}'
 
-rid=$("$PY" runlog.py plan --tier full --model claude-opus-5 --gates "$GATES" --inputs '{"logic":true}')
-[ -n "$rid" ] && ok "plan returns a run id" || { bad "plan returns a run id"; echo "  (setup failed, rest is meaningless)"; exit 1; }
+# Rows in the shape `looper record` writes them, trimmed to the fields the readers use.
+# $1 store, $2 run id, then the fields that vary.
+prow() { printf '{"run_id":"%s","phase":"plan","planned_at":"%s","repo":"r","session_id":%s,"agent_cap":%s,"gates":%s}\n' \
+	"$2" "${6:-2026-01-01T00:00:00}" "${5:-null}" "${3:-40}" "${4:-$GATES}" >> "$1"; }
+crow() { printf '{"run_id":"%s","phase":"cycle","n":%s,"applied":%s,"agents":%s,"asked":%s,"analysis_changed":%s}\n' \
+	"$2" "$3" "$4" "$5" "${6:-0}" "${7:-false}" >> "$1"; }
+EMPTY='{}'  # not "${5:-{\}}": bash 3.2, macOS's /bin/bash, keeps the backslash
+frow() { printf '{"run_id":"%s","phase":"finish","finished_at":"2026-01-01T01:00:00","outcome":"%s","unresolved_asks":%s,"executed":%s}\n' \
+	"$2" "$3" "${4:-0}" "${5:-$EMPTY}" >> "$1"; }
+# The library under test, imported the way review-stats.py and plan.py import it.
+lib() { REVIEW_LOOP_RUNS="$1" "$PY" -c "import sys; sys.path.insert(0, '.'); import runlog; $2"; }
+conv() { lib "$1" "r = runlog.load(limit=None).get('$2'); print('NO-RUN' if r is None else (runlog.convergence(r) or 'unknown'))"; }
 
-"$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 1 ] && ok "check flags an unfinished run" || bad "check flags an unfinished run"
-
-# Capture first: `check` exits 1 by design when a run is open, and under pipefail
-# that makes every `check | grep` pipeline report failure whatever grep found.
-chk=$("$PY" runlog.py check 2>/dev/null)
-grep -q threat_model <<<"$chk" \
-	&& ok "check names the planned gate" || bad "check names the planned gate"
-# Guard on non-empty: an inverted grep is satisfied by "the command printed
-# nothing" exactly as well as by "the command correctly omitted it".
-[ -n "$chk" ] && ! grep -q staleness_sweep <<<"$chk" \
-	&& ok "check lists only planned-run gates" || bad "check lists only planned-run gates"
-
-# The whole point: a precedent reason is refused, and refusing it writes nothing.
-out=$("$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"skipped","reason":"matches an existing pattern in the repo"}}' 2>&1)
-if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent reason rejected"; else bad "precedent reason rejected"; fi
-"$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 1 ] && ok "rejected finish wrote nothing" || bad "rejected finish wrote nothing"
-
-# A measurable reason goes through.
-"$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' --asks 0 >/dev/null 2>&1 \
-	&& ok "measurable finish accepted" || bad "measurable finish accepted"
-"$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 0 ] && ok "check clean after finish" || bad "check clean after finish"
-
-"$PY" runlog.py show --run-id "$rid" | grep -q '"outcome": "clean"' \
-	&& ok "phases merge on read" || bad "phases merge on read"
-
-rid2=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-[ -n "$rid2" ] || { bad "second plan"; exit 1; }
-
-# --head scopes check to one tip; without it the Stop hook could block on a run
-# from a different branch, or miss the one it is actually standing in front of.
-head=$(git rev-parse HEAD)
-"$PY" runlog.py check --head "$head" >/dev/null 2>&1
-[ $? -eq 1 ] || bad "check --head matches the planned tip"
-"$PY" runlog.py check --head 0000000000000000000000000000000000000000 >/dev/null 2>&1
-[ $? -eq 0 ] && ok "check --head ignores another tip's run" || bad "check --head ignores another tip's run"
-
-# The precedent ban covers escalation reasons too, not just executed-gate ones.
-out=$("$PY" runlog.py finish --run-id "$rid2" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' \
-	--escalations '[{"gate":"agent_7_structural","reason":"follows the existing pattern"}]' 2>&1)
-if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent rejected in an escalation reason"; else bad "precedent rejected in an escalation reason"; fi
-
+# --- the command line is gone, and says where it went rather than failing obscurely.
+out=$("$PY" runlog.py plan --tier full --model m 2>&1)
+rc=$?
+[ "$rc" -eq 2 ] && ok "runlog.py as a command exits 2" || bad "runlog.py as a command exits 2 (got $rc)"
+grep -q "looper record" <<<"$out" && [ "$(wc -l <<<"$out")" -eq 1 ] \
+	&& ok "and says in one line that the command line is looper record" \
+	|| bad "and says in one line that the command line is looper record (got: $out)"
 
 # A torn line must not invalidate the store.
-printf '{"run_id":"broke' >> "$REVIEW_LOOP_RUNS"
-"$PY" runlog.py show --run-id "$rid" >/dev/null 2>&1 \
+s="$TMP/torn.jsonl"
+prow "$s" t1
+printf '{"run_id":"broke' >> "$s"
+[ "$(lib "$s" "print(sorted(runlog.load(limit=None)))")" = "['t1']" ] \
 	&& ok "torn line tolerated" || bad "torn line tolerated"
-
-# A plan is the artifact everything else is derived from, so a malformed one must not
-# enter the record. `planned_gates` demands an account only for "run", so a third value
-# was dropped silently AND escaped the reason ban — the same stale-list shape as `n/a`.
-for pv in deferred "" maybe; do
-	# A MEASURABLE reason, deliberately: with a banned one, reject_banned does the
-	# refusing and this assertion passes with the planned-value guard deleted. That is
-	# how the first version of this check was hollow.
-	out=$("$PY" runlog.py plan --tier full --model m \
-		--gates "{\"threat_model\":{\"planned\":\"$pv\",\"reason\":\"2 stale claims, 40 changed lines\"}}" 2>&1)
-	# Refused, and no row written: a bad plan leaves nothing behind to be finished.
-	if ! grep -qE '^[0-9a-f]{12}$' <<<"$(tail -1 <<<"$out")"; then
-		ok "a gate planned '$pv' is refused, not recorded"
-	else
-		bad "a gate planned '$pv' is refused, not recorded"
-	fi
-done
-# The ban now applies to a planned skip's reason whatever the value is called.
-out=$("$PY" runlog.py plan --tier full --model m \
-	--gates '{"t":{"planned":"skip","reason":"matches an existing pattern"}}' 2>&1)
-grep -qi precedent <<<"$out" && ok "a planned skip's reason is still vetted" || bad "a planned skip's reason is still vetted"
-# An unexplained plan cannot be iterated on, which is the whole purpose of the record.
-out=$("$PY" runlog.py plan --tier full --model m --gates '{"t":{"planned":"skip"}}' 2>&1)
-grep -q 'no reason' <<<"$out" && ok "a gate with no reason is refused at plan time" || bad "a gate with no reason is refused at plan time"
-# And the legitimate plan every real run writes still works.
-rid=$("$PY" runlog.py plan --tier full --model m --gates '{"t":{"planned":"skip","reason":"12 entries, under the 40 threshold"}}' 2>&1 | tail -1)
-[[ "$rid" =~ ^[0-9a-f]{12}$ ]] && ok "a well-formed plan still records" || bad "a well-formed plan still records (got: $rid)"
 
 # --- cycle rows and derived convergence. The whole point: push-check used to be TOLD
 # --- whether the loop converged, and a real run recorded `clean` while its own author
 # --- reported it had not. Convergence must be a fact about recorded cycles.
-export REVIEW_LOOP_RUNS="$TMP/cycles.jsonl"
-cy() { "$PY" runlog.py cycle --run-id "$1" --n "$2" --applied "$3" --agents "$4" "${@:5}" >/dev/null 2>&1; }
-conv() { "$PY" runlog.py convergence --run-id "$1" 2>/dev/null; }
+s="$TMP/cycles.jsonl"
 
 # Cycle rows ACCUMULATE. load() merges phases with .update(), which would leave only the
 # last cycle and destroy the sequence everything here is derived from.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 5 6; cy "$r" 2 3 3; cy "$r" 3 0 2
-n=$("$PY" runlog.py show --run-id "$r" | "$PY" -c 'import json,sys; print(len(json.load(sys.stdin).get("cycles") or []))')
+prow "$s" c1; crow "$s" c1 1 5 6; crow "$s" c1 2 3 3; crow "$s" c1 3 0 2
+n=$(lib "$s" "print(len(runlog.load(limit=None)['c1'].get('cycles') or []))")
 [ "$n" = "3" ] && ok "three cycle rows survive as three" || bad "three cycle rows survive as three (got: $n)"
-[ "$(conv "$r")" = "converged" ] && ok "a final zero-fix cycle derives converged" || bad "a final zero-fix cycle derives converged (got: $(conv "$r"))"
-"$PY" runlog.py convergence --run-id "$r" >/dev/null 2>&1 && ok "and exits 0" || bad "and exits 0"
+[ "$(conv "$s" c1)" = "converged" ] && ok "a final zero-fix cycle derives converged" || bad "a final zero-fix cycle derives converged (got: $(conv "$s" c1))"
 
 # Still applying fixes, budget left over: neither converged nor capped.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 5 6; cy "$r" 2 3 3
-[ "$(conv "$r")" = "halted" ] && ok "fixes still landing with budget left derives halted" || bad "fixes still landing with budget left derives halted (got: $(conv "$r"))"
+prow "$s" c2; crow "$s" c2 1 5 6; crow "$s" c2 2 3 3
+[ "$(conv "$s" c2)" = "halted" ] && ok "fixes still landing with budget left derives halted" || bad "fixes still landing with budget left derives halted (got: $(conv "$s" c2))"
 
 # Over the recorded agent cap with work outstanding.
-r=$("$PY" runlog.py plan --tier full --model m --agent-cap 8 --gates "$GATES")
-cy "$r" 1 5 6; cy "$r" 2 3 3
-[ "$(conv "$r")" = "capped" ] && ok "over the agent cap with work outstanding derives capped" || bad "over the agent cap with work outstanding derives capped (got: $(conv "$r"))"
+prow "$s" c3 8; crow "$s" c3 1 5 6; crow "$s" c3 2 3 3
+[ "$(conv "$s" c3)" = "capped" ] && ok "over the agent cap with work outstanding derives capped" || bad "over the agent cap with work outstanding derives capped (got: $(conv "$s" c3))"
 
 # Converged outranks capped: nothing left to apply is finished, however much it cost.
-r=$("$PY" runlog.py plan --tier full --model m --agent-cap 8 --gates "$GATES")
-cy "$r" 1 9 9; cy "$r" 2 0 1
-[ "$(conv "$r")" = "converged" ] && ok "converged outranks capped" || bad "converged outranks capped (got: $(conv "$r"))"
+prow "$s" c4 8; crow "$s" c4 1 9 9; crow "$s" c4 2 0 1
+[ "$(conv "$s" c4)" = "converged" ] && ok "converged outranks capped" || bad "converged outranks capped (got: $(conv "$s" c4))"
 
 # The deterministic pass still having work is as unfinished as a non-empty fix bucket.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 0 2 --analysis-changed
-[ "$(conv "$r")" != "converged" ] && ok "analysis-changed blocks convergence at zero fixes" || bad "analysis-changed blocks convergence at zero fixes"
+prow "$s" c5; crow "$s" c5 1 0 2 0 true
+[ "$(conv "$s" c5)" != "converged" ] && ok "analysis-changed blocks convergence at zero fixes" || bad "analysis-changed blocks convergence at zero fixes"
 
 # NO cycle rows must read as not-converged, or omitting them buys a silent clean push.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-[ "$(conv "$r")" = "unknown" ] && ok "no cycle rows reads as unknown, never converged" || bad "no cycle rows reads as unknown, never converged (got: $(conv "$r"))"
-"$PY" runlog.py convergence --run-id "$r" >/dev/null 2>&1 && bad "unknown must not exit 0" || ok "and unknown does not exit 0"
-# finish must SAY so, where it can still be fixed, rather than letting the gate refuse later.
-out=$("$PY" runlog.py finish --run-id "$r" --outcome clean --tier full --executed '{"threat_model":{"status":"done"}}' 2>&1)
-grep -q 'no cycle rows' <<<"$out" && ok "finish warns when convergence is unknowable" || bad "finish warns when convergence is unknowable"
+prow "$s" c6
+[ "$(conv "$s" c6)" = "unknown" ] && ok "no cycle rows reads as unknown, never converged" || bad "no cycle rows reads as unknown, never converged (got: $(conv "$s" c6))"
 
 # Every recorded cycle counts against the budget, including a repeated `n`. Step 13 and
 # 13.5 restart the loop from cycle 1, so an `n` repeats on any run that restarts — and
 # deduping by `n` made the restart's row REPLACE the original, deleting its agents from
 # the only number the cap is measured against. Measured before the fix: 40 agents spent
 # across three rows counted 20 against a cap of 40.
-#
-# The previous check here asserted "a re-recorded cycle supersedes, last write winning"
-# by testing the raw row count (2 either way) and a convergence that read `converged`
-# under both behaviours, so it discriminated nothing.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" --agent-cap 10)
-cy "$r" 1 4 6; cy "$r" 2 2 3; cy "$r" 1 1 4   # restart repeats n=1; 13 agents of a 10 cap
-# Counted through cycles_of, the reader under test — not through `show`, which returns the
-# raw stored list and so reported 3 whether or not the read path collapsed them.
-n=$("$PY" runlog.py show --run-id "$r" | "$PY" -c '
-import json, sys; sys.path.insert(0, ".")
-import runlog
-print(len(runlog.cycles_of(json.load(sys.stdin))))')
+prow "$s" c7 10; crow "$s" c7 1 4 6; crow "$s" c7 2 2 3; crow "$s" c7 1 1 4   # restart repeats n=1; 13 agents of a 10 cap
+# Counted through cycles_of, the reader under test — not the raw stored list, which holds
+# 3 whether or not the read path collapses them.
+n=$(lib "$s" "print(len(runlog.cycles_of(runlog.load(limit=None)['c7'])))")
 [ "$n" = "3" ] && ok "a restart's repeated cycle number is kept, not collapsed" \
 	|| bad "a restart's repeated cycle number is kept, not collapsed (cycles_of returned $n of 3)"
-[ "$(conv "$r")" = "capped" ] && ok "and its agents count against the cap (13 of 10 = capped)" \
-	|| bad "and its agents count against the cap (got: $(conv "$r"))"
+[ "$(conv "$s" c7)" = "capped" ] && ok "and its agents count against the cap (13 of 10 = capped)" \
+	|| bad "and its agents count against the cap (got: $(conv "$s" c7))"
 
 # An ask-bucket-only cycle has not run out of findings. It applied nothing, so the old
 # test (`applied == 0`) read it as converged, which bought a push with no disclosure.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 0 --asked 7 --agents 6 >/dev/null 2>&1
-[ "$(conv "$r")" = "halted" ] && ok "a cycle that only asked has not converged" \
-	|| bad "a cycle that only asked has not converged (got: $(conv "$r"))"
-
-# A cycle row appended after `finish` rewrites a convergence that has already been
-# disclosed on a PR and already cleared a push — the assertion path the derivation
-# replaced, respelled as `cycle --applied 0 --agents 0`.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 4 6
-"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
-	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
-before=$(conv "$r")
-out=$("$PY" runlog.py cycle --run-id "$r" --n 2 --applied 0 --agents 0 2>&1)
-grep -q 'already finished' <<<"$out" && ok "a cycle row after finish is refused" \
-	|| bad "a cycle row after finish is refused (got: $out)"
-[ "$(conv "$r")" = "$before" ] && ok "and the reported convergence is unchanged ($before)" \
-	|| bad "and the reported convergence is unchanged (was $before, now $(conv "$r"))"
-
-# A negative count pulls cumulative spend back under a real cap. Needs its own run: on a
-# finished one the post-finish guard fires first and the check passes for the wrong reason.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-out=$("$PY" runlog.py cycle --run-id "$r" --n 3 --applied 1 --agents -100 2>&1)
-grep -q 'cannot be negative' <<<"$out" && ok "a negative agent count is refused" \
-	|| bad "a negative agent count is refused (got: $out)"
-
-# A cap that cannot bind only changes which label a stall gets: zero makes `capped`
-# unreachable, negative makes every unconverged run read `capped`.
-for bad_cap in 0 -1; do
-	out=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" --agent-cap "$bad_cap" 2>&1)
-	grep -q 'must be positive' <<<"$out" && ok "--agent-cap $bad_cap is refused" \
-		|| bad "--agent-cap $bad_cap is refused (got: $out)"
-done
-
-# The derivation displaced the self-reported outcome; the self-report stayed. When they
-# disagree, say so — run b480b45cc65d recorded `clean` for a run that did not converge.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 5 6
-out=$("$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' 2>&1)
-grep -q "outcome 'clean' but the cycle rows derive" <<<"$out" \
-	&& ok "finish names a self-report that contradicts the derivation" \
-	|| bad "finish names a self-report that contradicts the derivation (got: $out)"
+prow "$s" c8; crow "$s" c8 1 0 6 7
+[ "$(conv "$s" c8)" = "halted" ] && ok "a cycle that only asked has not converged" \
+	|| bad "a cycle that only asked has not converged (got: $(conv "$s" c8))"
 
 # Asks recorded at finish are outstanding work even when no cycle row carries them. The
 # omission path — `cycle --applied 0` with no --asked, then `finish --asks 7` — derived
 # converged with no disclosure while seven findings sat unresolved with the user.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 0 6
-"$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' --asks 7 >/dev/null 2>&1
-[ "$(conv "$r")" = "halted" ] && ok "asks recorded at finish prevent converged" \
-	|| bad "asks recorded at finish prevent converged (got: $(conv "$r"))"
+prow "$s" c9; crow "$s" c9 1 0 6; frow "$s" c9 clean 7
+[ "$(conv "$s" c9)" = "halted" ] && ok "asks recorded at finish prevent converged" \
+	|| bad "asks recorded at finish prevent converged (got: $(conv "$s" c9))"
 # And a genuinely clean run still converges.
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 0 6
-"$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' --asks 0 >/dev/null 2>&1
-[ "$(conv "$r")" = "converged" ] && ok "and zero asks still converges" \
-	|| bad "and zero asks still converges (got: $(conv "$r"))"
+prow "$s" c10; crow "$s" c10 1 0 6; frow "$s" c10 clean 0
+[ "$(conv "$s" c10)" = "converged" ] && ok "and zero asks still converges" \
+	|| bad "and zero asks still converges (got: $(conv "$s" c10))"
 
-# The disclosure gate is no longer here: the `disclosed` phase and disclosure_pending were
-# deleted because the marker they wrote could be satisfied by `runlog.py disclosed --where
-# "trust me"` with no report anywhere — the shape --clean-exit was retired for, rebuilt inside
-# its own replacement. `looper push-check` owns that coverage now (internal/push in the looper repo), and checks the
-# artifact (a PR comment or the pending file carrying the run's marker) instead of a claim.
 # The precedent ban matched raw text, so whitespace walked straight through it: a reason
 # long enough to wrap carries a newline mid-phrase, which is the ordinary case rather than
-# an evasion. Three of these five phrasings used to be recorded.
+# an evasion. Three of these five phrasings used to be recorded. learn.py vets dismissals
+# through this function; `looper record` carries its own copy of the list, held equal to
+# BANNED_REASON by looper's TestWriteConstantsMatchThePython.
+banned() { "$PY" -c 'import sys; sys.path.insert(0, "."); import runlog; runlog.reject_banned([("this skip", sys.argv[1])])' "$1" 2>&1; }
 for variant in "matches  an   existing    pattern" "matches${NL}an existing pattern" \
 	"matches an existing${TAB}pattern" "MATCHES AN EXISTING PATTERN" "matches an existing pattern"; do
-	out=$("$PY" runlog.py skipped --reason "$variant" --model m 2>&1 | head -1)
+	out=$(banned "$variant" | head -1)
 	grep -q refusing <<<"$out" && ok "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n	' '  ' | cut -c1-32)" \
 		|| bad "precedent refused through whitespace: $(printf '%s' "$variant" | tr '\n	' '  ' | cut -c1-32) (got: $out)"
 done
-# And a measurable reason still records.
-out=$("$PY" runlog.py skipped --reason "12 lines and no logic touched" --model m 2>&1 | head -1)
-grep -q refusing <<<"$out" && bad "a measurable reason still records" || ok "a measurable reason still records"
+# And a measurable reason still passes.
+out=$(banned "12 lines and no logic touched")
+[ -z "$out" ] && ok "a measurable reason still passes" || bad "a measurable reason still passes (got: $out)"
+# A paraphrase is the realistic shape, since the writer is an LLM.
+grep -q refusing <<<"$(banned "this is how the rest of the codebase does it")" \
+	&& ok "a paraphrased precedent reason is refused" || bad "a paraphrased precedent reason is refused"
 
-# A finished run must stay finished however many phase rows arrive after `finish`. load()
-# merges non-cycle phases with .update(), so any later row overwrote run["phase"] and a
-# `phase == "finish"` test then read the run as OPEN — the Stop hook blocked the next turn
-# claiming it was never finished, and its advice (`abandon`) writes an outcome push-check
-# refuses. The `disclosed` row that exposed this is gone, so the row below is synthetic: the
-# coupling is what is under test, and any future phase would re-trigger it.
-# Its own store: `check` reports every open run in the repo, and the shared store above
-# still holds several, so this block would pass or fail on their account rather than ours.
-phase_store="$TMP/latephase.jsonl"
-prev_store=$REVIEW_LOOP_RUNS
-export REVIEW_LOOP_RUNS="$phase_store"
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-cy "$r" 1 4 6
-"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
-	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
-"$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 0 ] && ok "a finished run reads as finished" || bad "a finished run reads as finished"
-"$PY" -c '
-import sys; sys.path.insert(0, ".")
-import runlog
-runlog.append({"run_id": "'"$r"'", "phase": "latephase", "noted_at": runlog.now()})'
-"$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 0 ] && ok "and still does after a later phase row is appended" \
-	|| bad "and still does after a later phase row is appended"
-export REVIEW_LOOP_RUNS="$prev_store"
-
-# A cycle for a run that was never planned is a row with nothing to attach to.
-out=$("$PY" runlog.py cycle --run-id deadbeefdead --n 1 --applied 0 --agents 1 2>&1)
-grep -q 'no plan' <<<"$out" && ok "a cycle without a plan is refused" || bad "a cycle without a plan is refused"
-export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
-
-# A malformed executed entry is not an account. `{"gate":"done"}` — the natural typo
-# for `{"gate":{"status":"done"}}` — passed every isinstance guard and recorded `full`
-# while review-stats.py read the same gate as dropped.
-rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-out=$("$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
-	--executed '{"threat_model":"done"}' 2>&1)
-shown=$("$PY" runlog.py show --run-id "$rid" 2>/dev/null)
-if [ -n "$out" ] && ! grep -q '"tier_executed"' <<<"$shown"; then
-	ok "a non-object executed entry is refused, and nothing is written"
-else
-	bad "a non-object executed entry is refused, and nothing is written"
-fi
-
-# `n/a` was the one status whose reason escaped the precedent ban: cmd_finish demanded
-# a reason for it, nothing vetted that reason, and `n/a` also suppresses both the
-# partial tier and the alarm — so the strongest claim in the vocabulary ("this gate
-# cannot apply here") was the cheapest to make. The same reason must be refused under
-# every status that owes one, not just the two that were listed.
-for st in skipped failed "n/a"; do
-	rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-	out=$("$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
-		--executed "{\"threat_model\":{\"status\":\"$st\",\"reason\":\"matches an existing pattern in the repo\"}}" 2>&1)
-	# Refused BEFORE writing: a rejected reason must leave no finish row behind.
-	shown=$("$PY" runlog.py show --run-id "$rid" 2>/dev/null)
-	if grep -qi precedent <<<"$out" && ! grep -q '"tier_executed"' <<<"$shown"; then
-		ok "a precedent reason is refused under status '$st', and nothing is written"
-	else
-		bad "a precedent reason is refused under status '$st', and nothing is written"
-	fi
-done
-# The complement: a measurable n/a reason is exactly what the status is for.
-rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"n/a","reason":"no attacker-reachable surface in this repo"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$rid" | grep -q '"tier_executed": "full"' \
-	&& ok "a measurable n/a reason records full" || bad "a measurable n/a reason records full"
-
-# Alarm fires on the third non-completion, not the second. These runs SKIP the gate, so
-# the message is the skip one ("change the plan") rather than the unreported one ("fix the
-# gate") — the threshold is what this block is pinning, and `skipped` is just a convenient
-# way to produce a non-completion. review-stats.py counts the two separately because they
-# have different fixes; conflating them had the alarm reporting a correct skip as a failure.
-export REVIEW_LOOP_RUNS="$TMP/alarm.jsonl"
-for _ in 1 2; do
-	r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-	"$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
-		--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null
-done
-[ -z "$("$PY" review-stats.py --alarm)" ] && ok "alarm silent at 2" || bad "alarm silent at 2"
-r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$r" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null
-"$PY" review-stats.py --alarm | grep -q "threat_model was declined with a reason (skipped) 3x" \
-	&& ok "alarm fires at 3" || bad "alarm fires at 3"
-
-# The ban guards every write path, not just finish — plan and abandon carry free
-# text too, and both are directly invocable.
-out=$("$PY" runlog.py plan --tier full --model m \
-	--gates '{"agent_7_structural":{"planned":"skip","reason":"same pattern as the rest of the repo"}}' 2>&1)
-if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent rejected on the plan path"; else bad "precedent rejected on the plan path"; fi
-
-rida=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-out=$("$PY" runlog.py abandon --run-id "$rida" --missing "consistent with existing code" 2>&1)
-if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent rejected on the abandon path"; else bad "precedent rejected on the abandon path"; fi
-
-# An empty --missing is the silent skip this record exists to prevent, and the --missing
-# help text says so. argparse's required=True only demands the FLAG: `--missing ""` exited
-# 0 and wrote an empty reason, so the claim was unenforced prose.
-out=$("$PY" runlog.py abandon --run-id "$rida" --missing "   " 2>&1)
-if [ $? -ne 0 ] && grep -qi "nothing named" <<<"$out"; then
-	ok "an abandonment with nothing named is rejected"
-else
-	bad "an abandonment with nothing named is rejected"
-fi
-
-# The docstring synopsis is printed verbatim by `--help` (the parser is built with
-# description=__doc__), so it is a user-facing flag list that can drift from the flags
-# themselves — and did, four times for one flag, one review cycle apiece, because every
-# pass fixed the instance someone had noticed.
-#
-# This guard replaces one that was worse than nothing. It regexed the SOURCE for
-# `add_argument("--...")`, so six real declaration forms slipped past silently: an
-# underscore or digit in the name, a single-quoted string, a wrapped line, a short option
-# listed first, and anything declared after `set_defaults`. It used a SUBSTRING test, so
-# `--agent` read as documented because `--agents` was. And it FAILED OPEN: any exception
-# in the extraction printed nothing, and empty was read as "nothing undocumented" — it
-# reported ok while crashing, on the exact defect it exists to catch.
-#
-# So: ask argparse (build_parser() exists for this), cover EVERY subcommand rather than
-# `cycle` alone (plan, carried and check each had a live missing flag), compare whole
-# tokens, and print a sentinel on any exception so a broken guard is a red test.
-undoc=$("$PY" - <<'EOF'
-import argparse, re, sys, traceback
-sys.path.insert(0, ".")
-try:
-    import runlog
-    p = runlog.build_parser()
-    sub = [a for a in p._actions if isinstance(a, argparse._SubParsersAction)][0]
-    bad = []
-    for name, sp in sub.choices.items():
-        m = re.search(r"^  runlog\.py %s\b(.*?)(?=^  runlog\.py \w|\Z)" % re.escape(name),
-                      runlog.__doc__, re.M | re.S)
-        if not m:
-            bad.append(f"{name}:NO-SYNOPSIS-ENTRY")
-            continue
-        documented = set(re.findall(r"--[a-z0-9][a-z0-9-]*", m.group(1)))
-        flags = {o for act in sp._actions for o in act.option_strings} - {"-h", "--help"}
-        for f in sorted(flags):
-            if f.startswith("--") and f not in documented:
-                bad.append(f"{name}:{f}")
-    print(" ".join(bad))
-except Exception:
-    # A guard that cannot run must be LOUD. The previous version printed nothing here,
-    # and nothing was indistinguishable from "all documented".
-    print("EXTRACTION-FAILED", traceback.format_exc().splitlines()[-1].strip())
-EOF
-)
-[ -z "$undoc" ] \
-	&& ok "every flag argparse accepts is in the --help synopsis, for every subcommand" \
-	|| bad "undocumented flags (or a broken check): $undoc"
-
-# A width reason licenses a NARROWER fan-out, so it is a field that buys cheaper review and
-# has to go through the same funnel. It does — via append(), not a per-caller check — but
-# the LIST is what decides, and this phrasing walked straight through until it was added.
-ridw2=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-out=$("$PY" runlog.py cycle --run-id "$ridw2" --n 1 --applied 0 --agents 2 \
-	--width-reason "consistent with existing patterns in the repo" 2>&1)
-if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then
-	ok "a precedent width reason is refused"
-else
-	bad "a precedent width reason is refused"
-fi
-# ...and a measured one is stored next to the count, which is the whole point: a width that
-# keeps being justified the same way is the signal the threshold is wrong.
-"$PY" runlog.py cycle --run-id "$ridw2" --n 1 --applied 0 --agents 2 \
-	--width-reason "semantic_lines=129, 3 batches, no near_duplicates" >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$ridw2" | grep -q '"width_reason": "semantic_lines=129' \
-	&& ok "and a measured width reason is recorded beside the agent count" \
-	|| bad "and a measured width reason is recorded beside the agent count"
-# Close it, or the later "a skipped row leaves nothing open" check sees this fixture as an
-# in-flight run and fails for a reason that has nothing to do with what it asserts.
-"$PY" runlog.py finish --run-id "$ridw2" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
-
-# A finish is terminal: abandoning afterwards must not half-overwrite it.
-"$PY" runlog.py finish --run-id "$rida" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
-"$PY" runlog.py abandon --run-id "$rida" --missing "late abandon" >/dev/null 2>&1
-[ $? -ne 0 ] && ok "abandon refuses an already-finished run" || bad "abandon refuses an already-finished run"
-"$PY" runlog.py show --run-id "$rida" | grep -q '"outcome": "clean"' \
-	&& ok "the finished outcome survived" || bad "the finished outcome survived"
-
-# The roster invariant: a finish that ignores a planned gate is refused outright.
-# Without this the record only ever says as much as the orchestrator chose to say.
-rid3=$("$PY" runlog.py plan --tier full --model m \
-	--gates '{"threat_model":{"planned":"run","reason":"2 stale"},"security_review":{"planned":"run","reason":"always"}}')
-out=$("$PY" runlog.py finish --run-id "$rid3" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' 2>&1)
-if [ $? -ne 0 ] && grep -q security_review <<<"$out"; then ok "finish refuses an unaccounted planned gate"; else bad "finish refuses an unaccounted planned gate"; fi
-"$PY" runlog.py check --run-id "$rid3" >/dev/null 2>&1
-[ $? -eq 1 ] && ok "refused finish left the run open" || bad "refused finish left the run open"
-
-# An escalation accounts for a gate just as an executed entry does.
-"$PY" runlog.py finish --run-id "$rid3" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' \
-	--escalations '[{"gate":"security_review","reason":"ran it twice, diff touched auth"}]' >/dev/null 2>&1 \
-	&& ok "an escalation accounts for a planned gate" || bad "an escalation accounts for a planned gate"
-
-# partial is derived from what happened, not taken from the caller.
-rid4=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$rid4" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"failed","reason":"agent timed out"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$rid4" | grep -q '"tier_executed": "partial"' \
-	&& ok "a failed gate forces tier partial" || bad "a failed gate forces tier partial"
-
-rid5=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$rid5" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' \
-	--agents '[{"id":"2-bugs","status":"failed"}]' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$rid5" | grep -q '"tier_executed": "partial"' \
-	&& ok "a failed agent forces tier partial" || bad "a failed agent forces tier partial"
-
-# A waiver PASSES the measurement gate, so it must not force partial — the deferred-findings
-# record carried this as unreachable for two days because nothing had ever recorded `waived`.
-# And it must still reach the alarm: three runs waiving one gate is the signal the alarm is
-# for, which is why `waived` is in GATE_ACCOUNTED (tier) and NOT in GATE_OK (silence).
-ridw=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$ridw" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"waived","reason":"repo cannot measure"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$ridw" | grep -q '"tier_executed": "full"' \
-	&& ok "a waived gate does not force partial" || bad "a waived gate does not force partial"
-# The other half, and the half the catalog entry delegates elsewhere. review-stats' WAIVED
-# fixture appends JSONL by hand rather than calling `runlog.py finish` (its spend fixture
-# does call it, so this is about that one fixture, not the suite), so nothing connected the
-# tier half to the visibility half: dropping waived entries from the persisted `executed`
-# left every suite green while laundering the waiver out of the record entirely.
-"$PY" runlog.py show --run-id "$ridw" | grep -q '"status": "waived"' \
-	&& ok "and the waiver is still in the record for the alarm to find" \
-	|| bad "and the waiver is still in the record for the alarm to find"
-
-# `passed` is NOT accounted, deliberately. It is report-line prose, not an `--executed`
-# status, and accounting for it made the two instruments contradict each other on one
-# record: tier `full` beside an alarm line reading "did not complete (passed)". The loud
-# default is the right handler for a word nobody should be writing as a status.
-ridp=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$ridp" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"passed","reason":"metric plan posted"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$ridp" | grep -q '"tier_executed": "partial"' \
-	&& ok "a passed gate is not silently accounted, it goes loud" \
-	|| bad "a passed gate is not silently accounted, it goes loud"
-# A status nobody enumerated still forces partial — the loud default the three omissions argued for.
-ridu=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$ridu" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"probably fine","reason":"2 stale claims re-read"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$ridu" | grep -q '"tier_executed": "partial"' \
-	&& ok "an unenumerated status still forces partial" || bad "an unenumerated status still forces partial"
-
-# The other half, which nothing checked: a run where every agent SUCCEEDED must not
-# be partial. Gates say `done`, so a caller writing the agent roster reaches for
-# `done` too — and only `ok` was accepted, so five successful agents were counted as
-# failures and the run recorded `partial`. Over-reporting partial is still a false
-# record, and it teaches the next reader that partial is normal. Both words, because
-# both are in use.
-for word in ok "done"; do
-	rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-	"$PY" runlog.py finish --run-id "$rid" --outcome clean --tier full \
-		--executed '{"threat_model":{"status":"done"}}' \
-		--agents "[{\"id\":\"2-bugs\",\"status\":\"$word\"}]" >/dev/null 2>&1
-	shown=$("$PY" runlog.py show --run-id "$rid")
-	grep -q '"tier_executed": "full"' <<<"$shown" \
-		&& ok "an agent marked '$word' is a success, not a failure" \
-		|| bad "an agent marked '$word' is a success, not a failure (got: $(grep tier_executed <<<"$shown"))"
-done
-
-# A deliberate skip is one complete row, not a second store to consult.
-sk=$("$PY" runlog.py skipped --reason "docs-only, 4 lines, gitleaks clean")
-"$PY" runlog.py show --run-id "$sk" | grep -q '"outcome": "skipped"' \
-	&& ok "skipped writes one complete row" || bad "skipped writes one complete row"
-"$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 0 ] && ok "a skipped row leaves nothing open" || bad "a skipped row leaves nothing open"
-out=$("$PY" runlog.py skipped --reason "matches an existing pattern in the repo" 2>&1)
-if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "precedent rejected on the skip path too"; else bad "precedent rejected on the skip path too"; fi
-
-# A refused skip must write nothing. cmd_skipped appends twice, so a guard that
-# only fires on the second write leaves the first behind as a phantom open run.
-export REVIEW_LOOP_RUNS="$TMP/skipfail.jsonl"
-"$PY" runlog.py skipped --reason "same pattern as the rest of the repo" >/dev/null 2>&1
-[ ! -s "$REVIEW_LOOP_RUNS" ] && ok "a refused skip writes nothing at all" || bad "a refused skip writes nothing at all"
-"$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 0 ] && ok "a refused skip leaves no phantom open run" || bad "a refused skip leaves no phantom open run"
-
-# The roster check must see the plan even after it scrolls past the read tail —
-# a bounded read is right for "is anything open", wrong for "what did this plan".
-export REVIEW_LOOP_RUNS="$TMP/tail.jsonl"
-ridt=$(REVIEW_LOOP_TAIL=100 "$PY" runlog.py plan --tier full --model m \
-	--gates '{"threat_model":{"planned":"run","reason":"2 stale"}}')
-for _ in $(seq 20); do
-	r=$(REVIEW_LOOP_TAIL=100 "$PY" runlog.py plan --tier full --model m --gates '{}')
-	REVIEW_LOOP_TAIL=100 "$PY" runlog.py finish --run-id "$r" --outcome clean --tier full >/dev/null
-done
-out=$(REVIEW_LOOP_TAIL=2 "$PY" runlog.py finish --run-id "$ridt" --outcome clean --tier full \
-	--executed '{}' 2>&1)
-if [ $? -ne 0 ] && grep -q threat_model <<<"$out"; then ok "the roster check reads past the tail"; else bad "the roster check reads past the tail"; fi
-
-# An execution-time skip of a gate the plan said to run IS an unexecuted gate,
-# and it is the commonest way one actually gets dropped.
-export REVIEW_LOOP_RUNS="$TMP/skiptier.jsonl"
-rids=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$rids" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"skipped","reason":"no time this cycle"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$rids" | grep -q '"tier_executed": "partial"' \
-	&& ok "a skipped planned gate forces tier partial" || bad "a skipped planned gate forces tier partial"
-
-# A gate the PLAN already marked skip is not a failure if it turns up in
-# executed — only gates the plan said to run can drag the tier down.
-export REVIEW_LOOP_RUNS="$TMP/planskip.jsonl"
-ridp=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-"$PY" runlog.py finish --run-id "$ridp" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"},"staleness_sweep":{"status":"skipped","reason":"12 entries"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$ridp" | grep -q '"tier_executed": "full"' \
-	&& ok "a plan-level skip does not force partial" || bad "a plan-level skip does not force partial"
-
-# Both report surfaces must agree what "abandoned" means: an explicitly
-# abandoned run is abandoned, not "finished".
-export REVIEW_LOOP_RUNS="$TMP/explicit.jsonl"
-ride=$(CLAUDE_CODE_SESSION_ID=s1 "$PY" runlog.py plan --tier full --model m --gates '{}')
-"$PY" runlog.py abandon --run-id "$ride" --missing "stopped for the day" >/dev/null
-CLAUDE_CODE_SESSION_ID=s1 "$PY" review-stats.py | grep -q "finished: 0  abandoned: 1" \
-	&& ok "an explicit abandon reports as abandoned, not finished" \
-	|| bad "an explicit abandon reports as abandoned, not finished"
-
-# An empty planned set means "the plan ran nothing", not "no plan information".
-# Conflating them re-enabled the very behaviour the planned filter exists to stop.
-export REVIEW_LOOP_RUNS="$TMP/emptyplan.jsonl"
-ridz=$("$PY" runlog.py plan --tier full --model m \
-	--gates '{"threat_model":{"planned":"skip","reason":"12 entries"}}')
-"$PY" runlog.py finish --run-id "$ridz" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"skipped","reason":"the plan already skipped it"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$ridz" | grep -q '"tier_executed": "full"' \
-	&& ok "an all-skipped plan does not force partial" || bad "an all-skipped plan does not force partial"
-
-# A fat-fingered env override must not take down every invocation, including the
-# Stop hook's per-turn check.
+# A fat-fingered env override must not take down every importer — review-stats.py's
+# Step 0 alarm among them.
 # Assert the exact code and the absence of a traceback: an uncaught exception
 # also exits 1, so `-le 1` would pass on the very crash this guards against.
 for badval in abc -5 "" "  "; do
-	err=$(REVIEW_LOOP_TAIL="$badval" "$PY" runlog.py check 2>&1 >/dev/null)
+	err=$(REVIEW_LOOP_TAIL="$badval" "$PY" review-stats.py --alarm 2>&1 >/dev/null)
 	rc=$?
 	[ "$rc" -eq 0 ] && ! grep -q Traceback <<<"$err" \
 		&& ok "tail override '$badval' degrades, not crashes" \
 		|| bad "tail override '$badval' degrades, not crashes (rc=$rc)"
 done
 
-# session_kind is one of the axes the record exists to answer, so a
-# misclassification quietly corrupts that answer. The tty test alone called every
-# interactive Claude Code run "headless", because its commands run with stdin detached.
-export REVIEW_LOOP_RUNS="$TMP/kind.jsonl"
-for pair in "1:interactive" "0:headless"; do
-	val=${pair%%:*}; want=${pair##*:}
-	rk=$(env -u AO_SESSION_ID CLAUDE_CODE_SESSION_ATTENDED="$val" "$PY" runlog.py plan --tier full --model m --gates '{}')
-	"$PY" runlog.py show --run-id "$rk" | grep -q "\"session_kind\": \"$want\"" \
-		&& ok "attended=$val records $want" || bad "attended=$val records $want"
-done
-rk=$(AO_SESSION_ID=abc CLAUDE_CODE_SESSION_ATTENDED=1 "$PY" runlog.py plan --tier full --model m --gates '{}')
-"$PY" runlog.py show --run-id "$rk" | grep -q '"session_kind": "ao-worker"' \
-	&& ok "an AO worker outranks the attended flag" || bad "an AO worker outranks the attended flag"
+# --- the alarm review-stats.py derives from these rows.
+# Alarm fires on the third non-completion, not the second. These runs SKIP the gate, so
+# the message is the skip one ("change the plan") rather than the unreported one ("fix the
+# gate") — the threshold is what this block is pinning, and `skipped` is just a convenient
+# way to produce a non-completion. review-stats.py counts the two separately because they
+# have different fixes; conflating them had the alarm reporting a correct skip as a failure.
+s="$TMP/alarm.jsonl"
+SKIP='{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}'
+for i in 1 2; do prow "$s" "a$i" 40 "$GATES" null "2026-01-0${i}T00:00:00"; frow "$s" "a$i" clean 0 "$SKIP"; done
+[ -z "$(REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py --alarm)" ] && ok "alarm silent at 2" || bad "alarm silent at 2"
+prow "$s" a3 40 "$GATES" null "2026-01-03T00:00:00"; frow "$s" a3 clean 0 "$SKIP"
+REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py --alarm | grep -q "threat_model was declined with a reason (skipped) 3x" \
+	&& ok "alarm fires at 3" || bad "alarm fires at 3"
 
-# `n/a` is not `skipped`: a gate with nothing to act on was not dropped, and a
-# review of a repo that has no PRs and no telemetry is not a degraded review.
-export REVIEW_LOOP_RUNS="$TMP/na.jsonl"
-ridna=$("$PY" runlog.py plan --tier full --model m \
-	--gates '{"pr_report":{"planned":"run","reason":"always"},"threat_model":{"planned":"run","reason":"2 stale"}}')
-"$PY" runlog.py finish --run-id "$ridna" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"},"pr_report":{"status":"n/a","reason":"this repo has no PRs at all"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$ridna" | grep -q '"tier_executed": "full"' \
-	&& ok "n/a does not force partial" || bad "n/a does not force partial"
-# Capture, don't pipe: finish exits 1 by design here, and under pipefail that
-# fails the pipeline whatever grep found.
-ridna2=$("$PY" runlog.py plan --tier full --model m --gates '{"pr_report":{"planned":"run","reason":"always"}}')
-naerr=$("$PY" runlog.py finish --run-id "$ridna2" --outcome clean --tier full \
-	--executed '{"pr_report":{"status":"n/a"}}' 2>&1)
-grep -q "no reason" <<<"$naerr" \
-	&& ok "n/a still needs its reason" || bad "n/a still needs its reason"
-
-# The floor is the whole point of "escalate, never descend" — and until now it was
-# computed, recorded, and never checked.
-export REVIEW_LOOP_RUNS="$TMP/floor.jsonl"
-ridf=$("$PY" runlog.py plan --tier full --model m --gates '{}')
-out=$("$PY" runlog.py finish --run-id "$ridf" --outcome clean --tier fast --executed '{}' 2>&1)
-if [ $? -ne 0 ] && grep -q "floor" <<<"$out"; then ok "a tier below the plan's floor is refused"; else bad "a tier below the plan's floor is refused"; fi
-"$PY" runlog.py finish --run-id "$ridf" --outcome clean --tier full --executed '{}' >/dev/null 2>&1 \
-	&& ok "the floor itself is accepted" || bad "the floor itself is accepted"
-ridg=$("$PY" runlog.py plan --tier fast --model m --gates '{}')
-"$PY" runlog.py finish --run-id "$ridg" --outcome clean --tier full --executed '{}' >/dev/null 2>&1 \
-	&& ok "escalating above the floor is allowed" || bad "escalating above the floor is allowed"
-
-# A status without a reason answers "what happened" and not "why", which is the
-# half anyone reading the record later actually needs.
-export REVIEW_LOOP_RUNS="$TMP/noreason.jsonl"
-ridn=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-out=$("$PY" runlog.py finish --run-id "$ridn" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"skipped"}}' 2>&1)
-if [ $? -ne 0 ] && grep -q "no reason" <<<"$out"; then ok "a not-done gate with no reason is refused"; else bad "a not-done gate with no reason is refused"; fi
-
-# A session that re-planned after an error leaves an earlier run open; reporting
-# only the newest made it invisible for the rest of that session's life.
-export REVIEW_LOOP_RUNS="$TMP/twoopen.jsonl"
-r1=$(CLAUDE_CODE_SESSION_ID=s9 "$PY" runlog.py plan --tier full --model m --gates "$GATES")
-r2=$(CLAUDE_CODE_SESSION_ID=s9 "$PY" runlog.py plan --tier full --model m --gates "$GATES")
-chk2=$(CLAUDE_CODE_SESSION_ID=s9 "$PY" runlog.py check 2>/dev/null)
-grep -q "$r1" <<<"$chk2" && grep -q "$r2" <<<"$chk2" \
-	&& ok "check reports every open run, not just the newest" \
-	|| bad "check reports every open run, not just the newest"
-
-# A paraphrase is the realistic shape, since the writer is an LLM.
-export REVIEW_LOOP_RUNS="$TMP/paraphrase.jsonl"
-out=$("$PY" runlog.py skipped --reason "this is how the rest of the codebase does it" 2>&1)
-if [ $? -ne 0 ] && grep -qi precedent <<<"$out"; then ok "a paraphrased precedent reason is refused"; else bad "a paraphrased precedent reason is refused"; fi
-export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
-
-# With no session env we cannot tell dead from in-flight, so we must not guess.
-export REVIEW_LOOP_RUNS="$TMP/nosess.jsonl"
-CLAUDE_CODE_SESSION_ID=live-elsewhere "$PY" runlog.py plan --tier full --model m --gates '{}' >/dev/null
-noenv=$(env -u CLAUDE_CODE_SESSION_ID -u AO_SESSION_ID REVIEW_LOOP_RUNS="$TMP/nosess.jsonl" "$PY" review-stats.py)
-grep -q "abandoned: 0" <<<"$noenv" \
-	&& ok "no session env means no abandonment guess" || bad "no session env means no abandonment guess"
-export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
-
-# A concurrent worktree session's open run must not block this session's Stop.
-export REVIEW_LOOP_RUNS="$TMP/sessions.jsonl"
-CLAUDE_CODE_SESSION_ID=sess-a "$PY" runlog.py plan --tier full --model m --gates "$GATES" >/dev/null
-CLAUDE_CODE_SESSION_ID=sess-b "$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 0 ] && ok "another session's open run is not mine" || bad "another session's open run is not mine"
-CLAUDE_CODE_SESSION_ID=sess-a "$PY" runlog.py check >/dev/null 2>&1
-[ $? -eq 1 ] && ok "my own open run still blocks" || bad "my own open run still blocks"
-
-# Stop hook: prompts once per run, then stays quiet — and never writes an outcome
-# for a run that may still be in flight.
-export REVIEW_LOOP_RUNS="$TMP/hook.jsonl"
-rid=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
-[ -n "$rid" ] || { bad "hook setup"; exit 1; }
-hook_out=$(echo '{"stop_hook_active":false}' | REVIEW_LOOP_RUNS="$TMP/hook.jsonl" ./stop-hook.sh)
-grep -q '"decision": *"block"' <<<"$hook_out" && ok "stop hook blocks the first time" || bad "stop hook blocks the first time"
-grep -q "$rid" <<<"$hook_out" && ok "block names the run" || bad "block names the run"
-
-# Stop fires every turn, so a mid-flight run must be prompted once and then left
-# alone — and must NEVER be written off as abandoned while it is still running.
-hook_out=$(echo '{"stop_hook_active":true}' | REVIEW_LOOP_RUNS="$TMP/hook.jsonl" ./stop-hook.sh)
-[ -z "$hook_out" ] && ok "second stop does not block" || bad "second stop does not block"
-shown=$("$PY" runlog.py show --run-id "$rid")
-[ -n "$shown" ] && ! grep -q '"outcome"' <<<"$shown" \
-	&& ok "second stop writes no outcome for a live run" \
-	|| bad "second stop writes no outcome for a live run"
-grep -q '"phase": "nudge"' <<<"$shown" \
-	&& ok "run recorded as nudged" || bad "run recorded as nudged"
-
-# Abandonment is derived, not written: another session's open run reads as lost.
-#
-# Its own store, and the owning session named explicitly. This assertion used to read
-# $TMP/hook.jsonl, whose run names no session — and a row that never named one is
-# deliberately NOT derived abandoned (see review-stats.is_abandoned, whose comment records
-# that guessing there reported every headless run as abandoned and tripped the Step 0
-# alarm on every later run). It passed anyway, because the author's shell always exports
-# CLAUDE_CODE_SESSION_ID and so the row got an owner by accident. On the first CI runner
-# that ever ran this file, nothing exported one and the assertion went red.
-#
-# It cannot share the hook's run either: `runlog.py check` defaults --session to
-# $CLAUDE_CODE_SESSION_ID, so a run owned by some other session is filtered out and the
-# hook rightly declines to block on it.
-owned="$TMP/owned.jsonl"
-CLAUDE_CODE_SESSION_ID=owning-session REVIEW_LOOP_RUNS="$owned" \
-	"$PY" runlog.py plan --tier full --model m --gates "$GATES" >/dev/null
-CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$owned" "$PY" review-stats.py \
-	| grep -q "abandoned: 1" && ok "open run from another session reads as abandoned" \
-	|| bad "open run from another session reads as abandoned"
-# ...and the documented converse, which nothing asserted: a row that never named a
-# session is unknown rather than dead. That is the behaviour to keep, so it needs a test
-# or the next reader will "fix" it — this is the case the assertion above was silently
-# exercising until CI exposed it.
-env -u CLAUDE_CODE_SESSION_ID -u AO_SESSION_ID REVIEW_LOOP_RUNS="$TMP/anon.jsonl" \
-	"$PY" runlog.py plan --tier full --model m --gates "$GATES" >/dev/null
-CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$TMP/anon.jsonl" "$PY" review-stats.py \
-	| grep -q "abandoned: 0" && ok "a run that named no session is not derived abandoned" \
-	|| bad "a run that named no session is not derived abandoned"
-
-rep=$(REVIEW_LOOP_RUNS="$TMP/alarm.jsonl" "$PY" review-stats.py)
+rep=$(REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py)
 grep -q "gates planned but not completed:" <<<"$rep" \
 	&& ok "report lists incomplete gates" || bad "report lists incomplete gates"
 grep -q "threat_model" <<<"$rep" && ok "report names the gate" || bad "report names the gate"
 grep -qE "by orchestrator model:" <<<"$rep" \
 	&& ok "report breaks down by model" || bad "report breaks down by model"
 
+# `record_reviewed` is the one gate whose applicability depends on the run's OWN outcome:
+# the plan marks it run ("on clean exit") because convergence is unknowable at plan time.
+# A run that did not converge has no completed review to stamp, so the status is `n/a` —
+# and the alarm must stay quiet across three such runs. GATE_OK is what keeps it quiet:
+# when review-stats had its own `status == "done"` test, every n/a was a dropped gate and
+# five of the alarm's reported misses came from exactly this, none of them real.
+s="$TMP/cond.jsonl"
+CG='{"record_reviewed":{"planned":"run","reason":"on clean exit"}}'
+for i in 1 2 3; do
+	prow "$s" "n$i" 40 "$CG" null "2026-01-0${i}T00:00:00"
+	frow "$s" "n$i" cycle-limit 0 '{"record_reviewed":{"status":"n/a","reason":"no completed review to stamp"}}'
+done
+[ -z "$(REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py --alarm)" ] \
+	&& ok "three n/a runs raise no alarm" || bad "three n/a runs raise no alarm"
+
+# Both report surfaces must agree what "abandoned" means: an explicitly
+# abandoned run is abandoned, not "finished".
+s="$TMP/explicit.jsonl"
+prow "$s" e1 40 '{}' '"s1"'
+printf '{"run_id":"e1","phase":"finish","finished_at":"2026-01-01T01:00:00","outcome":"abandoned","abandoned_missing":"stopped for the day"}\n' >> "$s"
+CLAUDE_CODE_SESSION_ID=s1 REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py | grep -q "finished: 0  abandoned: 1" \
+	&& ok "an explicit abandon reports as abandoned, not finished" \
+	|| bad "an explicit abandon reports as abandoned, not finished"
+
+# With no session env we cannot tell dead from in-flight, so we must not guess.
+s="$TMP/nosess.jsonl"
+prow "$s" ns1 40 '{}' '"live-elsewhere"'
+noenv=$(env -u CLAUDE_CODE_SESSION_ID -u AO_SESSION_ID REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py)
+grep -q "abandoned: 0" <<<"$noenv" \
+	&& ok "no session env means no abandonment guess" || bad "no session env means no abandonment guess"
+
+# Abandonment is derived, not written: another session's open run reads as lost. The
+# owning session is named explicitly — a row that never named one is deliberately NOT
+# derived abandoned (see review-stats.is_abandoned, whose comment records that guessing
+# there reported every headless run as abandoned and tripped the Step 0 alarm on every
+# later run). An earlier version of this check passed only because the author's shell
+# exported CLAUDE_CODE_SESSION_ID, and went red on the first CI runner that ran it.
+s="$TMP/owned.jsonl"
+prow "$s" o1 40 "$GATES" '"owning-session"'
+CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py \
+	| grep -q "abandoned: 1" && ok "open run from another session reads as abandoned" \
+	|| bad "open run from another session reads as abandoned"
+# ...and the documented converse: a row that never named a session is unknown rather
+# than dead. That is the behaviour to keep, so it needs a test or the next reader will
+# "fix" it.
+s="$TMP/anon.jsonl"
+prow "$s" an1
+CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py \
+	| grep -q "abandoned: 0" && ok "a run that named no session is not derived abandoned" \
+	|| bad "a run that named no session is not derived abandoned"
+
+# --- the Stop hook, where it does not need looper to answer.
 # The most-executed path in production: an ordinary Stop with nothing pending.
 # A regression that blocked here would block every session on the machine.
 quiet=$(echo '{"stop_hook_active":false}' | REVIEW_LOOP_RUNS="$TMP/empty.jsonl" ./stop-hook.sh)
@@ -744,113 +233,114 @@ rc=$?
 [ ! -e "$TMP/empty.jsonl" ] \
 	&& ok "hook exits before touching the store" || bad "hook exits before touching the store"
 
-# --head must actually scope: a run planned at a different tip is not this one.
-export REVIEW_LOOP_RUNS="$TMP/headscope.jsonl"
-"$PY" runlog.py plan --tier full --model m --head 1111111111111111111111111111111111111111 --gates "$GATES" >/dev/null
-hs=$(echo '{"stop_hook_active":false}' | REVIEW_LOOP_RUNS="$TMP/headscope.jsonl" ./stop-hook.sh)
-[ -z "$hs" ] && ok "hook ignores a run planned at another tip" || bad "hook ignores a run planned at another tip"
-
-# --allow-unaccounted is the escape path: it records the gap rather than hiding it.
-export REVIEW_LOOP_RUNS="$TMP/allow.jsonl"
-rida2=$("$PY" runlog.py plan --tier full --model m \
-	--gates '{"threat_model":{"planned":"run","reason":"2 stale"},"security_review":{"planned":"run","reason":"always"}}')
-"$PY" runlog.py finish --run-id "$rida2" --outcome clean --tier full --allow-unaccounted \
-	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1 \
-	&& ok "--allow-unaccounted permits the finish" || bad "--allow-unaccounted permits the finish"
-shown2=$("$PY" runlog.py show --run-id "$rida2")
-grep -q '"tier_executed": "partial"' <<<"$shown2" \
-	&& ok "--allow-unaccounted still marks the run partial" || bad "--allow-unaccounted still marks the run partial"
-grep -q "unaccounted at finish" <<<"$shown2" \
-	&& ok "the unaccounted gate is named in the record" || bad "the unaccounted gate is named in the record"
-export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
-
-# Outside a git work tree the hook has nothing to guard and must not error.
-outside=$(cd "$TMP" && echo '{"stop_hook_active":false}' | "$OLDPWD/stop-hook.sh" 2>&1)
+# Outside a git work tree the hook has nothing to guard and must not error — nor nag about
+# a missing looper, since no run can be open there. HOME has none, so a hook that resolved
+# looper before asking git would speak here.
+s="$TMP/nonempty.jsonl"; prow "$s" x1
+nohome="$TMP/nolooper-home"; mkdir -p "$nohome"
+outside=$(cd "$TMP" && echo '{"stop_hook_active":false}' | HOME="$nohome" REVIEW_LOOP_RUNS="$s" "$OLDPWD/stop-hook.sh" 2>&1)
 rc=$?
 [ -z "$outside" ] && [ "$rc" -eq 0 ] \
 	&& ok "hook is silent outside a git repo" || bad "hook is silent outside a git repo"
 
-echo
-# `record_reviewed` is the one gate whose applicability depends on the run's OWN outcome:
-# the plan marks it run ("on clean exit") because convergence is unknowable at plan time.
-# A run that did not converge has no completed review to stamp, so the status is `n/a` —
-# and recording `skipped` instead forces `partial` on a run that executed the whole
-# process, and raises the Step 0 alarm about a gate that worked correctly. Five of that
-# alarm's reported misses came from exactly this, none of them real.
-export REVIEW_LOOP_RUNS="$TMP/cond.jsonl"
-CG='{"record_reviewed":{"planned":"run","reason":"on clean exit"}}'
-r=$("$PY" runlog.py plan --tier full --model m --gates "$CG")
-"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 3 --agents 40 >/dev/null 2>&1
-"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
-	--executed '{"record_reviewed":{"status":"n/a","reason":"run hit the agent cap without converging, so there is no completed review to stamp"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$r" | grep -q '"tier_executed": "full"' \
-	&& ok "a non-converged run records n/a for record_reviewed without going partial" \
-	|| bad "a non-converged run records n/a for record_reviewed without going partial"
-# ...and the distinction is load-bearing: `skipped` for the same gate on the same run IS
-# partial, because that claims you declined a gate you could have run.
-export REVIEW_LOOP_RUNS="$TMP/cond2.jsonl"
-r=$("$PY" runlog.py plan --tier full --model m --gates "$CG")
-"$PY" runlog.py cycle --run-id "$r" --n 1 --applied 3 --agents 40 >/dev/null 2>&1
-"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
-	--executed '{"record_reviewed":{"status":"skipped","reason":"chose not to stamp this tip"}}' >/dev/null 2>&1
-"$PY" runlog.py show --run-id "$r" | grep -q '"tier_executed": "partial"' \
-	&& ok "and skipped for the same gate still records partial" \
-	|| bad "and skipped for the same gate still records partial"
-# And the alarm stays quiet across three such n/a runs, which is the whole point.
-export REVIEW_LOOP_RUNS="$TMP/cond3.jsonl"
-for i in 1 2 3; do
-	r=$("$PY" runlog.py plan --tier full --model m --gates "$CG")
-	"$PY" runlog.py finish --run-id "$r" --outcome cycle-limit --tier full \
-		--executed '{"record_reviewed":{"status":"n/a","reason":"no completed review to stamp"}}' >/dev/null 2>&1
-done
-[ -z "$("$PY" review-stats.py --alarm)" ] \
-	&& ok "three n/a runs raise no alarm" || bad "three n/a runs raise no alarm"
+# No looper: a run may be open and nothing can say whether. Exiting 0 silently there is
+# indistinguishable from "nothing open", so the hook must say so, without blocking.
+hook_out=$(echo '{"stop_hook_active":false}' | HOME="$nohome" REVIEW_LOOP_RUNS="$s" ./stop-hook.sh)
+rc=$?
+msg=$("$PY" -c 'import json,sys; d=json.loads(sys.stdin.read()); print("BLOCKS" if "decision" in d else d.get("systemMessage",""))' <<<"$hook_out" 2>/dev/null)
+[ "$rc" -eq 0 ] && grep -q "looper is missing" <<<"$msg" && grep -q "go install" <<<"$msg" \
+	&& ok "a missing looper is reported, not swallowed, and blocks nothing" \
+	|| bad "a missing looper is reported, not swallowed, and blocks nothing (rc=$rc, got: $hook_out)"
 
-# --- pending: Step 0c's worklist is this branch's files only. The pending files sit under the
-# common dir every branch and worktree shares; listing them all posted another branch's report
-# onto this PR (CodeRabbit, skills PR #2). Detached HEAD and unknown runs list nothing.
-pr="$TMP/pending-repo"; git init -q -b feat "$pr" && git -C "$pr" commit -q --allow-empty -m i
-pmine=$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" plan --tier full --model m --gates "$GATES" --inputs '{}')
-git -C "$pr" checkout -q -b other
-pother=$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" plan --tier full --model m --gates "$GATES" --inputs '{}')
-git -C "$pr" checkout -q feat
-for id in "$pmine" "$pother" nosuchrun; do : >"$pr/.git/info/review-loop-pending-report.$id.md"; done
-pl=$(cd "$pr/" && "$PY" "$OLDPWD/runlog.py" pending 2>"$TMP/pending.err")
-[ "$pl" = "$(cd "$pr" && pwd -P)/.git/info/review-loop-pending-report.$pmine.md" ] || [ "$pl" = "$pr/.git/info/review-loop-pending-report.$pmine.md" ] \
-	&& ok "pending lists only this branch's file, absolute" || bad "pending lists only this branch's file, absolute: $pl"
-grep -q "no run record for .*nosuchrun" "$TMP/pending.err" \
-	&& ok "pending names a file with no run record instead of dropping it silently" || bad "pending names a file with no run record: $(cat "$TMP/pending.err")"
-git -C "$pr" checkout -q --detach
-[ -z "$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" pending 2>"$TMP/pending.err")" ] && grep -q "no current branch" "$TMP/pending.err" \
-	&& ok "pending lists nothing on a detached HEAD" || bad "pending lists nothing on a detached HEAD"
-
-# --- the record as looper reads it. pr-report.test.sh and push-check.py's selftest drove
-# rows written by THIS file through the real readers; looper's own tests use hand-written
-# rows and frozen goldens, so a field renamed here would break the push gate and the report
-# with both repos green. Runs where looper is on PATH (locally; CI's trust job) and says so
-# where it is not, adding its checks to the expected count only when they ran.
+# --- looper: the Stop hook driving the real writer, and the record as looper and the
+# --- Python readers each read rows the other wrote. looper's own tests use hand-written rows
+# --- and frozen goldens, so a field renamed on either side would break the push gate, the
+# --- report or the alarm with both repos green. Runs where looper is on PATH (locally; CI's
+# --- trust job) and says so where it is not, adding its checks to the expected count only
+# --- when they ran. The scripts resolve looper as $HOME/.local/bin/looper, so it is linked
+# --- into a fixture HOME rather than found on PATH.
 looper_checks=0
-if command -v looper >/dev/null 2>&1; then
-	looper_checks=4
+if real_looper=$(command -v looper); then
+	looper_checks=15
+	lhome="$TMP/looper-home"; mkdir -p "$lhome/.local/bin" && ln -s "$real_looper" "$lhome/.local/bin/looper"
+	L="$lhome/.local/bin/looper"
+
+	# Stop hook: prompts once per run, then stays quiet — and never writes an outcome
+	# for a run that may still be in flight.
+	export REVIEW_LOOP_RUNS="$TMP/hook.jsonl"
+	rid=$("$L" record plan --tier full --model m --gates "$GATES")
+	hook_out=$(echo '{"stop_hook_active":false}' | HOME="$lhome" ./stop-hook.sh)
+	grep -q '"decision": *"block"' <<<"$hook_out" && ok "stop hook blocks the first time" || bad "stop hook blocks the first time"
+	grep -q "$rid" <<<"$hook_out" && ok "block names the run" || bad "block names the run"
+	grep -q "looper record finish --run-id $rid" <<<"$hook_out" && grep -q "looper record abandon --run-id $rid" <<<"$hook_out" \
+		&& ok "and its advice names the looper record commands" || bad "and its advice names the looper record commands"
+
+	# Stop fires every turn, so a mid-flight run must be prompted once and then left
+	# alone — and must NEVER be written off as abandoned while it is still running.
+	hook_out=$(echo '{"stop_hook_active":true}' | HOME="$lhome" ./stop-hook.sh)
+	[ -z "$hook_out" ] && ok "second stop does not block" || bad "second stop does not block"
+	shown=$("$L" record show --run-id "$rid")
+	[ -n "$shown" ] && ! grep -q '"outcome"' <<<"$shown" \
+		&& ok "second stop writes no outcome for a live run" \
+		|| bad "second stop writes no outcome for a live run"
+	grep -q '"phase": "nudge"' <<<"$shown" \
+		&& ok "run recorded as nudged" || bad "run recorded as nudged"
+
+	# --head must actually scope: a run planned at a different tip is not this one.
+	export REVIEW_LOOP_RUNS="$TMP/headscope.jsonl"
+	"$L" record plan --tier full --model m --head 1111111111111111111111111111111111111111 --gates "$GATES" >/dev/null
+	hs=$(echo '{"stop_hook_active":false}' | HOME="$lhome" ./stop-hook.sh)
+	[ -z "$hs" ] && ok "hook ignores a run planned at another tip" || bad "hook ignores a run planned at another tip"
+
+	# An unreadable store makes `check` exit 1 with nothing on stdout — the same status as an
+	# open run. The hook used to discard check's stderr and exit 0 on anything it could not
+	# parse, so a store it could not read looked exactly like one with nothing open.
+	mkdir -p "$TMP/store-is-a-dir"; : > "$TMP/store-is-a-dir/x"
+	hook_out=$(echo '{"stop_hook_active":false}' | HOME="$lhome" REVIEW_LOOP_RUNS="$TMP/store-is-a-dir" ./stop-hook.sh)
+	rc=$?
+	msg=$("$PY" -c 'import json,sys; d=json.loads(sys.stdin.read()); print("BLOCKS" if "decision" in d else d.get("systemMessage",""))' <<<"$hook_out" 2>/dev/null)
+	[ "$rc" -eq 0 ] && grep -q "cannot read the run store" <<<"$msg" \
+		&& ok "an unreadable store is reported, not swallowed, and blocks nothing" \
+		|| bad "an unreadable store is reported, not swallowed, and blocks nothing (rc=$rc, got: $hook_out)"
+
+	# Rows looper wrote, read by the Python library the alarm and the stats are built on.
 	export REVIEW_LOOP_RUNS="$TMP/looper.jsonl"
-	lrid=$("$PY" runlog.py plan --tier full --model claude-opus-5 --agent-cap 8 --gates '{}' --inputs '{"logic":true}')
-	"$PY" runlog.py cycle --run-id "$lrid" --n 1 --applied 3 --agents 5 >/dev/null 2>&1
-	"$PY" runlog.py cycle --run-id "$lrid" --n 2 --applied 1 --agents 4 >/dev/null 2>&1
-	body=$(looper pr-report --run-id "$lrid" </dev/null 2>&1)
+	lrid=$("$L" record plan --tier full --model claude-opus-5 --agent-cap 8 --gates '{}' --inputs '{"logic":true}')
+	"$L" record cycle --run-id "$lrid" --n 1 --applied 3 --agents 5 >/dev/null 2>&1
+	"$L" record cycle --run-id "$lrid" --n 2 --applied 1 --agents 4 >/dev/null 2>&1
+	[ "$(lib "$REVIEW_LOOP_RUNS" "print(len(runlog.cycles_of(runlog.load(limit=None)['$lrid'])))")" = "2" ] \
+		&& ok "runlog reads looper's cycle rows" || bad "runlog reads looper's cycle rows"
+	lc=$("$L" record convergence --run-id "$lrid" 2>/dev/null)
+	[ "$(conv "$REVIEW_LOOP_RUNS" "$lrid")" = "capped" ] && [ "$lc" = "capped" ] \
+		&& ok "and derives the convergence looper does" || bad "and derives the convergence looper does (python $(conv "$REVIEW_LOOP_RUNS" "$lrid"), looper $lc)"
+
+	# The same rows through the report and the push gate the skill installs.
+	body=$("$L" pr-report --run-id "$lrid" </dev/null 2>&1)
 	grep -q "2 cycle(s) · 9 agent(s)" <<<"$body" \
-		&& ok "looper pr-report reads runlog's cycle rows" || bad "looper pr-report reads runlog's cycle rows: $body"
+		&& ok "looper pr-report reads the recorded cycle rows" || bad "looper pr-report reads the recorded cycle rows: $body"
 	grep -q "CAPPED" <<<"$body" \
-		&& ok "looper pr-report derives capped from runlog's agent cap" || bad "looper pr-report derives capped from runlog's agent cap"
-	pc=$(looper push-check --run-id "$lrid" --branch feat/x --default-branch main 2>/dev/null)
+		&& ok "looper pr-report derives capped from the agent cap" || bad "looper pr-report derives capped from the agent cap"
+	pc=$("$L" push-check --run-id "$lrid" --branch feat/x --default-branch main 2>/dev/null)
 	grep -q '"convergence":"capped"' <<<"$pc" \
 		&& ok "looper push-check reads the same convergence" || bad "looper push-check reads the same convergence: $pc"
 	grep -q '"push":false' <<<"$pc" && grep -q 'report has not reached' <<<"$pc" \
 		&& ok "looper push-check refuses a run whose report has not landed" || bad "looper push-check refuses a run whose report has not landed: $pc"
+
+	# And the alarm over finishes looper wrote: the third skip of one gate fires it.
+	export REVIEW_LOOP_RUNS="$TMP/looper-alarm.jsonl"
+	for _ in 1 2 3; do
+		r=$("$L" record plan --tier full --model m --gates "$GATES")
+		"$L" record finish --run-id "$r" --outcome clean --tier full \
+			--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null 2>&1
+	done
+	"$PY" review-stats.py --alarm | grep -q "threat_model was declined with a reason (skipped) 3x" \
+		&& ok "the alarm reads looper's finish rows" || bad "the alarm reads looper's finish rows"
 	export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 else
-	echo "  skip  looper not on PATH — the runlog-to-looper checks did not run"
+	echo "  skip  looper not on PATH — the looper checks did not run"
 fi
 
+echo
 # An assertion that VANISHES is invisible without a count. Two ways it has happened
 # here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
 # NEITHER branch runs, and assertions appended below this summary never execute at all
@@ -859,7 +349,7 @@ fi
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=125
+EXPECTED_CHECKS=40
 if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
 	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

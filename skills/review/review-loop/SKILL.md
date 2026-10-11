@@ -13,13 +13,13 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 
 ## Step 0: Gather Context (scripted)
 
-First, require the `looper` binary — Step 14's report and push gate are subcommands of it, and there is no fallback:
+First, require the `looper` binary — the run record's writer and Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-~/.local/bin/looper version >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.2 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.3" >&2; false; }
+~/.local/bin/looper record check -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.4 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4" >&2; false; }
 ```
 
-If it fails, whether looper is missing or older than v0.2.2 (older ones exit 2 on `version`), stop and give the user that command. It installs v0.2.3, whose `pr-report` cannot hang on an idle inherited stdin; v0.2.2 still passes the check, since every call here works on both. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (runlog.test.sh and CI take looper from PATH on purpose: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.4 (older ones have no `record` subcommand and exit 2 on `record check -h`), stop and give the user that command. v0.2.4 is the first release with `looper record`, which writes every row of the run record; it replaced `runlog.py`'s command line, and `runlog.py` remains only as a library the Python scripts import. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then run the context gatherer once:
 
@@ -80,7 +80,7 @@ It prints the plan and writes the **planned** half of the run record, then print
 
 **The plan's `tier_floor` is a floor.** You may escalate above it (record the escalation at Step 14); you may never descend. Descending is what makes the skill impossible to iterate on, because no two runs then execute the same process. You do not name a tier — the script does.
 
-**"It already has precedent in the repo" never licenses reduced review.** Bugs pre-exist; copying a pattern propagates them; the copy is the cheapest moment to catch one. `runlog.py finish` rejects any skip or escalation reason citing precedent. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
+**"It already has precedent in the repo" never licenses reduced review.** Bugs pre-exist; copying a pattern propagates them; the copy is the cheapest moment to catch one. `looper record finish` rejects any skip or escalation reason citing precedent. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
 
 If `plan.py` prints an alarm on stderr, a gate has failed to complete three or more times across recent runs. Read it — that's the signal to fix the gate, not to log it again.
 
@@ -89,7 +89,7 @@ If `plan.py` prints an alarm on stderr, a gate has failed to complete three or m
 The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
-python3 ~/.claude/skills/review-loop/runlog.py pending
+~/.local/bin/looper record pending
 gh pr view --json number -q .number 2>/dev/null
 ```
 
@@ -179,10 +179,12 @@ When in doubt (any logic touched, or borderline size), do NOT take the fast path
 
 **Think the full loop is overkill for a diff that fails this test? Measure, or go wider — do not ask.** This used to send a 🔀 AskUserQuestion. It was the wrong instrument: every such ask this skill has produced traced back to a number here measuring the wrong thing, so the user was being asked to adjudicate a mismeasurement rather than a judgment. Two rules replace it:
 
-- **The question is WIDTH, not tier.** The tier floor is not yours to lower — `derive_tier` refuses a tier below the plan's floor with a hard exit, and Step 0b above says so. What *is* yours is how wide the fan-out goes inside that tier: how many batches, how many instances per file-scoped agent. That is the choice the ask was really about, and it is measurable. Measurable means a field in `context.sh`'s or `batch-files.py`'s output, or a count you can print: `semantic_lines`, `review_delta_lines`, `sizing_excluded`, `near_duplicates`, "no file in the diff is reachable from an entrypoint". Take the number and move, and record it: `runlog.py cycle --width-reason "<field>=<value>"` stores the measurement beside that cycle's `--agents` count. It goes through the same banned-reason funnel as every other free-text reason, so an enumerated precedent phrasing is refused there too.
+- **The question is WIDTH, not tier.** The tier floor is not yours to lower — `looper record finish` refuses a tier below the plan's floor with a hard exit, and Step 0b above says so. What *is* yours is how wide the fan-out goes inside that tier: how many batches, how many instances per file-scoped agent. That is the choice the ask was really about, and it is measurable. Measurable means a field in `context.sh`'s or `batch-files.py`'s output, or a count you can print: `semantic_lines`, `review_delta_lines`, `sizing_excluded`, `near_duplicates`, "no file in the diff is reachable from an entrypoint".
+Take the number and move, and record it: `looper record cycle --width-reason "<field>=<value>"` stores the measurement beside that cycle's `--agents` count. It goes through the same banned-reason funnel as every other free-text reason, so an enumerated precedent phrasing is refused there too.
 - **When no number decides it, take the WIDER option.** Not an ask. An unmeasurable hunch that a fan-out is excessive is exactly the hunch this skill exists to overrule, and the cost of being wrong is asymmetric: a redundant agent costs tokens, a skipped one ships the bug. This also makes the honest path and the cheap path the same path in a headless or subagent run, where there is no one to ask. Note that a size hunch is **not** rejected at write time — `BANNED_REASON` enumerates precedent and convention phrasings only, and it is a speed bump rather than a guarantee even for those: an unenumerated precedent phrasing passes too, which is how "consistent with existing patterns in the repo" walked through until it was added. Nothing downstream will catch "this looks small" for you. This bullet is the handler.
 
-Never narrow silently: pass `runlog.py cycle --width-reason` when you record the cycle (Step 10 shows it), which is where a width reason goes. Nothing *requires* it — the flag is optional and an empty value is accepted — so a `width_reason: null` row is on you, not on the tool. Nothing aggregates those reasons yet — `cmd_alarm` reads gate completions and abandonment reasons, never width — so a wrong threshold here surfaces through `review-stats.py`'s `cycles / agents / mean agents per run` figures plus reading the recorded reasons, not through an alarm. Note that `tier_executed` cannot show it: that is a tally over skipped/carried/fast/full/partial, and two runs of the same tier at three and thirty agents are indistinguishable in it.
+Never narrow silently: pass `looper record cycle --width-reason` when you record the cycle (Step 10 shows it), which is where a width reason goes. Nothing *requires* it — the flag is optional and an empty value is accepted — so a `width_reason: null` row is on you, not on the tool.
+Nothing aggregates those reasons yet — `cmd_alarm` reads gate completions and abandonment reasons, never width — so a wrong threshold here surfaces through `review-stats.py`'s `cycles / agents / mean agents per run` figures plus reading the recorded reasons, not through an alarm. Note that `tier_executed` cannot show it: that is a tally over skipped/carried/fast/full/partial, and two runs of the same tier at three and thirty agents are indistinguishable in it.
 
 **Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a code-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and the security review's Stage-1 finder — pass it the diff, the learnings file, the threat model, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
 
@@ -234,7 +236,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
     j. Append captured learnings to <git-common-dir>/info/review-loop-learnings.md (Step 11), deduping against existing entries.
-    j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents .. --width-reason ".."`
+    j2. Record the cycle: `looper record cycle --run-id .. --n .. --applied .. --asked .. --agents .. --width-reason ".."`
         (Step 10). EVERY cycle, including a zero-fix one — convergence is derived from these rows,
         and a run with none of them reads as "did not converge" at Step 14. Pass `--asked`: a cycle
         that applied nothing but routed findings to the user has NOT converged, and omitting the
@@ -460,14 +462,14 @@ After committing, record this commit's sha (`git rev-parse HEAD`) as the previou
 **Then record the cycle in the run record — every cycle, including the one that applied nothing:**
 
 ```bash
-python3 ~/.claude/skills/review-loop/runlog.py cycle --run-id <run_id> --n <N> \
+~/.local/bin/looper record cycle --run-id <run_id> --n <N> \
   --applied <fixes applied> --asked <ask-bucket items> \
   --defect-findings <n> --comment-findings <n> \
   --agents <agents spawned this cycle> --width-reason "<field>=<value>" \
   [--tokens <observed subagent tokens>] [--analysis-changed]
 ```
 
-`--width-reason` is the measurement that settled this cycle's fan-out width — `semantic_lines=129, 3 batches, no near_duplicates`. Argparse does not require it and an empty string is accepted, so nothing stops you omitting it; a cycle row with `width_reason: null` is a width nobody can account for later, which is the state Step 3b's rule exists to remove. Keep to the `<field>=<value>` shape: the reason goes through the same banned-reason funnel as every other free-text field, and prose phrasings like "same pattern as the first file" or "mirrors the existing" hard-exit there because they read as precedent arguments.
+`--width-reason` is the measurement that settled this cycle's fan-out width — `semantic_lines=129, 3 batches, no near_duplicates`. `looper record cycle` does not require it and an empty string is accepted, so nothing stops you omitting it; a cycle row with `width_reason: null` is a width nobody can account for later, which is the state Step 3b's rule exists to remove. Keep to the `<field>=<value>` shape: the reason goes through the same banned-reason funnel as every other free-text field, and prose phrasings like "same pattern as the first file" or "mirrors the existing" hard-exit there because they read as precedent arguments.
 
 This is the only thing that answers "was the review finished, or did we stop?" — Step 14's push
 checker derives convergence from these rows rather than being told, and **a run with no cycle rows
@@ -539,7 +541,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
 0. **Close the run record** — every exit, including a cycle-limit or test-failure one:
 
    ```bash
-   python3 ~/.claude/skills/review-loop/runlog.py finish --run-id <from Step 0b> \
+   ~/.local/bin/looper record finish --run-id <from Step 0b> \
      --outcome clean|cycle-limit|test-failure|blocked \
      --tier fast|full|partial \
      --executed '{"<gate>":{"status":"done|skipped|failed|n/a","reason":"..."}}' \
@@ -554,7 +556,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    the tier becomes `partial`. Use `n/a` — which does *not* force `partial` — when the gate had
    nothing to act on (no PR exists, the repo has no telemetry); use `skipped` when you chose not to
    run one that could have run. Every status but `done` needs a reason. `partial` is the tier when any planned agent
-   failed or any planned gate went unexecuted. `runlog.py` derives that rather than accepting your
+   failed or any planned gate went unexecuted. `looper record finish` derives that rather than accepting your
    claim, and it has to, because nothing downstream enforces it: the push gate never reads the tier
    and the PR label is keyed on `convergence`. The tier reaches the PR comment body and
    `review-stats`, so a laundered `full` is wrong exactly where a human would read it.

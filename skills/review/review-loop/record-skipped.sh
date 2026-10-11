@@ -58,7 +58,7 @@ resolve_sha() {
 
 STORE="$HOME/.claude/review-loop/skipped-shas"
 # Drop this sha's line from the store, so a re-record replaces rather than
-# duplicates. No longer used for rollback: the runlog write happens before
+# duplicates. No longer used for rollback: the run-record write happens before
 # skipped-shas is touched, so a refused reason has nothing here to undo.
 drop_sha() {
 	[ -f "$STORE" ] || return 0
@@ -82,13 +82,17 @@ sha=$(resolve_sha "${2:-HEAD}")
 # citing precedent), and refusing after the skipped-shas line is rewritten would
 # destroy a previous, perfectly good record for this sha without being able to
 # put it back. Nothing here touches skipped-shas until the reason has passed.
-RUNLOG="$(dirname "$0")/runlog.py"
-if [ -f "$RUNLOG" ]; then
-	py=$(command -v python3.14 || command -v python3)
-	if [ -n "$py" ] && ! "$py" "$RUNLOG" skipped --reason "$reason" >/dev/null; then
-		echo "record-skipped: reason refused, nothing recorded" >&2
-		exit 1
-	fi
+# No looper is a refusal too, not a skip of the audit row: clearing the gate with nothing in
+# the run record to say why is the silent rubber-stamp this script exists to replace. By
+# absolute path, never PATH, as SKILL.md Step 0 explains.
+LOOPER="$HOME/.local/bin/looper"
+if [ ! -x "$LOOPER" ]; then
+	echo "record-skipped: $LOOPER is missing, so the skip cannot be recorded; nothing recorded. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4" >&2
+	exit 1
+fi
+if ! "$LOOPER" record skipped --reason "$reason" >/dev/null; then
+	echo "record-skipped: reason refused, nothing recorded" >&2
+	exit 1
 fi
 
 drop_sha "$sha"

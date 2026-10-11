@@ -28,17 +28,6 @@ input=$(cat)
 STORE="${REVIEW_LOOP_RUNS:-$HOME/.claude/review-loop/runs.jsonl}"
 [ -s "$STORE" ] || exit 0
 
-# Sibling first, then the installed location. These ship together, so the copy next to
-# this script is the one whose version matches it — and resolving only through $HOME meant
-# the hook silently exit 0'd anywhere the skill was not installed, including CI. That is
-# why runlog.test.sh's four stop-hook assertions passed here and went red on the first
-# runner that ever ran them: the suite was exercising the INSTALLED hook, not the checked-
-# out one, and on a machine without the install there was nothing to exercise at all.
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-RUNLOG="$HERE/runlog.py"
-[ -x "$RUNLOG" ] || RUNLOG="$HOME/.claude/skills/review-loop/runlog.py"
-[ -x "$RUNLOG" ] || exit 0
-
 # The hook runs from the session's cwd, but a Stop can fire anywhere; only a git
 # work tree can have an open run.
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
@@ -49,10 +38,32 @@ git rev-parse --git-dir >/dev/null 2>&1 || exit 0
 head=$(git rev-parse HEAD 2>/dev/null)
 
 py=$(command -v python3.14 || command -v python3) || exit 0
+
+# Never block on the hook's own breakage, but never swallow it either: a hook that exits
+# 0 silently when it cannot read the record is indistinguishable from one that found
+# nothing open, and that silence is how a dropped gate goes unseen. systemMessage is shown
+# to the user and blocks nothing.
+warn() {
+	"$py" -c 'import json,sys; print(json.dumps({"systemMessage": "review-loop Stop hook: " + sys.stdin.read().strip()}))' <<<"$1"
+	exit 0
+}
+
+# By absolute path, never PATH (SKILL.md Step 0 says why). The store is non-empty, so a run
+# may well be open, and without looper nothing here can say whether one is.
+LOOPER="$HOME/.local/bin/looper"
+[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4"
+
 sid=$("$py" -c 'import json,sys; print(json.load(sys.stdin).get("session_id") or "")' <<<"$input" 2>/dev/null)
-open=$("$py" "$RUNLOG" check ${sid:+--session "$sid"} ${head:+--head "$head"} 2>/dev/null)
+errf=$(mktemp "${TMPDIR:-/tmp}/review-loop-stop.XXXXXX") || warn "could not create a temp file to run the unfinished-run check"
+open=$("$LOOPER" record check ${sid:+--session "$sid"} ${head:+--head "$head"} 2>"$errf")
 status=$?
-[ "$status" -eq 1 ] || exit 0   # 0 = nothing open; anything else = broken, never block on that
+err=$(cat "$errf" 2>/dev/null); rm -f "$errf"
+[ "$status" -eq 0 ] && exit 0   # nothing open
+# check exits 1 for two reasons: a run is open (the JSON is on stdout), or the store could
+# not be read (stdout empty, the reason on stderr). Anything else is breakage too.
+if [ "$status" -ne 1 ] || [ -z "$open" ]; then
+	warn "could not check for unfinished review-loop runs (looper record check exited $status): ${err:-no message}"
+fi
 
 run_id=$("$py" -c 'import json,sys; print(json.load(sys.stdin).get("run_id",""))' <<<"$open" 2>/dev/null)
 gates=$("$py" -c 'import json,sys; print(", ".join(json.load(sys.stdin).get("planned_gates") or []) or "(none listed)")' <<<"$open" 2>/dev/null)
@@ -61,10 +72,10 @@ gates=$("$py" -c 'import json,sys; print(", ".join(json.load(sys.stdin).get("pla
 reason="review-loop run ${run_id} was planned but never finished. Planned gates: ${gates}.
 
 Either complete the remaining steps and record the result:
-  python3 ~/.claude/skills/review-loop/runlog.py finish --run-id ${run_id} --outcome <clean|cycle-limit|test-failure|blocked> --tier <fast|full|partial> --executed '{\"<gate>\":{\"status\":\"done|skipped|failed\",\"reason\":\"...\"}}' --asks <n>
+  ~/.local/bin/looper record finish --run-id ${run_id} --outcome <clean|cycle-limit|test-failure|blocked> --tier <fast|full|partial> --executed '{\"<gate>\":{\"status\":\"done|skipped|failed\",\"reason\":\"...\"}}' --asks <n>
 
 or, if the run is still in flight, carry on — this prompt fires once per run and will not interrupt you again. If you are stopping for good without finishing, say which gates you are not running and why, and record it:
-  python3 ~/.claude/skills/review-loop/runlog.py abandon --run-id ${run_id} --missing '<gates you are not running>' 
+  ~/.local/bin/looper record abandon --run-id ${run_id} --missing '<gates you are not running>' 
 
 A skipped gate is fine; a silently skipped gate is what this hook exists to prevent. Reasons citing existing precedent in the repo are rejected: a copied pattern carries its bugs."
 
@@ -73,5 +84,5 @@ A skipped gate is fine; a silently skipped gate is what this hook exists to prev
 # swallows the only warning the run ever gets — a flag set before the action it
 # is meant to gate.
 "$py" -c 'import json,sys; print(json.dumps({"decision":"block","reason":sys.stdin.read()}))' <<<"$reason" \
-	&& "$py" "$RUNLOG" nudge --run-id "$run_id" >/dev/null 2>&1
+	&& "$LOOPER" record nudge --run-id "$run_id" >/dev/null 2>&1
 exit 0

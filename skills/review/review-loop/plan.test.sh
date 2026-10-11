@@ -224,47 +224,67 @@ missing = [g for g, v in gates.items() if not (v.get("reason") or "").strip()]
 sys.exit(1 if missing else 0)
 ' <<<"$p" && ok "every gate carries a reason" || bad "every gate carries a reason"
 
-# The documented contract is "the plan, then the run_id". Stdio buffering had it
-# backwards: the child writes fd 1 unbuffered while our print() is buffered.
-# NOT --dry-run: this check is about what a real recording run prints. So it must
-# record somewhere harmless — without the override it writes a junk row into the
-# real store on every test run, which is exactly the pollution the record exists
-# to stay free of.
-full=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
-	| REVIEW_LOOP_RUNS="$TMP/runs.jsonl" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null)
-last=$(tail -1 <<<"$full")
-[[ "$last" =~ ^[0-9a-f]{12}$ ]] && ok "the run_id is the last line, after the plan" || bad "the run_id is the last line, after the plan"
-"$PY" -c 'import json,sys; json.loads("\n".join(sys.stdin.read().splitlines()[:-1]))' <<<"$full" \
-	&& ok "everything before it parses as the plan JSON" || bad "everything before it parses as the plan JSON"
+# The record is written by ~/.local/bin/looper, resolved by absolute path. Without it the
+# plan is still printed, so the failure has to be loud: an orchestrator that reads a
+# complete-looking plan proceeds with no run_id and no Stop-hook net under it.
+nohome="$TMP/nolooper-home"; mkdir -p "$nohome"
+out=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+	| HOME="$nohome" REVIEW_LOOP_RUNS="$TMP/nolooper.jsonl" "$PY" plan.py --model test $BOOLS_OFF 2>&1)
+[ $? -ne 0 ] && ok "no looper fails the recording run" || bad "no looper fails the recording run"
+grep -q "NOT RECORDED.*go install github.com/pinepeakdigital/looper/cmd/looper@" <<<"$out" \
+	&& ok "and names the install command" || bad "and names the install command (got: $(tail -2 <<<"$out"))"
+[ ! -e "$TMP/nolooper.jsonl" ] && ok "and writes no plan row" || bad "and writes no plan row"
 
-# The bug this pins: semantic_lines and sizing_excluded were computed, used for every
-# threshold, and printed in the plan JSON — then dropped before the record. The checks
-# above passed throughout, because they read the JSON this script prints rather than the
-# row it persists. A real run recorded `semantic_lines: null` while its own gate reason
-# cited "1377 lines of review surface". Assert the PERSISTED row, not the printout.
-store="$TMP/persist.jsonl"
-rid=$(printf '{"changed_lines":900,"semantic_lines":10,"sizing_excluded":"890 line(s) in lockfiles or generated files","fast_path_eligible_by_size":true,"base_branch":""}' \
-	| REVIEW_LOOP_RUNS="$store" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null | tail -1)
-row=$(REVIEW_LOOP_RUNS="$store" "$PY" runlog.py show --run-id "$rid" 2>/dev/null)
-"$PY" -c '
-import json, sys
-d = json.load(sys.stdin)
-bad = [k for k, want in (("changed_lines", 900), ("semantic_lines", 10),
-                         ("agent_cap", 40)) if d.get(k) != want]
-# tier_reason was asserted only from the PRINTOUT above, and plan.py passed no
-# --tier-reason, so the key never existed in the row — the same bug shape in the same
-# block that exists to pin it. Run faafc47dcd29 recorded tier_reason null beside
-# semantic_lines 1508.
-for k in ("sizing_excluded", "tier_reason"):
-    if not (d.get(k) or "").strip():
-        bad.append(k)
-# SystemExit("") still exits 1 — an empty "nothing missing" string reads as failure.
-raise SystemExit(", ".join(bad) if bad else 0)' <<<"$row" \
-	&& ok "the sizing decision reaches the persisted record, not just the printout" \
-	|| bad "the sizing decision reaches the persisted record, not just the printout (missing: $("$PY" -c '
-import json,sys
-d=json.load(sys.stdin)
-print(", ".join([k for k,w in (("changed_lines",900),("semantic_lines",10),("agent_cap",40)) if d.get(k)!=w] + [k for k in ("sizing_excluded","tier_reason") if not (d.get(k) or "").strip()]))' <<<"$row"))"
+# The checks that read what a real recording run prints and persists drive the real writer.
+# CI's trust job runs this suite with looper on PATH and requires the skip line to be absent.
+looper_checks=0
+if real_looper=$(command -v looper); then
+	looper_checks=3
+	lhome="$TMP/looper-home"; mkdir -p "$lhome/.local/bin" && ln -s "$real_looper" "$lhome/.local/bin/looper"
+	# The documented contract is "the plan, then the run_id". Stdio buffering had it
+	# backwards: the child writes fd 1 unbuffered while our print() is buffered.
+	# NOT --dry-run: this check is about what a real recording run prints. So it must
+	# record somewhere harmless — without the override it writes a junk row into the
+	# real store on every test run, which is exactly the pollution the record exists
+	# to stay free of.
+	full=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+		| HOME="$lhome" REVIEW_LOOP_RUNS="$TMP/runs.jsonl" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null)
+	last=$(tail -1 <<<"$full")
+	[[ "$last" =~ ^[0-9a-f]{12}$ ]] && ok "the run_id is the last line, after the plan" || bad "the run_id is the last line, after the plan"
+	"$PY" -c 'import json,sys; json.loads("\n".join(sys.stdin.read().splitlines()[:-1]))' <<<"$full" \
+		&& ok "everything before it parses as the plan JSON" || bad "everything before it parses as the plan JSON"
+
+	# The bug this pins: semantic_lines and sizing_excluded were computed, used for every
+	# threshold, and printed in the plan JSON — then dropped before the record. The checks
+	# above passed throughout, because they read the JSON this script prints rather than the
+	# row it persists. A real run recorded `semantic_lines: null` while its own gate reason
+	# cited "1377 lines of review surface". Assert the PERSISTED row, not the printout.
+	store="$TMP/persist.jsonl"
+	rid=$(printf '{"changed_lines":900,"semantic_lines":10,"sizing_excluded":"890 line(s) in lockfiles or generated files","fast_path_eligible_by_size":true,"base_branch":""}' \
+		| HOME="$lhome" REVIEW_LOOP_RUNS="$store" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null | tail -1)
+	row=$(REVIEW_LOOP_RUNS="$store" "$real_looper" record show --run-id "$rid" 2>/dev/null)
+	"$PY" -c '
+	import json, sys
+	d = json.load(sys.stdin)
+	bad = [k for k, want in (("changed_lines", 900), ("semantic_lines", 10),
+	                         ("agent_cap", 40)) if d.get(k) != want]
+	# tier_reason was asserted only from the PRINTOUT above, and plan.py passed no
+	# --tier-reason, so the key never existed in the row — the same bug shape in the same
+	# block that exists to pin it. Run faafc47dcd29 recorded tier_reason null beside
+	# semantic_lines 1508.
+	for k in ("sizing_excluded", "tier_reason"):
+	    if not (d.get(k) or "").strip():
+	        bad.append(k)
+	# SystemExit("") still exits 1 — an empty "nothing missing" string reads as failure.
+	raise SystemExit(", ".join(bad) if bad else 0)' <<<"$row" \
+		&& ok "the sizing decision reaches the persisted record, not just the printout" \
+		|| bad "the sizing decision reaches the persisted record, not just the printout (missing: $("$PY" -c '
+	import json,sys
+	d=json.load(sys.stdin)
+	print(", ".join([k for k,w in (("changed_lines",900),("semantic_lines",10),("agent_cap",40)) if d.get(k)!=w] + [k for k in ("sizing_excluded","tier_reason") if not (d.get(k) or "").strip()]))' <<<"$row"))"
+else
+	echo "  skip  looper not on PATH — the recording checks did not run"
+fi
 
 # A missing context file is a normal mistake, not a stack trace.
 err=$("$PY" plan.py --context /nonexistent-context.json --model test $BOOLS_OFF 2>&1)
@@ -288,8 +308,8 @@ echo
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
 EXPECTED_CHECKS=40
-if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
-	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
+	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))
 fi
 [ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"

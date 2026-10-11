@@ -36,7 +36,8 @@ set -uo pipefail
 
 REVIEWED="$HOME/.claude/review-loop/reviewed-shas"
 SKIPPED="$HOME/.claude/review-loop/skipped-shas"
-RUNLOG="$(dirname "$0")/runlog.py"
+# By absolute path, never PATH, as SKILL.md Step 0 explains.
+LOOPER="$HOME/.local/bin/looper"
 mode="${1:-unknown}"
 
 git rev-parse --git-dir >/dev/null 2>&1 || exit 0
@@ -144,19 +145,17 @@ while read -r old new _rest; do
 	[ "$old_pid" = "$new_pid" ] || continue
 
 	# Write the audit row FIRST and only change gate state if it lands. The other
-	# way round, a missing python or a runlog error would silently mark a sha
+	# way round, a missing looper or a record error would silently mark a sha
 	# reviewed with nothing in the record to say why — the same ordering mistake
 	# record-skipped.sh already had to correct.
-	# No python, or no runlog.py beside this script, is the same outcome as a failed
-	# write: no audit row. Both were once "fine, carry on" — the store got its entry
-	# and nothing recorded why, which is what the comment above says can no longer
-	# happen. One branch for all three so a fourth cannot be added past it.
-	py=$(command -v python3.14 || command -v python3 || true)
-	if [ ! -f "$RUNLOG" ] || [ -z "$py" ]; then
-		echo "review-gate: cannot record the carry of ${old:0:12} (no runlog); leaving the gate state alone" >&2
+	# No looper is the same outcome as a failed write: no audit row. A missing writer
+	# was once "fine, carry on" — the store got its entry and nothing recorded why,
+	# which is what the comment above says can no longer happen.
+	if [ ! -x "$LOOPER" ]; then
+		echo "review-gate: cannot record the carry of ${old:0:12} (no $LOOPER); leaving the gate state alone" >&2
 		continue
 	fi
-	"$py" "$RUNLOG" carried --from "$old" --to "$new" --how "$how" \
+	"$LOOPER" record carried --from "$old" --to "$new" --how "$how" \
 		--by "patch-id, $mode" >/dev/null 2>&1 || {
 		echo "review-gate: could not record the carry of ${old:0:12}; leaving the gate state alone" >&2
 		continue
