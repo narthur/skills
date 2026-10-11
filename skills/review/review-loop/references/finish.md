@@ -126,7 +126,7 @@ the error verbatim in the final report and continue — do not retry, do not for
 - **A run whose report has not landed.** `looper pr-report` writes the run's marker and its
   `N cycle(s) · M agent(s)` line into every body; until a PR comment or the pending-report file
   carries both, the push is refused — on every terminal exit, converged included. Run
-  `looper pr-report --run-id <run_id> --post` first.
+  `~/.local/bin/looper pr-report --run-id <run_id> --post </dev/null` first.
 - **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That is
   an unresolved ambiguity they may still want to think about; let them push when ready.
 - **The current or default branch name is unknown.** Fail closed rather than skip the

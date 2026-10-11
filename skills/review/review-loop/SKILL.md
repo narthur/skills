@@ -16,10 +16,10 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-~/.local/bin/looper version >/dev/null 2>&1 || { echo "review-loop needs looper v0.2.2 or later: GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.2" >&2; false; }
+~/.local/bin/looper version >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.2 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.2" >&2; false; }
 ```
 
-If it fails, whether looper is missing or older than v0.2.2 (older ones exit 2 on `version`), stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every call in this skill names `~/.local/bin/looper` by path, never a bare `looper`: the binary decides whether the push goes ahead, so resolving it through PATH would let any executable called `looper` earlier on PATH, such as a repo's own `bin/` added by direnv, approve its own push. Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.2 (older ones exit 2 on `version`), stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (runlog.test.sh and CI take looper from PATH on purpose: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then run the context gatherer once:
 
@@ -89,10 +89,17 @@ If `plan.py` prints an alarm on stderr, a gate has failed to complete three or m
 The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
-ls "$(git rev-parse --git-common-dir)"/info/review-loop-pending-report.*.md 2>/dev/null && gh pr view --json number -q .number 2>/dev/null
+br=$(git branch --show-current)
+for f in "$(git rev-parse --git-common-dir)"/info/review-loop-pending-report.*.md; do
+  [ -e "$f" ] || continue; id=${f##*pending-report.}; id=${id%.md}
+  [ "$(python3 ~/.claude/skills/review-loop/runlog.py show --run-id "$id" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin).get("branch") or "")' 2>/dev/null)" = "$br" ] && echo "$f"
+done
+gh pr view --json number -q .number 2>/dev/null
 ```
 
-Nothing pending, or still no PR → continue (leave the file in place). Both present → first drop any file that already landed: a successful post keeps a local copy, so a pending file whose `<!-- review-loop:run=<id> -->` marker already appears in a PR comment (`gh pr view --json comments -q '.comments[].body' | grep -qF '<!-- review-loop:run=<id> -->'`) is deleted, not posted again. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
+The pending files live under `<git-common-dir>`, which every branch and linked worktree shares, so the loop lists only files whose run was planned on **this** branch. A file from another branch stays where it is for that branch's own Step 0c; posting it here would put another branch's report and convergence label on this PR. A file whose run record cannot be read is not listed either: leave it in place and mention it, rather than guess its branch.
+
+Nothing listed, or still no PR → continue (leave the files in place). Both present → first drop any file that already landed: a successful post keeps a local copy, so a pending file whose `<!-- review-loop:run=<id> -->` marker already appears in a PR comment (`gh pr view --json comments -q '.comments[].body' | grep -qF '<!-- review-loop:run=<id> -->'`) is deleted, not posted again. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
 
 ## Step 2a: Cheap record checks (always), then the learnings sweep (triggered)
 
@@ -598,6 +605,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
      --gate-state <passed|skipped|blocked> [--unresolved-skip] \
      --branch <current> --default-branch <default>
    ```
+
+   If its `reason` names a command (`run looper pr-report … --post first`), run it as `~/.local/bin/looper …` with `</dev/null`, not as written.
 
    **You do not tell it whether the loop converged — it reads that from the record.** There is no
    `--clean-exit` any more: the one question this command exists to answer used to be answered by
