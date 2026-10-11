@@ -86,7 +86,7 @@ If `plan.py` prints an alarm on stderr, a gate has failed to complete three or m
 
 ## Step 0c: Backfill a deferred PR report (triggered)
 
-The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `.git/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
+The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
 ls "$(git rev-parse --git-common-dir)"/info/review-loop-pending-report.*.md 2>/dev/null && gh pr view --json number -q .number 2>/dev/null
@@ -506,7 +506,7 @@ Runs **only after everything else passes** — a clean loop exit (auto-fix bucke
 
 **Skip entirely** (say so in one line in the final report) when either:
 
-- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to attach evidence *yet*. This is **deferred, not dropped**: Step 14 records the deferral (`.git/info/review-loop-pending-report.<run_id>.md`) and Step 0c runs this gate once a PR appears. Only genuinely skip when the second condition also holds.
+- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to attach evidence *yet*. This is **deferred, not dropped**: Step 14 records the deferral (`<git-common-dir>/info/review-loop-pending-report.<run_id>.md`) and Step 0c runs this gate once a PR appears. Only genuinely skip when the second condition also holds.
 - **The diff changes no runtime functionality** — docs, comments, config, dependency bumps, CI-only changes, or pure refactors already pinned by tests. The gate is about *changed behavior*, and when in doubt, run it.
 
 Otherwise the gate is active — **Read `references/evidence-gate.md`** and follow it: 13a (check the PR for sufficient existing evidence) → 13b (stand up the app and produce evidence yourself if missing — playwright for UI, real requests for API/CLI) → 13c (publish to the PR; or on a found issue, stop, fix, and restart the loop from cycle 1, capped at 2 restarts; or report "can't test" and don't push).
@@ -519,7 +519,7 @@ Runs **immediately after Step 13 passes**, on the same clean-exit precondition. 
 
 - **The diff changes no user-facing behavior** — same condition as Step 13, plus internal-only changes whose effect no user could experience. When in doubt, run it.
 - **The repo has no measurement capability at all** — no product-analytics events, no metrics client, no telemetry, no queryable usage data. Don't invent a stack to satisfy the gate; that's a project decision, not a review finding. (Mirrors Agent #8's "skip if the project logs nothing".)
-- **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `.git/info/review-loop-pending-report.<run_id>.md` and Step 0c runs it once a PR appears.
+- **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` and Step 0c runs it once a PR appears.
 
 Otherwise the gate is active — **Read `references/measurement-gate.md`** and follow it: 13.5a (turn the Step 4b hypothesis into a five-line plan: effect, metric, baseline, window+threshold, guardrail) → 13.5b (verify in the code that each metric is actually emitted on the changed path, segmentable, flag-symmetric, and baseline-readable now) → 13.5c (publish the plan to the PR, **put it in a commit message so it survives in git**, and **file a Taskwarrior follow-up due at the window's end carrying the exact query**; or on a gap, stop, instrument in this PR, and restart the loop from cycle 1 — sharing Step 13's 2-restart cap; or waive with a stated reason).
 
@@ -564,7 +564,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
    for a real reason: describing an unconverged tree as if it were final launders unfinished work
    into intent. *Posting* is the opposite — the less converged the run, the more the comment is
-   load-bearing. With **no PR yet** both defer to `.git/info/review-loop-pending-report.<run_id>.md`, and
+   load-bearing. With **no PR yet** both defer to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md`, and
    Step 0c flushes them. The fast path and fast-path re-entry are included: a one-reviewer run
    still posts (or defers) its summary, labelled as a fast-path cycle.
 
