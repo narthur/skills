@@ -4,7 +4,7 @@ The learnings file is loaded into every future cycle's agent prompts, so its siz
 
 ## File
 
-`.git/info/review-loop-learnings.md`. `learn.py add` creates it with this structure if it doesn't exist:
+`<git-common-dir>/info/review-loop-learnings.md`. `learn.py add` creates it with this structure if it doesn't exist:
 
 ```markdown
 # Review Loop Learnings
@@ -34,7 +34,7 @@ The learnings file is loaded into every future cycle's agent prompts, so its siz
 2. Oldest non-PATTERN accepted entries.
 3. PATTERN entries last, and only if redundant with a newer one.
 
-**If the file passes ~75 entries even after pruning**, that's a signal the repo's review tastes are heterogeneous enough to need topic splits. At that point (not before), split into a `.git/info/review-loop-learnings/` directory with topic files (`comments.md`, `tests.md`, `refactor.md`, …) and concatenate them when loading. Don't pre-split — single file is simpler when the volume is small.
+**If the file passes ~75 entries even after pruning**, that's a signal the repo's review tastes are heterogeneous enough to need topic splits. At that point (not before), split into a `<git-common-dir>/info/review-loop-learnings/` directory with topic files (`comments.md`, `tests.md`, `refactor.md`, …) and concatenate them when loading. Don't pre-split — single file is simpler when the volume is small.
 
 ## What to write for each Step 8b outcome
 

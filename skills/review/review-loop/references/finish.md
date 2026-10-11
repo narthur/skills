@@ -36,7 +36,7 @@ converged state and its description should not claim otherwise.
 
 On **any terminal exit** with **no PR yet** the comment is **deferred**, and so is the reconcile
 when the exit was clean — the reconcile itself stays clean-exit-only. Write the
-report to `.git/info/review-loop-pending-report.<run_id>.md` (shape in `references/report-format.md`) so
+report to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` (shape in `references/report-format.md`) so
 Step 0c flushes them when the PR appears. The comment posts directly on any terminal exit where a
 PR already exists.
 
@@ -58,7 +58,7 @@ That includes a `capped` or `halted` run. This used to read "clean exit only", w
 exactly the commits the disclosure mechanism exists to let through: `push-check` authorises the
 push, the gate accepts only a recorded tip, and nothing was allowed to record it. A capped run
 **was** reviewed — often more thoroughly than a converged one — and how far is the PR comment's job
-to say, which is why `push-check` refuses until the disclosure is recorded. Filing it with
+to say, which is why `push-check` refuses until the run's report has landed. Filing it with
 `record-skipped.sh` instead would be a lie in the other direction: that store means "judged beneath
 the loop", and using it here corrupts the skipped-vs-reviewed ratio `review-stats.py` reports.
 
@@ -90,7 +90,7 @@ beneath the loop is a legitimate call; making that call *silently look like a re
 ## 3. The push decision
 
 ```bash
-python3 ~/.claude/skills/review-loop/push-check.py --run-id <run_id> \
+~/.local/bin/looper push-check --run-id <run_id> \
   --gate-state <passed|skipped|blocked> [--unresolved-skip] \
   --branch <current> --default-branch <default>
 ```
@@ -118,14 +118,15 @@ When it says push:
 If the push fails (network error, branch protection, missing upstream, non-fast-forward), surface
 the error verbatim in the final report and continue — do not retry, do not force.
 
-### When NOT to auto-push — the spec `push-check.py` encodes
+### When NOT to auto-push — the spec `looper push-check` encodes
 
 - **The run recorded `test-failure`, `blocked` or `abandoned`.** The branch is in a known-broken
   state; do not propagate it. Read from the record's `outcome`, so a Step 9 short-circuit reaches
   the decision even though it jumps out of the loop before the cycle row is written.
-- **A non-converged run whose disclosure has not been recorded.** `pr-report.py` writes the
-  `disclosed` marker; until it exists for this head, the push that the disclosure is the entire
-  consideration for is refused. Run `pr-report.py` first.
+- **A run whose report has not landed.** `looper pr-report` writes the run's marker and its
+  `N cycle(s) · M agent(s)` line into every body; until a PR comment or the pending-report file
+  carries both, the push is refused — on every terminal exit, converged included. Run
+  `~/.local/bin/looper pr-report --run-id <run_id> --post </dev/null` first.
 - **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That is
   an unresolved ambiguity they may still want to think about; let them push when ready.
 - **The current or default branch name is unknown.** Fail closed rather than skip the

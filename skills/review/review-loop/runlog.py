@@ -31,8 +31,10 @@ run_id.
                     [--width-reason <t>] [--tokens <n>]
   runlog.py convergence --run-id <id>              prints it; exit 0 only if converged
   runlog.py show    --run-id <id>
+  runlog.py pending                                 this branch's pending-report files, one per line
 """
 import argparse
+import glob
 import json
 import os
 import subprocess
@@ -170,9 +172,9 @@ def cycles_of(run):
     Reproduced against the pre-fix code with rows n=1/20 agents, n=2/15, n=1/5: the cap
     counted 20 of the 40 spent, because the restart's `n=1` replaced the original.
 
-    It exists as a function rather than inline so that `convergence()`, `disclosure()`
-    and pr-report cannot read the list three different ways — which is exactly what had
-    happened: disclosure() read the raw list and the other two read this one, so a rendered
+    It exists as a function rather than inline so that its readers cannot read the list
+    different ways — which is exactly what had happened: the retired disclosure() read the
+    raw list while convergence() and the retired pr-report.py read this one, so a rendered
     report said "CAPPED at 11 of 8 agents" above a table showing 8. (Reproduced in a fixture,
     not seen on a real PR — the live record has only ever held one cycle row, and blurring
     "reproduced" into "observed" is how an invented measurement got committed here twice.)
@@ -226,38 +228,6 @@ def convergence(run):
     return "halted"
 
 
-def disclosure(conv, run):
-    """The line a PR must carry when the loop did not converge. None if it did.
-
-    This is the whole point of letting a capped run push: the branch ships, and the PR
-    says how far to trust it. A silent capped push would be strictly worse than the
-    stall it replaces.
-    """
-    if conv == "converged":
-        return None
-    # cycles_of, not the raw list: reading it raw made this disagree with the derivation
-    # it exists to explain. Reproduced in a fixture: one rendered report said "CAPPED at 11
-    # of 8 agents: the last cycle applied 0 fix(es)" above a table whose last cycle applied 5.
-    cy = cycles_of(run or {})
-    last = cy[-1] if cy else {}
-    spent = sum(c.get("agents") or 0 for c in cy)
-    cap = (run or {}).get("agent_cap")
-    if conv is None:
-        return ("Review completeness UNKNOWN: this run recorded no cycles, so nothing can say "
-                "whether the loop still had findings when it stopped. Treat as unreviewed.")
-    head = {"capped": f"Review CAPPED at {spent} of {cap} agents",
-            "halted": f"Review HALTED after {len(cy)} cycle(s), {spent} agents"}[conv]
-    asked = last.get("asked") or (run or {}).get("unresolved_asks") or 0
-    return (f"{head}: the last cycle applied {last.get('applied', '?')} fix(es)"
-            + (f" and left {asked} finding(s) awaiting a decision" if asked else "")
-            + (" and the deterministic pass still had unresolved findings" if last.get("analysis_changed") else "")
-            + ". The loop had not stopped finding things — another cycle would likely find more.")
-
-# All four states convergence() can report, "unknown" standing for None. Exported so
-# consumers key off this rather than restating the vocabulary: pr-report.py's labels used
-# to list all four independently while this tuple listed three, which is the divergence
-# the export exists to prevent.
-CONVERGENCE = ("converged", "capped", "halted", "unknown")
 # A ceiling, not a target: set above where the hard cases settle, because a ceiling that
 # binds on every hard case is a stall with extra steps. The counts that used to be quoted
 # here are deliberately gone — they were restated by hand, went stale every time the record
@@ -480,7 +450,7 @@ def derive_tier(claimed, executed, agents, planned=None, floor=None):
     """`partial` is a fact about the run, not a label the caller picks.
 
     Any planned agent that failed, or any gate that did not complete, makes the run
-    partial. The PR comment body reports it (`pr-report.py`, the **tier** field) and
+    partial. The PR comment body reports it (`looper pr-report`, the **tier** field) and
     `review-stats` tallies it, so letting a caller write `full` over it launders the
     run in the record humans actually read. The push gate does NOT read it — nothing
     here blocks a push — and the PR *label* is keyed on `convergence`, not on tier.
@@ -812,6 +782,29 @@ def cmd_show(a):
     print(json.dumps(run, indent=1, sort_keys=True))
 
 
+def cmd_pending(a):
+    """Step 0c's worklist: pending-report files whose run was planned on THIS branch.
+
+    The files live under the common dir, which every branch and linked worktree shares, so
+    listing them all would post another branch's report and label onto this PR. Branch is
+    compared the way `plan` recorded it (`--abbrev-ref HEAD`), so a detached HEAD reads
+    "HEAD" and lists nothing. A file whose run is not in the store is left in place and
+    named on stderr rather than guessed at."""
+    br = git("rev-parse", "--abbrev-ref", "HEAD")
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    if not br or br == "HEAD" or not common:
+        print("runlog: no current branch — pending reports left in place", file=sys.stderr)
+        return
+    runs = load(limit=None)
+    for f in sorted(glob.glob(os.path.join(common, "info", "review-loop-pending-report.*.md"))):
+        rid = os.path.basename(f)[len("review-loop-pending-report."):-len(".md")]
+        run = runs.get(rid)
+        if not run:
+            print(f"runlog: no run record for {f} — left in place", file=sys.stderr)
+        elif run.get("branch") == br:
+            print(f)
+
+
 def build_parser():
     """The parser, built separately so a test can ASK it what each subcommand accepts.
 
@@ -938,6 +931,9 @@ def build_parser():
     ss = sub.add_parser("show")
     ss.add_argument("--run-id", required=True)
     ss.set_defaults(func=cmd_show)
+
+    sp = sub.add_parser("pending")
+    sp.set_defaults(func=cmd_pending)
 
     return p
 

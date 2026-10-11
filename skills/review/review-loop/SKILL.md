@@ -13,7 +13,15 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 
 ## Step 0: Gather Context (scripted)
 
-Run the context gatherer once at the start:
+First, require the `looper` binary — Step 14's report and push gate are subcommands of it, and there is no fallback:
+
+```bash
+~/.local/bin/looper version >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.2 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.2" >&2; false; }
+```
+
+If it fails, whether looper is missing or older than v0.2.2 (older ones exit 2 on `version`), stop and give the user that command. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (runlog.test.sh and CI take looper from PATH on purpose: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+
+Then run the context gatherer once:
 
 ```bash
 ~/.claude/skills/review-loop/context.sh > "$(git rev-parse --git-dir)/review-loop-context.json"
@@ -78,13 +86,16 @@ If `plan.py` prints an alarm on stderr, a gate has failed to complete three or m
 
 ## Step 0c: Backfill a deferred PR report (triggered)
 
-The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `.git/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
+The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
-ls .git/info/review-loop-pending-report.*.md 2>/dev/null && gh pr view --json number -q .number 2>/dev/null
+python3 ~/.claude/skills/review-loop/runlog.py pending
+gh pr view --json number -q .number 2>/dev/null
 ```
 
-Nothing pending, or still no PR → continue (leave the file in place). Both present → **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
+The pending files live under `<git-common-dir>`, which every branch and linked worktree shares, so `pending` prints (as absolute paths) only files whose run was planned on **this** branch. A file from another branch stays where it is for that branch's own Step 0c; posting it here would put another branch's report and convergence label on this PR. A file with no run record is named on stderr and left in place: mention it rather than guess its branch. On a detached HEAD it lists nothing.
+
+Nothing listed, or still no PR → continue (leave the files in place). Both present → first drop any file that already landed: a successful post keeps a local copy, so a pending file whose `<!-- review-loop:run=<id> -->` marker already appears in a PR comment (`gh pr view --json comments -q '.comments[].body' | grep -qF '<!-- review-loop:run=<id> -->'`) is deleted, not posted again. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
 
 ## Step 2a: Cheap record checks (always), then the learnings sweep (triggered)
 
@@ -222,7 +233,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
     g. If ask-user bucket is non-empty, batch them into one AskUserQuestion (Step 8b). Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
-    j. Append captured learnings to .git/info/review-loop-learnings.md (Step 11), deduping against existing entries.
+    j. Append captured learnings to <git-common-dir>/info/review-loop-learnings.md (Step 11), deduping against existing entries.
     j2. Record the cycle: `runlog.py cycle --run-id .. --n .. --applied .. --asked .. --agents .. --width-reason ".."`
         (Step 10). EVERY cycle, including a zero-fix one — convergence is derived from these rows,
         and a run with none of them reads as "did not converge" at Step 14. Pass `--asked`: a cycle
@@ -303,7 +314,7 @@ It bin-packs the changed files into **batches under a ~1500-line whole-file budg
 
 Each agent must also receive:
 
-- The contents of `.git/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
+- The contents of `<git-common-dir>/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
 - The agent's specific focus (below)
 - The style default below (verbatim)
 - A required output shape: a JSON-like list of `{file, line_range, description, suggested_fix, reasoning}`
@@ -470,7 +481,7 @@ against real spend later.
 
 ## Step 11: Capture Learnings
 
-On Step 8b outcomes, record learnings in `.git/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
+On Step 8b outcomes, record learnings in `<git-common-dir>/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
 
 **Also record every Agent #10 finding that survived** — including ones auto-fixed at Step 7, which never reach Step 8b. #10 is the only agent whose findings come from outside the repo (`gh` review history), and it runs at most once per branch, so an unrecorded #10 finding costs the same API calls to rediscover next time. Write it to **Accepted patterns** with its citation intact ("PR #1042, @jakecoble: don't call this from the request path"). This is how a repo's most-repeated human review feedback migrates from GitHub into the local learnings file, where Agents #1–#4 and #6 see it for free on every subsequent run.
 
@@ -486,7 +497,7 @@ For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping
 
 ## Step 12: "Remember X" Requests During the Session
 
-If the user says "remember X", "always check Y here", "this repo cares about Z", or similar at any point during the session, immediately append to `.git/info/review-loop-learnings.md` under the appropriate section (Dismissed for "stop flagging…", Accepted for "always flag…"). Acknowledge with one sentence. Do not derail the loop.
+If the user says "remember X", "always check Y here", "this repo cares about Z", or similar at any point during the session, immediately append to `<git-common-dir>/info/review-loop-learnings.md` under the appropriate section (Dismissed for "stop flagging…", Accepted for "always flag…"). Acknowledge with one sentence. Do not derail the loop.
 
 If what the user wants remembered is a **security** concern anchored to a location ("keep an eye on this", "this spot is sensitive", "don't let anything widen that"), write it under `## Watch this spot` in the threat model instead, with a `[path:line @ sha]` pin. Those entries *override* the vendored exclusion list: a finding landing on a watched location is reported even when a generic precedent would drop it. This is the channel that keeps a repo-specific risk (e.g. a Sentry depth limit that is load-bearing PII containment) from being filtered away as routine.
 
@@ -498,7 +509,7 @@ Runs **only after everything else passes** — a clean loop exit (auto-fix bucke
 
 **Skip entirely** (say so in one line in the final report) when either:
 
-- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to attach evidence *yet*. This is **deferred, not dropped**: Step 14 records the deferral (`.git/info/review-loop-pending-report.<run_id>.md`) and Step 0c runs this gate once a PR appears. Only genuinely skip when the second condition also holds.
+- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to attach evidence *yet*. This is **deferred, not dropped**: Step 14 records the deferral (`<git-common-dir>/info/review-loop-pending-report.<run_id>.md`) and Step 0c runs this gate once a PR appears. Only genuinely skip when the second condition also holds.
 - **The diff changes no runtime functionality** — docs, comments, config, dependency bumps, CI-only changes, or pure refactors already pinned by tests. The gate is about *changed behavior*, and when in doubt, run it.
 
 Otherwise the gate is active — **Read `references/evidence-gate.md`** and follow it: 13a (check the PR for sufficient existing evidence) → 13b (stand up the app and produce evidence yourself if missing — playwright for UI, real requests for API/CLI) → 13c (publish to the PR; or on a found issue, stop, fix, and restart the loop from cycle 1, capped at 2 restarts; or report "can't test" and don't push).
@@ -511,7 +522,7 @@ Runs **immediately after Step 13 passes**, on the same clean-exit precondition. 
 
 - **The diff changes no user-facing behavior** — same condition as Step 13, plus internal-only changes whose effect no user could experience. When in doubt, run it.
 - **The repo has no measurement capability at all** — no product-analytics events, no metrics client, no telemetry, no queryable usage data. Don't invent a stack to satisfy the gate; that's a project decision, not a review finding. (Mirrors Agent #8's "skip if the project logs nothing".)
-- **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `.git/info/review-loop-pending-report.<run_id>.md` and Step 0c runs it once a PR appears.
+- **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` and Step 0c runs it once a PR appears.
 
 Otherwise the gate is active — **Read `references/measurement-gate.md`** and follow it: 13.5a (turn the Step 4b hypothesis into a five-line plan: effect, metric, baseline, window+threshold, guardrail) → 13.5b (verify in the code that each metric is actually emitted on the changed path, segmentable, flag-symmetric, and baseline-readable now) → 13.5c (publish the plan to the PR, **put it in a commit message so it survives in git**, and **file a Taskwarrior follow-up due at the window's end carrying the exact query**; or on a gap, stop, instrument in this PR, and restart the loop from cycle 1 — sharing Step 13's 2-restart cap; or waive with a stated reason).
 
@@ -556,7 +567,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
    for a real reason: describing an unconverged tree as if it were final launders unfinished work
    into intent. *Posting* is the opposite — the less converged the run, the more the comment is
-   load-bearing. With **no PR yet** both defer to `.git/info/review-loop-pending-report.<run_id>.md`, and
+   load-bearing. With **no PR yet** both defer to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md`, and
    Step 0c flushes them. The fast path and fast-path re-entry are included: a one-reviewer run
    still posts (or defers) its summary, labelled as a fast-path cycle.
 
@@ -564,17 +575,19 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    ```bash
    printf '%s\n' "<your findings narrative>" \
-     | python3 ~/.claude/skills/review-loop/pr-report.py --run-id <run_id> --post --label
+     | ~/.local/bin/looper pr-report --run-id <run_id> --post --label
    ```
 
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
    numbers and the roster from the run record, appends your narrative verbatim, labels the PR
    `review:<convergence>`, and writes the pending-report file by itself when there is no PR — or
-   when the post *fails*, so a transient GitHub error cannot destroy the report.
+   when the post *fails*, so a transient GitHub error cannot destroy the report. It keeps that
+   local copy after a *successful* post too, and labels the PR whenever one exists, even if the
+   comment failed.
 
    **This is not optional, and not on your honour.** Step 2 refuses the push until this run's
    report is actually present — in a PR comment or in the pending file, matched by the
-   `<!-- review-loop:run=<id> -->` marker this script writes into every body. It checks the
+   `<!-- review-loop:run=<id> -->` marker this command writes into every body. It checks the
    artifact, not a claim that one exists: an earlier version recorded a marker row written by the
    orchestrator's own toolchain, which a since-deleted `disclosed` subcommand satisfied with no
    report anywhere. Required on **every** terminal exit, not only the unconverged ones — the
@@ -584,13 +597,15 @@ honesty rule, and the full "when NOT to auto-push" spec.
 2. **Decide the push with the checker**, never by re-deriving the checklist:
 
    ```bash
-   python3 ~/.claude/skills/review-loop/push-check.py --run-id <run_id> \
+   ~/.local/bin/looper push-check --run-id <run_id> \
      --gate-state <passed|skipped|blocked> [--unresolved-skip] \
      --branch <current> --default-branch <default>
    ```
 
+   If its `reason` names a command (`run looper pr-report … --post first`), run it as `~/.local/bin/looper …` with `</dev/null`, not as written.
+
    **You do not tell it whether the loop converged — it reads that from the record.** There is no
-   `--clean-exit` any more: the one question this script exists to answer used to be answered by
+   `--clean-exit` any more: the one question this command exists to answer used to be answered by
    the orchestrator asserting a flag, which is how a run recorded `clean` while its own author
    reported it had not converged. Convergence is derived from the `cycle` rows you recorded at
    Step 10, so **a run with no cycle rows reads as "did not converge"** — recording them is how

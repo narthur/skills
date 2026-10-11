@@ -168,19 +168,6 @@ print(len(runlog.cycles_of(json.load(sys.stdin))))')
 	|| bad "a restart's repeated cycle number is kept, not collapsed (cycles_of returned $n of 3)"
 [ "$(conv "$r")" = "capped" ] && ok "and its agents count against the cap (13 of 10 = capped)" \
 	|| bad "and its agents count against the cap (got: $(conv "$r"))"
-"$PY" runlog.py show --run-id "$r" | "$PY" -c '
-import json, sys
-sys.path.insert(0, ".")
-import runlog
-run = json.load(sys.stdin)
-spent = sum(c.get("agents") or 0 for c in runlog.cycles_of(run))
-assert spent == 13, f"cycles_of dropped a row: {spent} agents, expected 13"
-# The disclosure must quote the same spend as the derivation it explains: reading the raw
-# list here while convergence() read the deduped one put "CAPPED at 11 of 8 agents" above
-# a table showing 8.
-assert "13 of 10" in runlog.disclosure("capped", run), runlog.disclosure("capped", run)
-' && ok "and the disclosure quotes the same spend as the derivation" \
-	|| bad "and the disclosure quotes the same spend as the derivation"
 
 # An ask-bucket-only cycle has not run out of findings. It applied nothing, so the old
 # test (`applied == 0`) read it as converged, which bought a push with no disclosure.
@@ -188,13 +175,6 @@ r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 "$PY" runlog.py cycle --run-id "$r" --n 1 --applied 0 --asked 7 --agents 6 >/dev/null 2>&1
 [ "$(conv "$r")" = "halted" ] && ok "a cycle that only asked has not converged" \
 	|| bad "a cycle that only asked has not converged (got: $(conv "$r"))"
-"$PY" -c '
-import sys; sys.path.insert(0, ".")
-import runlog
-d = runlog.disclosure("halted", {"cycles": [{"n": 1, "applied": 0, "asked": 7, "agents": 6}]})
-assert "7 finding(s) awaiting a decision" in d, d
-' && ok "and the disclosure names the findings left undecided" \
-	|| bad "and the disclosure names the findings left undecided"
 
 # A cycle row appended after `finish` rewrites a convergence that has already been
 # disclosed on a PR and already cleared a push — the assertion path the derivation
@@ -244,14 +224,6 @@ cy "$r" 1 0 6
 	--executed '{"threat_model":{"status":"done"}}' --asks 7 >/dev/null 2>&1
 [ "$(conv "$r")" = "halted" ] && ok "asks recorded at finish prevent converged" \
 	|| bad "asks recorded at finish prevent converged (got: $(conv "$r"))"
-"$PY" -c '
-import sys; sys.path.insert(0, ".")
-import runlog
-run = runlog.load(limit=None)["'"$r"'"]
-d = runlog.disclosure(runlog.convergence(run), run)
-assert "7 finding(s) awaiting a decision" in d, d
-' && ok "and the disclosure names them even with no cycle-row count" \
-	|| bad "and the disclosure names them even with no cycle-row count"
 # And a genuinely clean run still converges.
 r=$("$PY" runlog.py plan --tier full --model m --gates "$GATES")
 cy "$r" 1 0 6
@@ -263,7 +235,7 @@ cy "$r" 1 0 6
 # The disclosure gate is no longer here: the `disclosed` phase and disclosure_pending were
 # deleted because the marker they wrote could be satisfied by `runlog.py disclosed --where
 # "trust me"` with no report anywhere — the shape --clean-exit was retired for, rebuilt inside
-# its own replacement. push-check.py --selftest owns that coverage now, and checks the
+# its own replacement. `looper push-check` owns that coverage now (internal/push in the looper repo), and checks the
 # artifact (a PR comment or the pending file carrying the run's marker) instead of a claim.
 # The precedent ban matched raw text, so whitespace walked straight through it: a reason
 # long enough to wrap carries a newline mid-phrase, which is the ordinary case rather than
@@ -834,6 +806,51 @@ done
 [ -z "$("$PY" review-stats.py --alarm)" ] \
 	&& ok "three n/a runs raise no alarm" || bad "three n/a runs raise no alarm"
 
+# --- pending: Step 0c's worklist is this branch's files only. The pending files sit under the
+# common dir every branch and worktree shares; listing them all posted another branch's report
+# onto this PR (CodeRabbit, skills PR #2). Detached HEAD and unknown runs list nothing.
+pr="$TMP/pending-repo"; git init -q -b feat "$pr" && git -C "$pr" commit -q --allow-empty -m i
+pmine=$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" plan --tier full --model m --gates "$GATES" --inputs '{}')
+git -C "$pr" checkout -q -b other
+pother=$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" plan --tier full --model m --gates "$GATES" --inputs '{}')
+git -C "$pr" checkout -q feat
+for id in "$pmine" "$pother" nosuchrun; do : >"$pr/.git/info/review-loop-pending-report.$id.md"; done
+pl=$(cd "$pr/" && "$PY" "$OLDPWD/runlog.py" pending 2>"$TMP/pending.err")
+[ "$pl" = "$(cd "$pr" && pwd -P)/.git/info/review-loop-pending-report.$pmine.md" ] || [ "$pl" = "$pr/.git/info/review-loop-pending-report.$pmine.md" ] \
+	&& ok "pending lists only this branch's file, absolute" || bad "pending lists only this branch's file, absolute: $pl"
+grep -q "no run record for .*nosuchrun" "$TMP/pending.err" \
+	&& ok "pending names a file with no run record instead of dropping it silently" || bad "pending names a file with no run record: $(cat "$TMP/pending.err")"
+git -C "$pr" checkout -q --detach
+[ -z "$(cd "$pr" && "$PY" "$OLDPWD/runlog.py" pending 2>"$TMP/pending.err")" ] && grep -q "no current branch" "$TMP/pending.err" \
+	&& ok "pending lists nothing on a detached HEAD" || bad "pending lists nothing on a detached HEAD"
+
+# --- the record as looper reads it. pr-report.test.sh and push-check.py's selftest drove
+# rows written by THIS file through the real readers; looper's own tests use hand-written
+# rows and frozen goldens, so a field renamed here would break the push gate and the report
+# with both repos green. Runs where looper is on PATH (locally; CI's trust job) and says so
+# where it is not, adding its checks to the expected count only when they ran.
+looper_checks=0
+if command -v looper >/dev/null 2>&1; then
+	looper_checks=4
+	export REVIEW_LOOP_RUNS="$TMP/looper.jsonl"
+	lrid=$("$PY" runlog.py plan --tier full --model claude-opus-5 --agent-cap 8 --gates '{}' --inputs '{"logic":true}')
+	"$PY" runlog.py cycle --run-id "$lrid" --n 1 --applied 3 --agents 5 >/dev/null 2>&1
+	"$PY" runlog.py cycle --run-id "$lrid" --n 2 --applied 1 --agents 4 >/dev/null 2>&1
+	body=$(looper pr-report --run-id "$lrid" </dev/null 2>&1)
+	grep -q "2 cycle(s) · 9 agent(s)" <<<"$body" \
+		&& ok "looper pr-report reads runlog's cycle rows" || bad "looper pr-report reads runlog's cycle rows: $body"
+	grep -q "CAPPED" <<<"$body" \
+		&& ok "looper pr-report derives capped from runlog's agent cap" || bad "looper pr-report derives capped from runlog's agent cap"
+	pc=$(looper push-check --run-id "$lrid" --branch feat/x --default-branch main 2>/dev/null)
+	grep -q '"convergence":"capped"' <<<"$pc" \
+		&& ok "looper push-check reads the same convergence" || bad "looper push-check reads the same convergence: $pc"
+	grep -q '"push":false' <<<"$pc" && grep -q 'report has not reached' <<<"$pc" \
+		&& ok "looper push-check refuses a run whose report has not landed" || bad "looper push-check refuses a run whose report has not landed: $pc"
+	export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
+else
+	echo "  skip  looper not on PATH — the runlog-to-looper checks did not run"
+fi
+
 # An assertion that VANISHES is invisible without a count. Two ways it has happened
 # here: a syntax error inside a `cond && ok || bad` list abandons the whole list so
 # NEITHER branch runs, and assertions appended below this summary never execute at all
@@ -843,8 +860,8 @@ done
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
 EXPECTED_CHECKS=125
-if [ "$checks" -ne "$EXPECTED_CHECKS" ]; then
-	echo "ran $checks checks, expected $EXPECTED_CHECKS — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
+if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
+	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))
 fi
 [ "$fails" -eq 0 ] && echo "all checks passed ($checks checks)" || echo "$fails check(s) failed"
