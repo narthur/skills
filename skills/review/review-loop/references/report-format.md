@@ -28,7 +28,7 @@ printf '%s\n' "<your findings narrative>" \
 `looper pr-report` reads the run record and renders the factual half itself — convergence,
 the disclosure verbatim, every gate with planned-vs-actual and its reason, the cycle
 sequence, both sizing numbers with what was excluded, the agent roster, token spend —
-then appends the narrative from `--findings-file` (`-` is stdin, read only when named) unchanged. It also applies the
+then appends the narrative from `--findings-file` (`-` is stdin; from looper v0.2.3 stdin is read only when named, while v0.2.2 also reads a piped stdin without it) unchanged. It also applies the
 `review:converged|capped|halted|unknown` label.
 
 This exists because hand-rendering this block is the most-dropped step in the skill: it
