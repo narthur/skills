@@ -118,6 +118,21 @@ jobs:
         working-directory: .looper
         run: go build -o "$RUNNER_TEMP/looper" ./cmd/looper
 
+      # The tier and refusal vocabularies live twice now: looper record writes with its copies,
+      # and learn.py and review-stats.py read runlog.py's. looper's own CI holds them equal only
+      # at its pinned skills commit, so a change here would pass this repo's CI and disagree with
+      # the writer until looper bumped its pin. Hold them equal against THIS checkout. -v and the
+      # PASS grep because the test skips, which go test reports as success, when it cannot find
+      # runlog.py.
+      - name: runlog.py's constants match looper record's
+        working-directory: .looper
+        env:
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/skills/review/review-loop/runlog.py
+        run: |
+          go test -count=1 -v -run '^TestWriteConstantsMatchThePython$' ./internal/record/ | tee "$RUNNER_TEMP/constants.log"
+          grep -q -- '--- PASS: TestWriteConstantsMatchThePython' "$RUNNER_TEMP/constants.log" \
+            || { echo "the constants check did not run"; exit 1; }
+
       - name: git identity for fixture repos
         run: |
           git config --global user.email ci@example.invalid

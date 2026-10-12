@@ -235,6 +235,15 @@ grep -q "NOT RECORDED.*go install github.com/pinepeakdigital/looper/cmd/looper@"
 	&& ok "and names the install command" || bad "and names the install command (got: $(tail -2 <<<"$out"))"
 [ ! -e "$TMP/nolooper.jsonl" ] && ok "and writes no plan row" || bad "and writes no plan row"
 
+# A looper that exists but cannot run — a directory passes X_OK, as does a binary for another
+# architecture — raises from subprocess, and the warning above still has to reach stderr.
+dirhome="$TMP/dirlooper-home"; mkdir -p "$dirhome/.local/bin/looper"
+out=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+	| HOME="$dirhome" REVIEW_LOOP_RUNS="$TMP/dirlooper.jsonl" "$PY" plan.py --model test $BOOLS_OFF 2>&1)
+[ $? -ne 0 ] && grep -q "NOT RECORDED" <<<"$out" && ok "an unrunnable looper still says NOT RECORDED" \
+	|| bad "an unrunnable looper still says NOT RECORDED (got: $(tail -2 <<<"$out"))"
+! grep -q "^Traceback" <<<"$out" && ok "and not as a traceback" || bad "and not as a traceback"
+
 # The checks that read what a real recording run prints and persists drive the real writer.
 # CI's trust job runs this suite with looper on PATH and requires the skip line to be absent.
 looper_checks=0
@@ -264,24 +273,24 @@ if real_looper=$(command -v looper); then
 		| HOME="$lhome" REVIEW_LOOP_RUNS="$store" "$PY" plan.py --model test $BOOLS_OFF 2>/dev/null | tail -1)
 	row=$(REVIEW_LOOP_RUNS="$store" "$real_looper" record show --run-id "$rid" 2>/dev/null)
 	"$PY" -c '
-	import json, sys
-	d = json.load(sys.stdin)
-	bad = [k for k, want in (("changed_lines", 900), ("semantic_lines", 10),
-	                         ("agent_cap", 40)) if d.get(k) != want]
-	# tier_reason was asserted only from the PRINTOUT above, and plan.py passed no
-	# --tier-reason, so the key never existed in the row — the same bug shape in the same
-	# block that exists to pin it. Run faafc47dcd29 recorded tier_reason null beside
-	# semantic_lines 1508.
-	for k in ("sizing_excluded", "tier_reason"):
-	    if not (d.get(k) or "").strip():
-	        bad.append(k)
-	# SystemExit("") still exits 1 — an empty "nothing missing" string reads as failure.
-	raise SystemExit(", ".join(bad) if bad else 0)' <<<"$row" \
+import json, sys
+d = json.load(sys.stdin)
+bad = [k for k, want in (("changed_lines", 900), ("semantic_lines", 10),
+                         ("agent_cap", 40)) if d.get(k) != want]
+# tier_reason was asserted only from the PRINTOUT above, and plan.py passed no
+# --tier-reason, so the key never existed in the row — the same bug shape in the same
+# block that exists to pin it. Run faafc47dcd29 recorded tier_reason null beside
+# semantic_lines 1508.
+for k in ("sizing_excluded", "tier_reason"):
+    if not (d.get(k) or "").strip():
+        bad.append(k)
+# SystemExit("") still exits 1 — an empty "nothing missing" string reads as failure.
+raise SystemExit(", ".join(bad) if bad else 0)' <<<"$row" \
 		&& ok "the sizing decision reaches the persisted record, not just the printout" \
 		|| bad "the sizing decision reaches the persisted record, not just the printout (missing: $("$PY" -c '
-	import json,sys
-	d=json.load(sys.stdin)
-	print(", ".join([k for k,w in (("changed_lines",900),("semantic_lines",10),("agent_cap",40)) if d.get(k)!=w] + [k for k in ("sizing_excluded","tier_reason") if not (d.get(k) or "").strip()]))' <<<"$row"))"
+import json,sys
+d=json.load(sys.stdin)
+print(", ".join([k for k,w in (("changed_lines",900),("semantic_lines",10),("agent_cap",40)) if d.get(k)!=w] + [k for k in ("sizing_excluded","tier_reason") if not (d.get(k) or "").strip()]))' <<<"$row"))"
 else
 	echo "  skip  looper not on PATH — the recording checks did not run"
 fi
@@ -307,7 +316,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=40
+EXPECTED_CHECKS=42
 if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
 	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

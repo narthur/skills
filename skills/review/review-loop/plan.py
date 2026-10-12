@@ -341,19 +341,29 @@ def main():
     # our own print() is buffered, so letting it inherit puts the run_id BEFORE the
     # plan JSON — the opposite of the documented order, and unparseable for anyone
     # reading "the JSON, then the id".
-    rc = subprocess.run([
-        looper, "record", "plan",
-        "--tier", plan["tier_floor"],
-        "--model", a.model,
-        "--base", plan["base_branch"] or "",
-        "--changed-lines", str(plan["changed_lines"]),
-        "--semantic-lines", str(plan["semantic_lines"]),
-        "--sizing-excluded", plan["sizing_excluded"] or "",
-        "--tier-reason", plan["tier_reason"] or "",
-        "--agent-cap", str(plan["agent_cap"]),
-        "--inputs", json.dumps(plan["inputs"]),
-        "--gates", json.dumps(plan["gates"]),
-    ], capture_output=True, text=True, check=False)
+    not_recorded = ("plan: COMPUTED BUT NOT RECORDED — no run_id exists, the Stop hook will "
+                    "not track this run. Fix the error above and re-run plan.py before "
+                    "starting the review.")
+    try:
+        rc = subprocess.run([
+            looper, "record", "plan",
+            "--tier", plan["tier_floor"],
+            "--model", a.model,
+            "--base", plan["base_branch"] or "",
+            "--changed-lines", str(plan["changed_lines"]),
+            "--semantic-lines", str(plan["semantic_lines"]),
+            "--sizing-excluded", plan["sizing_excluded"] or "",
+            "--tier-reason", plan["tier_reason"] or "",
+            "--agent-cap", str(plan["agent_cap"]),
+            "--inputs", json.dumps(plan["inputs"]),
+            "--gates", json.dumps(plan["gates"]),
+        ], capture_output=True, text=True, check=False)
+    except OSError as e:
+        # X_OK passes a directory or a binary for another architecture; running it raises
+        # here, and the plan JSON already on stdout would otherwise end in a bare traceback.
+        print(f"plan: cannot run {looper}: {e}", file=sys.stderr)
+        print(not_recorded, file=sys.stderr)
+        sys.exit(1)
     if rc.stderr:
         print(rc.stderr.rstrip(), file=sys.stderr)
     if rc.stdout:
@@ -362,9 +372,7 @@ def main():
         # The plan JSON is already on stdout and looks complete. Say plainly that it
         # was not recorded, or the orchestrator reads a successful-looking plan and
         # proceeds with no run_id and no Stop-hook net under it.
-        print("plan: COMPUTED BUT NOT RECORDED — no run_id exists, the Stop hook will "
-              "not track this run. Fix the error above and re-run plan.py before "
-              "starting the review.", file=sys.stderr)
+        print(not_recorded, file=sys.stderr)
     sys.exit(rc.returncode)
 
 

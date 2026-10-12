@@ -575,7 +575,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    Publish it **from the record, not from memory**:
 
-   `--findings-file -` is what makes looper read the piped narrative. From v0.2.3 stdin is read only when asked for, so an idle inherited pipe cannot hang the call, and without the flag the narrative is dropped. v0.2.2 also reads a piped stdin without the flag, so the flag is correct on both.
+   `--findings-file -` is what makes looper read the piped narrative. Stdin is read only when asked for, so an idle inherited pipe cannot hang the call, and without the flag the narrative is dropped.
 
    ```bash
    printf '%s\n' "<your findings narrative>" \
