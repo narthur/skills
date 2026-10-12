@@ -287,14 +287,15 @@ if real_looper=$(command -v looper); then
 		&& ok "run recorded as nudged" || bad "run recorded as nudged"
 
 	# A nudge that cannot be written leaves the run un-nudged, so the block repeats; the hook
-	# must say why rather than discard the error. A read-only store: check reads it, the
-	# nudge's append cannot.
-	export REVIEW_LOOP_RUNS="$TMP/ro.jsonl"
+	# must say why rather than discard the error. A wrapper fails `record nudge` alone and hands
+	# everything else to the real binary — not a read-only store, which root writes anyway.
+	nhome="$TMP/nudge-fails-home"; mkdir -p "$nhome/.local/bin"
+	printf '#!/bin/sh\n[ "$1 $2" = "record nudge" ] && { echo "nudge write refused" >&2; exit 1; }\nexec "%s" "$@"\n' "$real_looper" > "$nhome/.local/bin/looper"
+	chmod +x "$nhome/.local/bin/looper"
+	export REVIEW_LOOP_RUNS="$TMP/nudge-fails.jsonl"
 	rid=$("$L" record plan --tier full --model m --gates "$GATES")
-	chmod 444 "$REVIEW_LOOP_RUNS"
-	hook_out=$(echo '{"stop_hook_active":false}' | HOME="$lhome" ./stop-hook.sh)
-	chmod 644 "$REVIEW_LOOP_RUNS"
-	"$PY" -I -c 'import json,sys; d=json.loads(sys.stdin.read()); assert d["decision"]=="block" and "will repeat" in d["systemMessage"]' <<<"$hook_out" 2>/dev/null \
+	hook_out=$(echo '{"stop_hook_active":false}' | HOME="$nhome" ./stop-hook.sh)
+	"$PY" -I -c 'import json,sys; d=json.loads(sys.stdin.read()); assert d["decision"]=="block" and "will repeat" in d["systemMessage"] and "nudge write refused" in d["systemMessage"]' <<<"$hook_out" 2>/dev/null \
 		&& ok "a failed nudge still blocks, and says the prompt will repeat" \
 		|| bad "a failed nudge still blocks, and says the prompt will repeat (got: $hook_out)"
 
