@@ -261,7 +261,7 @@ msg=$("$PY" -c 'import json,sys; d=json.loads(sys.stdin.read()); print("BLOCKS" 
 # --- into a fixture HOME rather than found on PATH.
 looper_checks=0
 if real_looper=$(command -v looper); then
-	looper_checks=15
+	looper_checks=16
 	lhome="$TMP/looper-home"; mkdir -p "$lhome/.local/bin" && ln -s "$real_looper" "$lhome/.local/bin/looper"
 	L="$lhome/.local/bin/looper"
 
@@ -285,6 +285,18 @@ if real_looper=$(command -v looper); then
 		|| bad "second stop writes no outcome for a live run"
 	grep -q '"phase": "nudge"' <<<"$shown" \
 		&& ok "run recorded as nudged" || bad "run recorded as nudged"
+
+	# A nudge that cannot be written leaves the run un-nudged, so the block repeats; the hook
+	# must say why rather than discard the error. A read-only store: check reads it, the
+	# nudge's append cannot.
+	export REVIEW_LOOP_RUNS="$TMP/ro.jsonl"
+	rid=$("$L" record plan --tier full --model m --gates "$GATES")
+	chmod 444 "$REVIEW_LOOP_RUNS"
+	hook_out=$(echo '{"stop_hook_active":false}' | HOME="$lhome" ./stop-hook.sh)
+	chmod 644 "$REVIEW_LOOP_RUNS"
+	"$PY" -I -c 'import json,sys; d=json.loads(sys.stdin.read()); assert d["decision"]=="block" and "will repeat" in d["systemMessage"]' <<<"$hook_out" 2>/dev/null \
+		&& ok "a failed nudge still blocks, and says the prompt will repeat" \
+		|| bad "a failed nudge still blocks, and says the prompt will repeat (got: $hook_out)"
 
 	# --head must actually scope: a run planned at a different tip is not this one.
 	export REVIEW_LOOP_RUNS="$TMP/headscope.jsonl"

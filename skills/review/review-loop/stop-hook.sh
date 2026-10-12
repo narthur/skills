@@ -85,10 +85,21 @@ or, if the run is still in flight, carry on — this prompt fires once per run a
 
 A skipped gate is fine; a silently skipped gate is what this hook exists to prevent. Reasons citing existing precedent in the repo are rejected: a copied pattern carries its bugs."
 
-# Mark the run nudged only once the prompt has actually been delivered. A nudge
-# silences this run for good, so writing it first would mean a failed print
-# swallows the only warning the run ever gets — a flag set before the action it
-# is meant to gate.
-"$py" -I -c 'import json,sys; print(json.dumps({"decision":"block","reason":sys.stdin.read()}))' <<<"$reason" \
-	&& "$LOOPER" record nudge --run-id "$run_id" >/dev/null 2>&1
+# Mark the run nudged only once the prompt exists. A nudge silences this run for good, so
+# writing it before the block JSON is built would mean a failed build swallows the only
+# warning the run ever gets — a flag set before the action it is meant to gate. What is left
+# after the build is a printf of a finished string, which fails only on a closed stdout.
+#
+# A FAILED nudge is said, not discarded: the run stays un-nudged, so the block comes back on
+# every Stop, and without a reason that reads as the hook misbehaving. A hook emits one JSON
+# object, so the diagnostic rides in it as a systemMessage beside the block.
+out=$("$py" -I -c 'import json,sys; print(json.dumps({"decision":"block","reason":sys.stdin.read()}))' <<<"$reason") || exit 0
+if ! nerr=$("$LOOPER" record nudge --run-id "$run_id" 2>&1 >/dev/null); then
+	out=$("$py" -I -c 'import json,sys
+d = json.loads(sys.argv[1])
+d["systemMessage"] = ("review-loop Stop hook: could not mark run " + sys.argv[2] +
+                      " as prompted, so this block will repeat on every stop: " + (sys.argv[3].strip() or "no error text"))
+print(json.dumps(d))' "$out" "$run_id" "$nerr") || true
+fi
+printf '%s\n' "$out"
 exit 0
