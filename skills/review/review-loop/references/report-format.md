@@ -28,7 +28,7 @@ printf '%s\n' "<your findings narrative>" \
 `looper pr-report` reads the run record and renders the factual half itself — convergence,
 the disclosure verbatim, every gate with planned-vs-actual and its reason, the cycle
 sequence, both sizing numbers with what was excluded, the agent roster, token spend —
-then appends the narrative from `--findings-file` (`-` is stdin; from looper v0.2.3 stdin is read only when named, while v0.2.2 also reads a piped stdin without it) unchanged. It also applies the
+then appends the narrative from `--findings-file` (`-` is stdin, which looper reads only when named) unchanged. It also applies the
 `review:converged|capped|halted|unknown` label.
 
 This exists because hand-rendering this block is the most-dropped step in the skill: it
@@ -110,11 +110,13 @@ The deferred file ends with an HTML comment naming the `review:<convergence>` la
 no PR there was nothing to label, so on a fresh branch — the common case, since the push gate forces
 loop-then-push-then-PR — the deferring run never applied it. Post the file **as it is**, because it
 carries the narrative and a re-render would not (`looper pr-report` re-renders the record but reads
-the narrative only from `--findings-file`, which a later session no longer has). Then apply the label by hand. The
-note's own suggestion, `looper pr-report --run-id <id> --label`, does not do this: `--label` takes
-effect only with `--post`, and `--post` would add a second comment.
+the narrative only from `--findings-file`, which a later session no longer has). Then apply the label by hand,
+as the note says: from looper v0.2.4 it names `gh pr edit <n> --add-label review:<convergence>`.
+Notes written by looper v0.2.3 or earlier suggest `looper pr-report --run-id <id> --label` instead,
+which does not do this: `--label` takes effect only with `--post`, and `--post` would add a second
+comment. Read only the label from those.
 
-Reached when `runlog.py pending` lists a file for this branch **and** a PR now exists for the
+Reached when `~/.local/bin/looper record pending` lists a file for this branch **and** a PR now exists for the
 branch. (Pending file but still no PR → leave it in place and continue the run.)
 
 1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file <the pending file>`),

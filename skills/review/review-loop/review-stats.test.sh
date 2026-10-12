@@ -33,13 +33,13 @@ row '{"run_id":"a4","phase":"plan","planned_at":"2026-01-04T00:00:00","session_i
 # here reported every one of them abandoned and tripped the Step 0 alarm.
 row '{"run_id":"a5","phase":"plan","planned_at":"2026-01-05T00:00:00","session_id":null,"repo":"r"}'
 # `skipped` has the same shape as `carried`: an outcome, and no review behind it.
-# Written as the TWO rows runlog.py skipped actually emits, not one row carrying a
-# plan phase and an outcome together — a shape runlog never writes.
+# Written as the TWO rows `looper record skipped` actually emits, not one row carrying a
+# plan phase and an outcome together — a shape the writer never emits.
 for i in 1 2; do
 	row "{\"run_id\":\"k$i\",\"phase\":\"plan\",\"planned_at\":\"2026-01-0${i}T06:00:00\",\"session_id\":\"s1\",\"repo\":\"r\"}"
 	row "{\"run_id\":\"k$i\",\"phase\":\"finish\",\"outcome\":\"skipped\",\"tier_executed\":\"skipped\"}"
 done
-# Finish-only, as runlog.py carried writes them — no plan row to merge with. This is
+# Finish-only, as `looper record carried` writes them — no plan row to merge with. This is
 # the path every real carried row takes.
 for i in 1 2 3; do
 	row "{\"run_id\":\"c$i\",\"phase\":\"finish\",\"outcome\":\"carried\",\"tier_executed\":\"carried\",\"repo\":\"r\"}"
@@ -92,13 +92,12 @@ grep -qE '^outcome:.*carried=3' <<<"$out" && ok "the outcome tally still shows c
 # --- numbers the block exists to let the agent cap be chosen from.
 export REVIEW_LOOP_RUNS="$TMP/spend.jsonl"
 rm -f "$REVIEW_LOOP_RUNS"
-GATES='{"threat_model":{"planned":"run","reason":"2 stale claims"}}' 
-fin=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" 2>/dev/null | tail -1)
-"$PY" runlog.py cycle --run-id "$fin" --n 1 --applied 1 --agents 4 --tokens 400000 >/dev/null 2>&1
-"$PY" runlog.py finish --run-id "$fin" --outcome clean --tier full \
-	--executed '{"threat_model":{"status":"done"}}' >/dev/null 2>&1
-open=$("$PY" runlog.py plan --tier full --model m --gates "$GATES" 2>/dev/null | tail -1)
-"$PY" runlog.py cycle --run-id "$open" --n 1 --applied 1 --agents 20 >/dev/null 2>&1
+# The rows `looper record` writes for plan, cycle and finish, trimmed to the fields read here.
+row '{"run_id":"f1","phase":"plan","planned_at":"2026-03-01T00:00:00","repo":"r","gates":{"threat_model":{"planned":"run","reason":"2 stale claims"}}}'
+row '{"run_id":"f1","phase":"cycle","n":1,"applied":1,"agents":4,"subagent_tokens":400000}'
+row '{"run_id":"f1","phase":"finish","finished_at":"2026-03-01T01:00:00","outcome":"clean","tier_executed":"full","executed":{"threat_model":{"status":"done"}}}'
+row '{"run_id":"o1","phase":"plan","planned_at":"2026-03-02T00:00:00","repo":"r","gates":{"threat_model":{"planned":"run","reason":"2 stale claims"}}}'
+row '{"run_id":"o1","phase":"cycle","n":1,"applied":1,"agents":20}'
 rep=$("$PY" review-stats.py 2>/dev/null)
 grep -q 'mean agents/run: 4.0' <<<"$rep" \
 	&& ok "spend divides finished-run cycles by finished runs" \
@@ -281,7 +280,7 @@ arow quiet '{"run_id":"q2","phase":"finish","outcome":"clean","executed":{}}'
 [ -z "$(alarm quiet)" ] && ok "one decline plus one drop stays silent" \
 	|| bad "one decline plus one drop stays silent"
 
-# `skipped` is not the whole deliberate vocabulary. runlog.cmd_finish requires a reason for
+# `skipped` is not the whole deliberate vocabulary. `looper record finish` requires a reason for
 # every status but `done` and never validates the string, and the live record already held
 # `pending` and `deferred` alongside `skipped` — all three deliberate. Enumerating the
 # deliberate ones put the other two in the failure bucket, which is the very bug this
@@ -340,7 +339,7 @@ grep -q "zzz_declined" <<<"$first" \
 	|| bad "the more frequent offender is listed first across both buckets (got: $first)"
 
 
-# Neither vocabulary is closed: runlog never validates the status string. The question is
+# Neither vocabulary is closed: the writer never validates the status string. The question is
 # which way an UNRECOGNISED one defaults, and it must default loud — a spelling nobody
 # listed is far likelier to be a new failure or a bug than a new deliberate word. Listing
 # the failures instead put every one of these in the benign bucket.
@@ -406,8 +405,8 @@ done
 grep -q "evidence_gate did not complete (blocked) 3x" <<<"$(alarm blocked)" \
 	&& ok "a blocked gate is still loud" || bad "a blocked gate is still loud"
 
-# `passed` stays loud too, and this is the half of that argument nothing pinned. runlog
-# deliberately does NOT account for `passed` (it is report-line prose, not an --executed
+# `passed` stays loud too, and this is the half of that argument nothing pinned. The
+# writer deliberately does NOT account for `passed` (it is report-line prose, not an --executed
 # status), so the two instruments only agree while this list also leaves it out. Adding
 # `passed` to DECLINED_STATES re-creates the same disagreement in mirror image — tier
 # `partial` beside an alarm line reading "declined with a reason (passed)" — and every
@@ -418,8 +417,8 @@ for i in 1 2 3; do
 	arow passed "{\"run_id\":\"ps$i\",\"phase\":\"finish\",\"outcome\":\"clean\",\"executed\":{\"measurement_gate\":{\"status\":\"passed\",\"reason\":\"metric plan posted\"}}}"
 done
 grep -q "measurement_gate did not complete (passed) 3x" <<<"$(alarm passed)" \
-	&& ok "a passed status stays loud, matching the tier runlog derives" \
-	|| bad "a passed status stays loud, matching the tier runlog derives"
+	&& ok "a passed status stays loud, matching the tier looper record derives" \
+	|| bad "a passed status stays loud, matching the tier looper record derives"
 
 # An assertion that VANISHES is invisible without a count. Two ways it has happened
 # here: a syntax error inside a `cond && ok || bad` list abandons the whole list so

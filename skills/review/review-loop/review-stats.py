@@ -54,7 +54,7 @@ def is_abandoned(run, current_session=None):
     # A row that never named a session is unknown, not dead — the same conclusion
     # this function already reaches for a reader that never named one. Guessing here
     # reported every headless run (session_id null) as abandoned, and three of those
-    # in 50 tripped the alarm at Step 0 of every later run. runlog.unfinished()
+    # in 50 tripped the alarm at Step 0 of every later run. `looper record check`
     # handles the mirror case the same careful way.
     return bool(run.get("session_id")) and run["session_id"] != current_session
 
@@ -77,7 +77,7 @@ def dropped_gates(run):
 # said. Counting them together made the alarm report correct behaviour as failure: five
 # reported misses of `record_reviewed` over 21 runs contained no real miss at all.
 #
-# NEITHER vocabulary is closed. `runlog.cmd_finish` requires a non-empty reason for every
+# NEITHER vocabulary is closed. `looper record finish` requires a non-empty reason for every
 # status but `done` and never validates the string, so any spelling can reach here. Two
 # earlier attempts each enumerated one side and lost to the other: listing the deliberate
 # words put `pending` and `deferred` in the failure bucket, and listing the failure words
@@ -90,8 +90,9 @@ def dropped_gates(run):
 # word gets noticed and added here on purpose rather than silently absorbed.
 #
 # Not fixed by widening runlog.GATE_OK, which is the right place for this distinction to
-# NOT exist: derive_tier reads it to decide `partial`, and a run that did not complete a
-# planned gate genuinely is partial. Widening it there would launder partial into full.
+# NOT exist: the tier `looper record finish` derives reads it (looper's copy is held equal
+# to this one) to decide `partial`, and a run that did not complete a planned gate
+# genuinely is partial. Widening it there would launder partial into full.
 # Derived from the docs, not from memory: references/report-format.md:64 enumerates the
 # measurement gate's outcomes as passed / waived / deferred / skipped / blocked, and
 # references/measurement-gate.md:65 says a waiver PASSES the gate. `blocked` is
@@ -167,7 +168,7 @@ def cmd_alarm(runs):
             # threshold with no real miss between them. The abandonment is the actionable
             # signal and already has its own counter; `report` still shows per-gate detail.
             #
-            # It was once argued that an EXPLICIT abandon (someone ran `runlog.py abandon`
+            # It was once argued that an EXPLICIT abandon (someone ran `looper record abandon`
             # and named what was missing) is a deliberate declaration and belongs in the
             # declined bucket, unlike an inferred one. That is wrong, and the test beside
             # this went red when it was tried. Three explicit abandonments are three

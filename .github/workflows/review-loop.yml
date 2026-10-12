@@ -105,10 +105,10 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.3: the release SKILL.md installs, carrying the push-check and pr-report
-          # subcommands that replaced push-check.py and pr-report.py, and the `version`
-          # subcommand Step 0's preflight runs.
-          ref: 930c5e4eefcd99516bafd0d222dd21c2b87d5411 # v0.2.3
+          # v0.2.4: the release SKILL.md installs, carrying the push-check and pr-report
+          # subcommands that replaced push-check.py and pr-report.py, and `record`, which
+          # replaced runlog.py's command line and is what Step 0's preflight probes for.
+          ref: 426d374959697b93c65c0f553a12baf089ba2631 # v0.2.4 (the commit; the annotated tag object is 7641230)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -118,6 +118,21 @@ jobs:
         working-directory: .looper
         run: go build -o "$RUNNER_TEMP/looper" ./cmd/looper
 
+      # The tier and refusal vocabularies live twice now: looper record writes with its copies,
+      # and learn.py and review-stats.py read runlog.py's. looper's own CI holds them equal only
+      # at its pinned skills commit, so a change here would pass this repo's CI and disagree with
+      # the writer until looper bumped its pin. Hold them equal against THIS checkout. -v and the
+      # PASS grep because the test skips, which go test reports as success, when it cannot find
+      # runlog.py.
+      - name: runlog.py's constants match looper record's
+        working-directory: .looper
+        env:
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/skills/review/review-loop/runlog.py
+        run: |
+          go test -count=1 -v -run '^TestWriteConstantsMatchThePython$' ./internal/record/ | tee "$RUNNER_TEMP/constants.log"
+          grep -q -- '--- PASS: TestWriteConstantsMatchThePython' "$RUNNER_TEMP/constants.log" \
+            || { echo "the constants check did not run"; exit 1; }
+
       - name: git identity for fixture repos
         run: |
           git config --global user.email ci@example.invalid
@@ -125,17 +140,32 @@ jobs:
           git config --global init.defaultBranch main
           git config --global commit.gpgsign false
 
-      # runlog.test.sh's runlog-to-looper checks skip where looper is not on PATH, which is
-      # the suites job. This is where looper is built, so they run here: rows written by
-      # runlog.py, read by the push gate and the report the skill installs.
-      - name: runlog rows, as looper reads them
-        # Required to have RUN, not merely passed: without looper they skip, and the suite
+      # The checks that drive looper skip where it is not on PATH, which is the suites job.
+      # This is where looper is built, so they run here: the Stop hook, record-skipped.sh,
+      # carry-review.sh and plan.py writing through `looper record`, and the rows it writes
+      # read back by the push gate, the report and the Python readers.
+      - name: the suites that drive looper, with looper
+        # Required to have RUN, not merely passed: without looper they skip, and each suite
         # still exits 0 — the skip-reads-as-success hazard this workflow guards elsewhere.
+        # Each must print no skip line and its own last looper check.
         run: |
           set -o pipefail
-          PATH="$RUNNER_TEMP:$PATH" ./skills/review/review-loop/runlog.test.sh | tee "$RUNNER_TEMP/runlog.log"
-          grep -q "ok  looper push-check reads the same convergence" "$RUNNER_TEMP/runlog.log" \
-            || { echo "the runlog-to-looper checks did not run"; exit 1; }
+          cd skills/review/review-loop
+          failed=""
+          for pair in \
+            "runlog.test.sh:ok  the alarm reads looper's finish rows" \
+            "record-skipped.test.sh:ok  a refusal leaves the prior record intact" \
+            "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp" \
+            "plan.test.sh:ok  the sizing decision reaches the persisted record"; do
+            t=${pair%%:*}; marker=${pair#*:}
+            echo "::group::$t"
+            PATH="$RUNNER_TEMP:$PATH" ./"$t" | tee "$RUNNER_TEMP/$t.log" || failed="$failed $t"
+            echo "::endgroup::"
+            if grep -q "skip  looper" "$RUNNER_TEMP/$t.log" || ! grep -qF "$marker" "$RUNNER_TEMP/$t.log"; then
+              echo "$t: its looper checks did not run"; failed="$failed $t"
+            fi
+          done
+          [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
 
       # The suites passing says nothing on its own: twelve assertions in them turned
       # out to be incapable of failing. This reintroduces each defect in the catalog — ones
@@ -151,13 +181,15 @@ jobs:
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 48 ] || { echo "only $n mutations, expected at least 48 — was one deleted?"; exit 1; }
+          [ "$n" -ge 42 ] || { echo "only $n mutations, expected at least 42 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
+      # looper on PATH for the same reason as above: the entries that verify through the Stop
+      # hook's looper checks would otherwise meet a skip and score as survivors.
       - name: mutation score
         run: |
           rm -rf .looper
-          "$RUNNER_TEMP/looper" mutate -root . -catalog skills/review/review-loop/mutations
+          PATH="$RUNNER_TEMP:$PATH" "$RUNNER_TEMP/looper" mutate -root . -catalog skills/review/review-loop/mutations
 
       # Flags the prose attributes to a script that does not have them. SKILL.md
       # documented --max-cycles for a full day after it was deleted.

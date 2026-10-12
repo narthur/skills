@@ -1,0 +1,8 @@
+target: skills/review/review-loop/stop-hook.sh
+verify: bash skills/review/review-loop/runlog.test.sh
+expect: FAIL  an unreadable store is reported, not swallowed
+why:    `check` exits 1 both when a run is open and when the store cannot be read, and only stdout tells them apart. The hook discarded stderr and exited 0 whenever it found no run id, so an unreadable store — the state in which every open run goes unguarded — was indistinguishable from a clean one. Needs looper on PATH to run; without it the check skips and this entry survives rather than passing falsely.
+--- old
+if [ "$status" -ne 1 ] || [ -z "$open" ]; then
+--- new
+if [ "$status" -ne 1 ]; then

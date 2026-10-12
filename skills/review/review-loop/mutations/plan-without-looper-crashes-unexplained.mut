@@ -1,0 +1,8 @@
+target: skills/review/review-loop/plan.py
+verify: bash skills/review/review-loop/plan.test.sh
+expect: FAIL  and names the install command
+why:    plan.py prints a complete-looking plan before it writes the record, so a failed write has to say plainly that nothing was recorded or the orchestrator proceeds with no run_id and no Stop-hook net. Without the existence check a missing looper is a FileNotFoundError traceback after the plan JSON: no "NOT RECORDED", no install command, and a reader skimming stdout sees a plan.
+--- old
+    if not os.access(looper, os.X_OK):
+--- new
+    if False:
