@@ -108,7 +108,7 @@ jobs:
           # v0.2.4: the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, and `record`, which
           # replaced runlog.py's command line and is what Step 0's preflight probes for.
-          ref: 7641230ec0459f6e28bd2f3ef32fcba8c05e019a # v0.2.4
+          ref: 426d374959697b93c65c0f553a12baf089ba2631 # v0.2.4 (the commit; the annotated tag object is 7641230)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
