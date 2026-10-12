@@ -94,12 +94,14 @@ A skipped gate is fine; a silently skipped gate is what this hook exists to prev
 # every Stop, and without a reason that reads as the hook misbehaving. A hook emits one JSON
 # object, so the diagnostic rides in it as a systemMessage beside the block.
 out=$("$py" -I -c 'import json,sys; print(json.dumps({"decision":"block","reason":sys.stdin.read()}))' <<<"$reason") || exit 0
-if ! nerr=$("$LOOPER" record nudge --run-id "$run_id" 2>&1 >/dev/null); then
-	out=$("$py" -I -c 'import json,sys
+# Into o2, not out: a failed substitution still assigns, and would replace the block with nothing.
+if ! nerr=$("$LOOPER" record nudge --run-id "$run_id" 2>&1 >/dev/null) &&
+	o2=$("$py" -I -c 'import json,sys
 d = json.loads(sys.argv[1])
 d["systemMessage"] = ("review-loop Stop hook: could not mark run " + sys.argv[2] +
                       " as prompted, so this block will repeat on every stop: " + (sys.argv[3].strip() or "no error text"))
-print(json.dumps(d))' "$out" "$run_id" "$nerr") || true
+print(json.dumps(d))' "$out" "$run_id" "$nerr"); then
+	out=$o2
 fi
 printf '%s\n' "$out"
 exit 0
