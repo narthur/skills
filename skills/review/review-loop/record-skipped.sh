@@ -11,7 +11,7 @@
 # unnecessary. A reason is required so the record can't be a silent rubber-stamp.
 #
 # It also writes a complete plan+finish row to the shared run record
-# (~/.claude/review-loop/runs.jsonl), so a skip appears in review-stats.py
+# (~/.claude/review-loop/runs.jsonl), so a skip appears in `looper stats`
 # alongside real runs instead of living only in this script's own store. That
 # write happens FIRST, because it is the only step that can refuse the reason and
 # a refusal afterwards could not restore a previous record it had already
@@ -87,7 +87,7 @@ sha=$(resolve_sha "${2:-HEAD}")
 # absolute path, never PATH, as SKILL.md Step 0 explains.
 LOOPER="$HOME/.local/bin/looper"
 if [ ! -x "$LOOPER" ]; then
-	echo "record-skipped: $LOOPER is missing, so the skip cannot be recorded; nothing recorded. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4" >&2
+	echo "record-skipped: $LOOPER is missing, so the skip cannot be recorded; nothing recorded. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.5" >&2
 	exit 1
 fi
 if ! "$LOOPER" record skipped --reason "$reason" >/dev/null; then

@@ -16,10 +16,10 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — the run record's writer and Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-~/.local/bin/looper record check -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.4 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4" >&2; false; }
+~/.local/bin/looper stats -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.5 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.5" >&2; false; }
 ```
 
-If it fails, whether looper is missing or older than v0.2.4 (older ones have no `record` subcommand and exit 2 on `record check -h`), stop and give the user that command. v0.2.4 is the first release with `looper record`, which writes every row of the run record; it replaced `runlog.py`'s command line, and `runlog.py` remains only as a library the Python scripts import. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.5 (older ones have no `stats` subcommand and exit 2 on `stats -h`), stop and give the user that command. v0.2.5 is the first release with `looper stats`, the Step 0 alarm `plan.py` runs, which replaced `review-stats.py`; v0.2.4 added `looper record`, which writes every row of the run record. It replaced `runlog.py`'s command line, and `runlog.py` remains only as a library the Python scripts import. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then run the context gatherer once:
 
@@ -82,7 +82,7 @@ It prints the plan and writes the **planned** half of the run record, then print
 
 **"It already has precedent in the repo" never licenses reduced review.** Bugs pre-exist; copying a pattern propagates them; the copy is the cheapest moment to catch one. `looper record finish` rejects any skip or escalation reason citing precedent. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
 
-If `plan.py` prints an alarm on stderr, a gate has failed to complete three or more times across recent runs. Read it — that's the signal to fix the gate, not to log it again.
+If `plan.py` prints an alarm on stderr, a gate has failed to complete three or more times across recent runs. Read it — that's the signal to fix the gate, not to log it again. If it prints `review-loop alarm unavailable: …` instead, `looper stats --alarm` could not run (most often a run store it cannot read). The plan is still good, so carry on, but tell the user: until that is fixed, no gate is being watched.
 
 ## Step 0c: Backfill a deferred PR report (triggered)
 
@@ -184,7 +184,7 @@ Take the number and move, and record it: `looper record cycle --width-reason "<f
 - **When no number decides it, take the WIDER option.** Not an ask. An unmeasurable hunch that a fan-out is excessive is exactly the hunch this skill exists to overrule, and the cost of being wrong is asymmetric: a redundant agent costs tokens, a skipped one ships the bug. This also makes the honest path and the cheap path the same path in a headless or subagent run, where there is no one to ask. Note that a size hunch is **not** rejected at write time — `BANNED_REASON` enumerates precedent and convention phrasings only, and it is a speed bump rather than a guarantee even for those: an unenumerated precedent phrasing passes too, which is how "consistent with existing patterns in the repo" walked through until it was added. Nothing downstream will catch "this looks small" for you. This bullet is the handler.
 
 Never narrow silently: pass `looper record cycle --width-reason` when you record the cycle (Step 10 shows it), which is where a width reason goes. Nothing *requires* it — the flag is optional and an empty value is accepted — so a `width_reason: null` row is on you, not on the tool.
-Nothing aggregates those reasons yet — `cmd_alarm` reads gate completions and abandonment reasons, never width — so a wrong threshold here surfaces through `review-stats.py`'s `cycles / agents / mean agents per run` figures plus reading the recorded reasons, not through an alarm. Note that `tier_executed` cannot show it: that is a tally over skipped/carried/fast/full/partial, and two runs of the same tier at three and thirty agents are indistinguishable in it.
+Nothing aggregates those reasons yet — `looper stats --alarm` reads gate completions and abandonment reasons, never width — so a wrong threshold here surfaces through `looper stats`' `cycles / agents / mean agents per run` figures plus reading the recorded reasons, not through an alarm. Note that `tier_executed` cannot show it: that is a tally over skipped/carried/fast/full/partial, and two runs of the same tier at three and thirty agents are indistinguishable in it.
 
 **Fast path:** run **no conditional agents** (#7–#10) — a logic-free sub-30-line diff can't earn a structural proposal, an intent reconciliation, or the `gh` calls Agent #10 costs. Still run the Step 4a code-analysis pass (it's a deterministic subprocess, near-zero token cost, and catches secrets/SAST), then spawn **one** review subagent (`model: sonnet` — a sub-30-line, logic-free diff doesn't earn the top tier) covering the union of Agents #1 (CLAUDE.md), #2 (bugs), #4 (comments), and the security review's Stage-1 finder — pass it the diff, the learnings file, the threat model, and the style default. Score its findings with **one** batched Haiku scorer (Step 6), then run Steps 7–14 exactly as normal (auto-fix / ask / test / commit / evidence gate / push). Report it as a single fast-path cycle. If that reviewer surfaces anything that changes program logic (an applied fix that isn't doc/config/comment-only), fall back to the full loop from cycle 1 — the fast path's premise (no logic under review) no longer holds.
 
@@ -559,7 +559,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    failed or any planned gate went unexecuted. `looper record finish` derives that rather than accepting your
    claim, and it has to, because nothing downstream enforces it: the push gate never reads the tier
    and the PR label is keyed on `convergence`. The tier reaches the PR comment body and
-   `review-stats`, so a laundered `full` is wrong exactly where a human would read it.
+   `looper stats`, so a laundered `full` is wrong exactly where a human would read it.
    Non-interactive session with a non-empty ask bucket (`AskUserQuestion` aborts in headless and AO
    worker runs): leave those findings unapplied, list them in the PR as open questions, and pass the
    count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody
@@ -655,7 +655,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    a capped or halted push, the pre-push hook accepts only a tip listed in `reviewed-shas` or
    `skipped-shas`, and so the capped push the disclosure mechanism exists to permit was blocked at
    the hook. The two ways through were both wrong — `record-skipped.sh`, which would file a fully
-   reviewed capped run as "judged beneath the loop" and corrupt the ratio `review-stats.py`
+   reviewed capped run as "judged beneath the loop" and corrupt the ratio `looper stats`
    reports, or `REVIEW_GATE_BYPASS=1`. The skipped-shas store records this happening twice: *"run
    29e0ce969725 hit its 3-cycle cap still applying 11 fixes, so it never converged and the tip was
    never stamped."* A capped run **was** reviewed; how far is the PR's job to say, not this

@@ -29,13 +29,13 @@ import sys
 
 # Imported, not restated: the cap only means anything if the number the plan prints for the
 # orchestrator and the number convergence() measures against are the same one. A plain import
-# works because the executed script's own directory is sys.path[0] — same as review-stats.py.
+# works because the executed script's own directory is sys.path[0] — same as learn.py.
 import runlog
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # The release SKILL.md Step 0 installs, named in the install hint printed when it is missing.
-LOOPER_VERSION = "v0.2.4"
+LOOPER_VERSION = "v0.2.5"
 
 STRUCTURAL_LINES = 150  # Agent #7's "substantial diff" floor, per SKILL.md
 BIG_FILE_LINES = 800
@@ -314,24 +314,33 @@ def main():
     plan = build(ctx, a)
     print(json.dumps(plan, indent=2))
 
+    # By absolute path, never PATH, for the reason SKILL.md Step 0 gives: the looper that
+    # reads and writes the record must be the one the preflight checked, not whatever a
+    # repo's bin/ or a dev build puts first.
+    looper = os.path.expanduser("~/.local/bin/looper")
+
     # Repeat count beats calendar: surface a gate that keeps not completing at the
     # one moment the skill is already open, rather than waiting for a batch review.
-    rc, alarm, _ = run([sys.executable, os.path.join(HERE, "review-stats.py"), "--alarm"], timeout=10)
-    if rc == 0 and alarm:
+    rc, alarm, err = run([looper, "stats", "--alarm"], timeout=10)
+    if rc != 0:
+        # An empty alarm is also what a working alarm prints over a healthy record, so
+        # staying quiet here made "nothing is repeating" and "nothing could be read" the
+        # same output — and the store being unreadable is exactly when the alarm matters.
+        # Say so, but carry on: the plan does not depend on the alarm. A missing binary
+        # lands here too (run() turns the OSError into exit 1 and the error text).
+        alarm = f"review-loop alarm unavailable: {err or f'looper stats exited {rc}'}"
+    if alarm:
         print("\n" + alarm, file=sys.stderr)
         # stderr only reaches a human who is watching this run. The runs most
         # likely to accumulate repeated failures are the unattended ones, so an
         # alarm that lives only in their transcript reaches nobody. Route it the
-        # same way unresolved asks are routed.
+        # same way unresolved asks are routed — the unavailable notice too, since an
+        # unattended run is where a silently dead alarm would go unnoticed longest.
         if os.environ.get("AO_SESSION_ID"):
             run(["ao", "report", "--checkpoint", "--note", alarm], timeout=20)
     if a.dry_run:
         return
 
-    # By absolute path, never PATH, for the reason SKILL.md Step 0 gives: the looper that
-    # writes the record must be the one the preflight checked, not whatever a repo's bin/
-    # or a dev build puts first.
-    looper = os.path.expanduser("~/.local/bin/looper")
     if not os.access(looper, os.X_OK):
         print(f"plan: COMPUTED BUT NOT RECORDED — {looper} is missing, and it writes the run "
               "record. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install "

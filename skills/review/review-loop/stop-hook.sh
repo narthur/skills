@@ -11,7 +11,7 @@
 # a `nudge`) and then stays quiet: it never blocks twice, and it never writes an
 # outcome. Marking a still-running review `abandoned` from here would corrupt the
 # record this hook exists to keep honest, and no hook can tell mid-flight from
-# dead. Abandonment is derived on read instead — review-stats.py counts an open
+# dead. Abandonment is derived on read instead — `looper stats` counts an open
 # run from a session that is no longer current. A deliberate interrupt or a dead
 # subprocess costs one prompt, never a trapped session and never a false outcome.
 #
@@ -57,7 +57,7 @@ warn() {
 # By absolute path, never PATH (SKILL.md Step 0 says why). The store is non-empty, so a run
 # may well be open, and without looper nothing here can say whether one is.
 LOOPER="$HOME/.local/bin/looper"
-[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.4"
+[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.5"
 
 sid=$("$py" -I -c 'import json,sys; print(json.load(sys.stdin).get("session_id") or "")' <<<"$input" 2>/dev/null)
 errf=$(mktemp "${TMPDIR:-/tmp}/review-loop-stop.XXXXXX") || warn "could not create a temp file to run the unfinished-run check"
