@@ -181,13 +181,13 @@ jobs:
       # A deleted catalog entry is silently accepted: the score is computed against however
       # many .mut files are present, so dropping one gives 12/12 and a green build with one
       # fewer defect guarded. looper only errors on an EMPTY catalog. Raise the floor
-      # deliberately when adding an entry. Lowered from 42 to 29 deliberately: the fourteen
+      # deliberately when adding an entry. Lowered from 42 to 30 deliberately: the fourteen
       # entries against review-stats.py went with it, as did the n/a one, whose check ran
-      # through that script's alarm; two were added for plan.py surfacing a failed alarm.
+      # through that script's alarm; three were added for plan.py surfacing a failed alarm.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 29 ] || { echo "only $n mutations, expected at least 29 — was one deleted?"; exit 1; }
+          [ "$n" -ge 30 ] || { echo "only $n mutations, expected at least 30 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # looper on PATH for the same reason as above: the entries that verify through the Stop

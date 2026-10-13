@@ -261,7 +261,7 @@ grep -q "^review-loop alarm unavailable: .*looper" "$TMP/alarm.err" \
 # CI's trust job runs this suite with looper on PATH and requires the skip line to be absent.
 looper_checks=0
 if real_looper=$(command -v looper); then
-	looper_checks=8
+	looper_checks=9
 	lhome="$TMP/looper-home"; mkdir -p "$lhome/.local/bin" && ln -s "$real_looper" "$lhome/.local/bin/looper"
 	# The documented contract is "the plan, then the run_id". Stdio buffering had it
 	# backwards: the child writes fd 1 unbuffered while our print() is buffered.
@@ -314,6 +314,13 @@ if real_looper=$(command -v looper); then
 	grep -q "^--checkpoint$" "$aodir/args" 2>/dev/null && grep -q "threat_model was declined" "$aodir/args" \
 		&& ok "under AO the alarm is routed to ao report" \
 		|| bad "under AO the alarm is routed to ao report (got: $(cat "$aodir/args" 2>/dev/null))"
+	# And so is the alarm being UNAVAILABLE: an unattended run with an unreadable store is where
+	# a notice that only reaches stderr reaches nobody at all.
+	rm -f "$aodir/args"
+	alarm_of "$TMP/store-is-a-dir" AO_SESSION_ID=ao-test PATH="$aodir:$PATH" >/dev/null
+	grep -q "alarm unavailable" "$aodir/args" 2>/dev/null \
+		&& ok "under AO an unavailable alarm is routed to ao report too" \
+		|| bad "under AO an unavailable alarm is routed to ao report too (got: $(cat "$aodir/args" 2>/dev/null))"
 
 	# The bug this pins: semantic_lines and sizing_excluded were computed, used for every
 	# threshold, and printed in the plan JSON — then dropped before the record. The checks
