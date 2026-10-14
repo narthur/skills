@@ -39,18 +39,18 @@ jobs:
       # Raise the floor deliberately when adding a suite; that edit is the review trail.
       # Lowered from 9 to 8 deliberately: review-stats.test.sh went with review-stats.py,
       # whose alarm and report are `looper stats` now, pinned by looper's frozen goldens.
+      # And from 8 to 7: deferred.test.sh went with deferred.py, which is `looper deferred`,
+      # pinned the same way.
       - name: no suite has gone missing
         run: |
           n=$(ls *.test.sh | wc -l | tr -d ' ')
-          [ "$n" -ge 8 ] || { echo "only $n suites, expected at least 8 — was one deleted or renamed?"; exit 1; }
+          [ "$n" -ge 7 ] || { echo "only $n suites, expected at least 7 — was one deleted or renamed?"; exit 1; }
           echo "$n suites present"
 
-      # Every module with a --selftest, run. Nine have one; before this step only the two
-      # with a wrapper *.test.sh were ever executed by CI. The seven that were not included
-      # push-check.py (the push gate, since ported to `looper push-check`), bucket.py
-      # (which owns SECURITY_FLOOR and the always-ask security routing) and
-      # threat-model.py, whose own comment records that replacing broken_pins with [] once
-      # left every suite green — and git history shows pins.py shipped that exact defect.
+      # Every module with a --selftest, run. Six have one now (nine before push-check.py,
+      # threat-model.py and deferred.py were ported to looper). Before this step only the
+      # modules with a wrapper *.test.sh were ever executed by CI; the rest included
+      # bucket.py, which owns SECURITY_FLOOR and the always-ask security routing.
       - name: module selftests
         run: |
           failed=""
@@ -107,11 +107,12 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.5: the release SKILL.md installs, carrying the push-check and pr-report
+          # v0.2.6: the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
-          # runlog.py's command line, and `stats`, which replaced review-stats.py and is what
-          # Step 0's preflight probes for.
-          ref: d0c59210be1d88fb64cd27695aae150e629372a6 # v0.2.5 (the commit, not the annotated tag object)
+          # runlog.py's command line, `stats`, which replaced review-stats.py, and
+          # `threat-model` and `deferred`, which replaced threat-model.py, deferred.py and
+          # pins.py — `threat-model` is what Step 0's preflight probes for.
+          ref: b5f9aaaf87a8f828d9ad61b693f972e3a849af14 # v0.2.6 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -184,10 +185,14 @@ jobs:
       # deliberately when adding an entry. Lowered from 42 to 30 deliberately: the fourteen
       # entries against review-stats.py went with it, as did the n/a one, whose check ran
       # through that script's alarm; three were added for plan.py surfacing a failed alarm.
+      # broken-pins-never-reported went with pins.py (looper's ledger-broken-never-reported
+      # guards the same defect in `looper threat-model`), and plan-threat-model-failure-reads-
+      # clean and plan-threat-model-ignores-broken-pins were added for plan.py reading that
+      # command, so the floor is 31.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 30 ] || { echo "only $n mutations, expected at least 30 — was one deleted?"; exit 1; }
+          [ "$n" -ge 31 ] || { echo "only $n mutations, expected at least 31 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # looper on PATH for the same reason as above: the entries that verify through the Stop
