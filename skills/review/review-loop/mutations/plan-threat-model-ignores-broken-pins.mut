@@ -1,8 +1,0 @@
-target: skills/review/review-loop/plan.py
-verify: cd skills/review/review-loop && ./plan.test.sh
-expect: FAIL  a broken pin alone plans the update
-why:    the gate keyed on stale alone, so a threat model whose only problem was a pin to a sha that resolves nowhere was planned skip, and that claim, never able to go stale, was never re-examined. Step 2b says skip only when stale AND broken_pins are empty
---- old
-        if stale or broken:
---- new
-        if stale:

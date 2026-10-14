@@ -6,7 +6,7 @@ carries the rules behind them.
 
 ## 0. Close the run record
 
-Runs on **every** terminal exit — clean, cycle-limit, test-failure, or blocked — not just a clean one. `plan.py` wrote the planned half at Step 0b; this writes the executed half. A plan with no finish is a visibly abandoned run, which is the whole point: before this existed, a dropped gate was indistinguishable from never having invoked the skill.
+Runs on **every** terminal exit — clean, cycle-limit, test-failure, or blocked — not just a clean one. `looper plan` wrote the planned half at Step 0b; this writes the executed half. A plan with no finish is a visibly abandoned run, which is the whole point: before this existed, a dropped gate was indistinguishable from never having invoked the skill.
 
 Give one `executed` entry per gate the plan marked `run`, each with `status` (`done` / `skipped` / `failed`) and, for anything but `done`, a reason.
 
