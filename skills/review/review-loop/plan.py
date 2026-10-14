@@ -32,10 +32,13 @@ import sys
 # works because the executed script's own directory is sys.path[0] — same as learn.py.
 import runlog
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-
 # The release SKILL.md Step 0 installs, named in the install hint printed when it is missing.
-LOOPER_VERSION = "v0.2.5"
+LOOPER_VERSION = "v0.2.6"
+
+# By absolute path, never PATH, for the reason SKILL.md Step 0 gives: the looper that
+# reads and writes the record must be the one the preflight checked, not whatever a
+# repo's bin/ or a dev build puts first.
+LOOPER = os.path.expanduser("~/.local/bin/looper")
 
 STRUCTURAL_LINES = 150  # Agent #7's "substantial diff" floor, per SKILL.md
 BIG_FILE_LINES = 800
@@ -54,7 +57,7 @@ def gate(planned, reason):
 
 
 def threat_model_state():
-    rc, out, _ = run([sys.executable, os.path.join(HERE, "threat-model.py")])
+    rc, out, _ = run([LOOPER, "threat-model"])
     if rc != 0:
         return None
     try:
@@ -194,7 +197,7 @@ def build(ctx, a):
     # --- threat model ---------------------------------------------------------
     tm = threat_model_state()
     if tm is None:
-        gates["threat_model"] = gate("run", "threat-model.py failed — run the update rather than assume clean")
+        gates["threat_model"] = gate("run", "looper threat-model failed — run the update rather than assume clean")
     elif not tm.get("exists"):
         gates["threat_model"] = gate("run", "no threat model yet — bounded bootstrap")
     else:
@@ -314,10 +317,7 @@ def main():
     plan = build(ctx, a)
     print(json.dumps(plan, indent=2))
 
-    # By absolute path, never PATH, for the reason SKILL.md Step 0 gives: the looper that
-    # reads and writes the record must be the one the preflight checked, not whatever a
-    # repo's bin/ or a dev build puts first.
-    looper = os.path.expanduser("~/.local/bin/looper")
+    looper = LOOPER
 
     # Repeat count beats calendar: surface a gate that keeps not completing at the
     # one moment the skill is already open, rather than waiting for a batch review.

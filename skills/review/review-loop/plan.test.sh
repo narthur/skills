@@ -257,6 +257,24 @@ grep -q "^review-loop alarm unavailable: .*looper" "$TMP/alarm.err" \
 	&& ok "and the dry run still prints its plan and exits 0" \
 	|| bad "and the dry run still prints its plan and exits 0 (rc=$rc)"
 
+# The threat-model gate reads `looper threat-model`, by the same absolute path. A stub looper
+# answers it: the gate must act on the report, and a failed report must plan the update rather
+# than read as a clean model (exit 1 is an unreadable ledger or an uncheckable pin).
+tm_reason() {
+	local h="$TMP/tm-$1"; mkdir -p "$h/.local/bin"
+	printf '#!/bin/sh\n[ "$1" = threat-model ] || exit 0\n%s\n' "$2" > "$h/.local/bin/looper"
+	chmod +x "$h/.local/bin/looper"
+	printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+		| HOME="$h" "$PY" plan.py --model test --dry-run $BOOLS_OFF 2>/dev/null \
+		| "$PY" -c 'import json,sys; g=json.load(sys.stdin)["gates"]["threat_model"]; print(g["planned"], g["reason"])'
+}
+got=$(tm_reason stale "echo '{\"exists\": true, \"stale\": [{}, {}]}'")
+[ "$got" = "run 2 stale claim(s) — each is a worklist item" ] \
+	&& ok "a stale threat model plans the update" || bad "a stale threat model plans the update (got: $got)"
+got=$(tm_reason fails "echo 'looper threat-model: cannot read x' >&2; exit 1")
+[ "$got" = "run looper threat-model failed — run the update rather than assume clean" ] \
+	&& ok "a failed threat-model report plans the update" || bad "a failed threat-model report plans the update (got: $got)"
+
 # The checks that read what a real recording run prints and persists drive the real writer.
 # CI's trust job runs this suite with looper on PATH and requires the skip line to be absent.
 looper_checks=0
@@ -375,7 +393,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=44
+EXPECTED_CHECKS=46
 if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
 	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

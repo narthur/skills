@@ -133,7 +133,7 @@ does not retry.
 
 ## Update brief (every subsequent run)
 
-Input: `python3 ~/.claude/skills/review-loop/threat-model.py` output plus this cycle's diff.
+Input: `~/.local/bin/looper threat-model` output plus this cycle's diff.
 
 1. **Re-verify the stale claims.** Each entry in `stale[]` has a cited file that changed since its
    pin. Read the current code. Then either re-pin at `HEAD` (still true), rewrite (changed), or
