@@ -139,13 +139,18 @@ Input: `~/.local/bin/looper threat-model` output plus this cycle's diff.
    pin. Read the current code. Then either re-pin at `HEAD` (still true), rewrite (changed), or
    delete (no longer true). Do not re-pin without re-reading — a blind re-pin is how a stale claim
    becomes permanent.
+   **`broken_pins[]` go on the same list.** Each cites a sha that resolves nowhere here, so it can
+   never go stale while it still looks pinned. Read the cited code at `HEAD` and re-pin to a sha
+   that resolves, or rewrite or delete the claim as above. This includes entries under "Not an
+   issue here": a dismissal with a broken pin is a suppression nothing re-examines, so item 4 does
+   not protect it.
 2. **Add new surface from the diff.** New route, new job, new external integration, new sensitive
    field, new trust boundary, new metered resource, new outbound call → a new claim.
 3. **Demote what you could not verify.** An OBSERVED claim you could not confirm becomes INFERRED
    with its citation dropped. `uncited` in the script output counts OBSERVED claims that are
    already missing citations — fix or demote those.
 4. **Leave "Not an issue here" and "Watch this spot" alone** unless the diff directly invalidates
-   one. Those are the user's entries, written at Step 11/12.
+   one, or its pin is stale or broken (item 1). Those are the user's entries, written at Step 11/12.
 
 Keep the file under ~120 lines. Past that, cut the weakest INFERRED claims — a long file dilutes
 the priming it exists to provide.
