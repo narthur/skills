@@ -191,7 +191,8 @@ jobs:
       # plan.py went with it. The defects they guarded are now guarded in looper, by
       # internal/plan's tests and mutations/plan-*.mut, and looper's own CI enforces them
       # (complete as of PinePeakDigital/looper 24d2261, #21). This workflow does not run them:
-      # its looper checkout above is the release binary the skill installs, built, not tested.
+      # from its looper checkout above it builds the release binary and runs only the runlog
+      # constants test, never internal/plan's tests or looper's own mutation catalog.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
