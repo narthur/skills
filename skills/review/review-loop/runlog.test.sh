@@ -4,10 +4,12 @@
 #
 # runlog.py's command line is `looper record` now, and its behaviour — the rows, the
 # refusals, the exit statuses — is pinned by the 37 scenarios frozen in looper's
-# internal/record/testdata/oracle. What is left here is what this directory still owns:
-# the library the Python scripts import (load, cycles_of, convergence, reject_banned), the
-# alarm review-stats.py derives from it, and the Stop hook. Rows are written as JSONL by
-# hand except in the looper block at the end, which writes them through the real writer.
+# internal/record/testdata/oracle, and the alarm and report review-stats.py drew from these
+# rows are `looper stats`, pinned by the 61 stores frozen in internal/stats/testdata/oracle.
+# What is left here is what this directory still owns: the library the Python scripts and
+# looper's parity tests import (load, cycles_of, convergence, reject_banned) and the Stop
+# hook. Rows are written as JSONL by hand except in the looper block at the end, which
+# writes them through the real writer.
 set -uo pipefail
 cd "$(dirname "$0")" || exit 1
 PY=$(command -v python3.14 || command -v python3)
@@ -36,7 +38,7 @@ crow() { printf '{"run_id":"%s","phase":"cycle","n":%s,"applied":%s,"agents":%s,
 EMPTY='{}'  # not "${5:-{\}}": bash 3.2, macOS's /bin/bash, keeps the backslash
 frow() { printf '{"run_id":"%s","phase":"finish","finished_at":"2026-01-01T01:00:00","outcome":"%s","unresolved_asks":%s,"executed":%s}\n' \
 	"$2" "$3" "${4:-0}" "${5:-$EMPTY}" >> "$1"; }
-# The library under test, imported the way review-stats.py and plan.py import it.
+# The library under test, imported the way plan.py and learn.py import it.
 lib() { REVIEW_LOOP_RUNS="$1" "$PY" -c "import sys; sys.path.insert(0, '.'); import runlog; $2"; }
 conv() { lib "$1" "r = runlog.load(limit=None).get('$2'); print('NO-RUN' if r is None else (runlog.convergence(r) or 'unknown'))"; }
 
@@ -137,89 +139,20 @@ out=$(banned "12 lines and no logic touched")
 grep -q refusing <<<"$(banned "this is how the rest of the codebase does it")" \
 	&& ok "a paraphrased precedent reason is refused" || bad "a paraphrased precedent reason is refused"
 
-# A fat-fingered env override must not take down every importer — review-stats.py's
-# Step 0 alarm among them.
+# A fat-fingered env override must not take down every importer. runlog.py parses
+# REVIEW_LOOP_TAIL at import, and plan.py imports it, so a crash there would take the plan
+# down at Step 0 with the alarm beside it. --dry-run keeps the plan off every store.
 # Assert the exact code and the absence of a traceback: an uncaught exception
 # also exits 1, so `-le 1` would pass on the very crash this guards against.
 for badval in abc -5 "" "  "; do
-	err=$(REVIEW_LOOP_TAIL="$badval" "$PY" review-stats.py --alarm 2>&1 >/dev/null)
+	err=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+		| REVIEW_LOOP_TAIL="$badval" "$PY" plan.py --model test --dry-run \
+			--logic no --behavioral-goal no --runtime-change no --attacker-reachable no 2>&1 >/dev/null)
 	rc=$?
 	[ "$rc" -eq 0 ] && ! grep -q Traceback <<<"$err" \
 		&& ok "tail override '$badval' degrades, not crashes" \
 		|| bad "tail override '$badval' degrades, not crashes (rc=$rc)"
 done
-
-# --- the alarm review-stats.py derives from these rows.
-# Alarm fires on the third non-completion, not the second. These runs SKIP the gate, so
-# the message is the skip one ("change the plan") rather than the unreported one ("fix the
-# gate") — the threshold is what this block is pinning, and `skipped` is just a convenient
-# way to produce a non-completion. review-stats.py counts the two separately because they
-# have different fixes; conflating them had the alarm reporting a correct skip as a failure.
-s="$TMP/alarm.jsonl"
-SKIP='{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}'
-for i in 1 2; do prow "$s" "a$i" 40 "$GATES" null "2026-01-0${i}T00:00:00"; frow "$s" "a$i" clean 0 "$SKIP"; done
-[ -z "$(REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py --alarm)" ] && ok "alarm silent at 2" || bad "alarm silent at 2"
-prow "$s" a3 40 "$GATES" null "2026-01-03T00:00:00"; frow "$s" a3 clean 0 "$SKIP"
-REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py --alarm | grep -q "threat_model was declined with a reason (skipped) 3x" \
-	&& ok "alarm fires at 3" || bad "alarm fires at 3"
-
-rep=$(REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py)
-grep -q "gates planned but not completed:" <<<"$rep" \
-	&& ok "report lists incomplete gates" || bad "report lists incomplete gates"
-grep -q "threat_model" <<<"$rep" && ok "report names the gate" || bad "report names the gate"
-grep -qE "by orchestrator model:" <<<"$rep" \
-	&& ok "report breaks down by model" || bad "report breaks down by model"
-
-# `record_reviewed` is the one gate whose applicability depends on the run's OWN outcome:
-# the plan marks it run ("on clean exit") because convergence is unknowable at plan time.
-# A run that did not converge has no completed review to stamp, so the status is `n/a` —
-# and the alarm must stay quiet across three such runs. GATE_OK is what keeps it quiet:
-# when review-stats had its own `status == "done"` test, every n/a was a dropped gate and
-# five of the alarm's reported misses came from exactly this, none of them real.
-s="$TMP/cond.jsonl"
-CG='{"record_reviewed":{"planned":"run","reason":"on clean exit"}}'
-for i in 1 2 3; do
-	prow "$s" "n$i" 40 "$CG" null "2026-01-0${i}T00:00:00"
-	frow "$s" "n$i" cycle-limit 0 '{"record_reviewed":{"status":"n/a","reason":"no completed review to stamp"}}'
-done
-[ -z "$(REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py --alarm)" ] \
-	&& ok "three n/a runs raise no alarm" || bad "three n/a runs raise no alarm"
-
-# Both report surfaces must agree what "abandoned" means: an explicitly
-# abandoned run is abandoned, not "finished".
-s="$TMP/explicit.jsonl"
-prow "$s" e1 40 '{}' '"s1"'
-printf '{"run_id":"e1","phase":"finish","finished_at":"2026-01-01T01:00:00","outcome":"abandoned","abandoned_missing":"stopped for the day"}\n' >> "$s"
-CLAUDE_CODE_SESSION_ID=s1 REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py | grep -q "finished: 0  abandoned: 1" \
-	&& ok "an explicit abandon reports as abandoned, not finished" \
-	|| bad "an explicit abandon reports as abandoned, not finished"
-
-# With no session env we cannot tell dead from in-flight, so we must not guess.
-s="$TMP/nosess.jsonl"
-prow "$s" ns1 40 '{}' '"live-elsewhere"'
-noenv=$(env -u CLAUDE_CODE_SESSION_ID -u AO_SESSION_ID REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py)
-grep -q "abandoned: 0" <<<"$noenv" \
-	&& ok "no session env means no abandonment guess" || bad "no session env means no abandonment guess"
-
-# Abandonment is derived, not written: another session's open run reads as lost. The
-# owning session is named explicitly — a row that never named one is deliberately NOT
-# derived abandoned (see review-stats.is_abandoned, whose comment records that guessing
-# there reported every headless run as abandoned and tripped the Step 0 alarm on every
-# later run). An earlier version of this check passed only because the author's shell
-# exported CLAUDE_CODE_SESSION_ID, and went red on the first CI runner that ran it.
-s="$TMP/owned.jsonl"
-prow "$s" o1 40 "$GATES" '"owning-session"'
-CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py \
-	| grep -q "abandoned: 1" && ok "open run from another session reads as abandoned" \
-	|| bad "open run from another session reads as abandoned"
-# ...and the documented converse: a row that never named a session is unknown rather
-# than dead. That is the behaviour to keep, so it needs a test or the next reader will
-# "fix" it.
-s="$TMP/anon.jsonl"
-prow "$s" an1
-CLAUDE_CODE_SESSION_ID=someone-else REVIEW_LOOP_RUNS="$s" "$PY" review-stats.py \
-	| grep -q "abandoned: 0" && ok "a run that named no session is not derived abandoned" \
-	|| bad "a run that named no session is not derived abandoned"
 
 # --- the Stop hook, where it does not need looper to answer.
 # The most-executed path in production: an ordinary Stop with nothing pending.
@@ -316,7 +249,7 @@ if real_looper=$(command -v looper); then
 		&& ok "an unreadable store is reported, not swallowed, and blocks nothing" \
 		|| bad "an unreadable store is reported, not swallowed, and blocks nothing (rc=$rc, got: $hook_out)"
 
-	# Rows looper wrote, read by the Python library the alarm and the stats are built on.
+	# Rows looper wrote, read by the Python library looper's parity tests take as the oracle.
 	export REVIEW_LOOP_RUNS="$TMP/looper.jsonl"
 	lrid=$("$L" record plan --tier full --model claude-opus-5 --agent-cap 8 --gates '{}' --inputs '{"logic":true}')
 	"$L" record cycle --run-id "$lrid" --n 1 --applied 3 --agents 5 >/dev/null 2>&1
@@ -339,14 +272,15 @@ if real_looper=$(command -v looper); then
 	grep -q '"push":false' <<<"$pc" && grep -q 'report has not reached' <<<"$pc" \
 		&& ok "looper push-check refuses a run whose report has not landed" || bad "looper push-check refuses a run whose report has not landed: $pc"
 
-	# And the alarm over finishes looper wrote: the third skip of one gate fires it.
+	# And the alarm over finishes looper wrote: the third skip of one gate fires it. looper
+	# stats' goldens are hand-written rows, so this is where the writer's rows reach it.
 	export REVIEW_LOOP_RUNS="$TMP/looper-alarm.jsonl"
 	for _ in 1 2 3; do
 		r=$("$L" record plan --tier full --model m --gates "$GATES")
 		"$L" record finish --run-id "$r" --outcome clean --tier full \
 			--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null 2>&1
 	done
-	"$PY" review-stats.py --alarm | grep -q "threat_model was declined with a reason (skipped) 3x" \
+	"$L" stats --alarm | grep -q "threat_model was declined with a reason (skipped) 3x" \
 		&& ok "the alarm reads looper's finish rows" || bad "the alarm reads looper's finish rows"
 	export REVIEW_LOOP_RUNS="$TMP/runs.jsonl"
 else
@@ -362,7 +296,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=40
+EXPECTED_CHECKS=30
 if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
 	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

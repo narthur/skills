@@ -244,11 +244,24 @@ out=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch
 	|| bad "an unrunnable looper still says NOT RECORDED (got: $(tail -2 <<<"$out"))"
 ! grep -q "^Traceback" <<<"$out" && ok "and not as a traceback" || bad "and not as a traceback"
 
+# The Step 0 alarm is `looper stats --alarm`, by the same absolute path. Without looper it
+# cannot run, and an empty alarm is also what a healthy record prints — so the failure has to
+# be said, or a dead alarm reads as a quiet one. It must not cost the plan, though.
+out=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+	| HOME="$nohome" REVIEW_LOOP_RUNS="$TMP/nolooper.jsonl" "$PY" plan.py --model test --dry-run $BOOLS_OFF 2>"$TMP/alarm.err")
+rc=$?
+grep -q "^review-loop alarm unavailable: .*looper" "$TMP/alarm.err" \
+	&& ok "a missing looper says the alarm is unavailable" \
+	|| bad "a missing looper says the alarm is unavailable (got: $(cat "$TMP/alarm.err"))"
+[ "$rc" -eq 0 ] && "$PY" -c 'import json,sys; json.load(sys.stdin)' <<<"$out" 2>/dev/null \
+	&& ok "and the dry run still prints its plan and exits 0" \
+	|| bad "and the dry run still prints its plan and exits 0 (rc=$rc)"
+
 # The checks that read what a real recording run prints and persists drive the real writer.
 # CI's trust job runs this suite with looper on PATH and requires the skip line to be absent.
 looper_checks=0
 if real_looper=$(command -v looper); then
-	looper_checks=3
+	looper_checks=9
 	lhome="$TMP/looper-home"; mkdir -p "$lhome/.local/bin" && ln -s "$real_looper" "$lhome/.local/bin/looper"
 	# The documented contract is "the plan, then the run_id". Stdio buffering had it
 	# backwards: the child writes fd 1 unbuffered while our print() is buffered.
@@ -262,6 +275,52 @@ if real_looper=$(command -v looper); then
 	[[ "$last" =~ ^[0-9a-f]{12}$ ]] && ok "the run_id is the last line, after the plan" || bad "the run_id is the last line, after the plan"
 	"$PY" -c 'import json,sys; json.loads("\n".join(sys.stdin.read().splitlines()[:-1]))' <<<"$full" \
 		&& ok "everything before it parses as the plan JSON" || bad "everything before it parses as the plan JSON"
+
+	# What plan.py does with each answer `looper stats --alarm` can give. The alarm's own
+	# logic is pinned by looper's frozen goldens; what lives here is that plan.py surfaces it.
+	# $1 store; anything after it goes in front of the command as env assignments.
+	alarm_of() {
+		local st=$1; shift
+		printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+			| env "$@" HOME="$lhome" REVIEW_LOOP_RUNS="$st" "$PY" plan.py --model test --dry-run $BOOLS_OFF 2>&1 >/dev/null
+	}
+	store="$TMP/repeat.jsonl"
+	for _ in 1 2 3; do
+		r=$(REVIEW_LOOP_RUNS="$store" "$real_looper" record plan --tier full --model m --gates '{"threat_model":{"planned":"run","reason":"2 stale claims"}}')
+		REVIEW_LOOP_RUNS="$store" "$real_looper" record finish --run-id "$r" --outcome clean --tier full \
+			--executed '{"threat_model":{"status":"skipped","reason":"gh unauthenticated"}}' >/dev/null 2>&1
+	done
+	grep -q "threat_model was declined with a reason (skipped) 3x" <<<"$(alarm_of "$store")" \
+		&& ok "a gate skipped three times raises the alarm at Step 0" \
+		|| bad "a gate skipped three times raises the alarm at Step 0 (got: $(alarm_of "$store"))"
+	err=$(alarm_of "$TMP/no-runs-yet.jsonl")
+	[ -z "$err" ] && ok "a record with nothing repeating adds nothing to stderr" \
+		|| bad "a record with nothing repeating adds nothing to stderr (got: $err)"
+	# An unreadable store is the one state where looper stats exits non-zero, and it is the
+	# state in which a silent alarm costs most: nothing in the record is being looked at.
+	mkdir -p "$TMP/store-is-a-dir"; : > "$TMP/store-is-a-dir/x"
+	err=$(alarm_of "$TMP/store-is-a-dir")
+	grep -q "^review-loop alarm unavailable: looper stats: cannot read the run store" <<<"$err" \
+		&& ok "an unreadable store is surfaced as the alarm being unavailable, not swallowed" \
+		|| bad "an unreadable store is surfaced as the alarm being unavailable, not swallowed (got: $err)"
+	printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
+		| HOME="$lhome" REVIEW_LOOP_RUNS="$TMP/store-is-a-dir" "$PY" plan.py --model test --dry-run $BOOLS_OFF 2>/dev/null \
+		| "$PY" -c 'import json,sys; json.load(sys.stdin)' 2>/dev/null \
+		&& ok "and the plan is still printed" || bad "and the plan is still printed"
+	# Unattended runs are where stderr reaches nobody, so under AO the alarm goes to `ao report`.
+	aodir="$TMP/ao-stub"; mkdir -p "$aodir"
+	printf '#!/bin/sh\nprintf "%%s\\n" "$@" > "%s/args"\n' "$aodir" > "$aodir/ao"; chmod +x "$aodir/ao"
+	alarm_of "$store" AO_SESSION_ID=ao-test PATH="$aodir:$PATH" >/dev/null
+	grep -q "^--checkpoint$" "$aodir/args" 2>/dev/null && grep -q "threat_model was declined" "$aodir/args" \
+		&& ok "under AO the alarm is routed to ao report" \
+		|| bad "under AO the alarm is routed to ao report (got: $(cat "$aodir/args" 2>/dev/null))"
+	# And so is the alarm being UNAVAILABLE: an unattended run with an unreadable store is where
+	# a notice that only reaches stderr reaches nobody at all.
+	rm -f "$aodir/args"
+	alarm_of "$TMP/store-is-a-dir" AO_SESSION_ID=ao-test PATH="$aodir:$PATH" >/dev/null
+	grep -q "alarm unavailable" "$aodir/args" 2>/dev/null \
+		&& ok "under AO an unavailable alarm is routed to ao report too" \
+		|| bad "under AO an unavailable alarm is routed to ao report too (got: $(cat "$aodir/args" 2>/dev/null))"
 
 	# The bug this pins: semantic_lines and sizing_excluded were computed, used for every
 	# threshold, and printed in the plan JSON — then dropped before the record. The checks
@@ -316,7 +375,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=42
+EXPECTED_CHECKS=44
 if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
 	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

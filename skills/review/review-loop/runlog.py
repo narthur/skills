@@ -14,11 +14,13 @@ concurrency pattern; appending avoids repeating it here. Readers merge phases by
 run_id.
 
 The writer is `~/.local/bin/looper record`, a port of this file's former command
-line with the same rows, refusals and exit statuses. What stays here is what the
-other scripts import: the store path and phase-merge (review-stats.py), the
-derived convergence, the precedent ban (learn.py), the agent cap (plan.py) and
-the outcome and gate vocabularies. looper's tests import the constants too and
-hold its copies equal to these, so a change here is a change to both.
+line with the same rows, refusals and exit statuses, and `looper stats` replaced
+review-stats.py, this file's last reader of the store. What stays here is what
+is still imported: the precedent ban (learn.py), the agent cap (plan.py), and the
+store path, phase-merge, derived convergence and the outcome and gate
+vocabularies, which looper's parity tests run as their oracle. Those tests hold
+looper's copies of the constants equal to these, so a change here is a change to
+both.
 """
 import json
 import os
@@ -29,7 +31,8 @@ STORE = os.path.expanduser(
     os.environ.get("REVIEW_LOOP_RUNS") or "~/.claude/review-loop/runs.jsonl")
 
 
-# The store is append-only and never pruned, and the review-stats alarm reads it at
+# The store is append-only and never pruned, and the Step 0 alarm (review-stats.py's then,
+# `looper stats --alarm` now, which parses this same variable the same way) reads it at
 # Step 0 of every run. Only recent runs can affect any answer — an open run is recent
 # by construction, and the alarm looks at the last 50 — so read a bounded tail rather
 # than the whole history. Bounding the read (not the file) keeps the append-only
@@ -148,7 +151,7 @@ def convergence(run):
 # A ceiling, not a target: set above where the hard cases settle, because a ceiling that
 # binds on every hard case is a stall with extra steps. The counts that used to be quoted
 # here are deliberately gone — they were restated by hand, went stale every time the record
-# grew, and were wrong twice and disputed twice. `review-stats.py` derives them from the
+# grew, and were wrong twice and disputed twice. `looper stats` derives them from the
 # record (`convergence:` and `mean agents/run`), which is where to look before changing this
 # number. Overridable per run via --agent-cap.
 DEFAULT_AGENT_CAP = 40
@@ -206,32 +209,33 @@ TIERS = ("skipped", "carried", "fast", "full", "partial")
 # `finish` — a run cannot award itself either one. `looper record finish` subtracts
 # both from OUTCOMES for its `--outcome`. `--tier skipped` stays valid: a run may
 # report that it executed the skipped tier. Only `carried` is off-limits as a tier.
-# review-stats.py also reads this to keep both out of its cadence count.
+# `looper stats` keeps both out of its cadence count too, with its own copy.
 SUBCOMMAND_STATES = ("skipped", "carried")
 # A gate that reports `n/a` was handled — the gate does not apply to this repo — so
-# it is success, not a drop. review-stats.py reads this rather than restating it:
-# when it had its own `status == "done"` test, every `n/a` counted as a dropped gate
-# and the Step 0 alarm fired permanently on gates nobody could fix, which teaches a
-# reader to scroll past the alarms that are right.
+# it is success, not a drop. review-stats.py read this rather than restating it, and
+# `looper stats` carries the same answer: when the alarm had its own `status == "done"`
+# test, every `n/a` counted as a dropped gate and the Step 0 alarm fired permanently on
+# gates nobody could fix, which teaches a reader to scroll past the alarms that are right.
 GATE_OK = ("done", "n/a")
 # Two different questions were being asked of one tuple. "Did the gate complete?" decides
 # the tier; "should it be silent?" decides whether the alarm shows it. A waiver PASSES the
 # gate (references/measurement-gate.md:65), so it must not force `partial` — but three runs
 # waiving the same gate is precisely the signal the alarm exists to raise, so it must not go
 # quiet either. Adding `waived` to GATE_OK would have done both at once and made its entry
-# in review-stats.DECLINED_STATES dead code, hiding a repeated waiver completely.
+# in the alarm's declined states (looper stats' DeclinedStates) dead code, hiding a repeated
+# waiver completely.
 # `passed` was briefly added here too and taken back out. It is report-line PROSE for a gate
 # line (references/report-format.md:64), not a word in the `--executed` vocabulary, which is
 # done|skipped|failed|n/a — a passing gate already has `done`. Accounting for it made the two
 # instruments contradict each other on one record: the tier read `full` while the alarm read
 # `measurement_gate did not complete (passed) 3x`, because `passed` is in neither GATE_OK nor
-# DECLINED_STATES. Two instruments disagreeing is worse than one being loud. Anything NOT
+# looper stats' DeclinedStates. Two instruments disagreeing is worse than one being loud. Anything NOT
 # listed here still forces partial and is still reported with its own name, which is the loud
 # default three separate omissions have now argued for, and it is the right handler for a
 # status nobody should be writing.
 #
-# This tuple and TIER_RANK decide the tier `looper record finish` derives; nothing in this
-# directory reads them any more. They stay because looper's TestWriteConstantsMatchThePython
+# GATE_OK, this tuple and TIER_RANK decide the tier `looper record finish` derives; nothing in
+# this directory reads them any more. They stay because looper's TestWriteConstantsMatchThePython
 # holds its copies equal to these, which keeps the tier's definition visible beside GATE_OK.
 GATE_ACCOUNTED = GATE_OK + ("waived",)
 TIER_RANK = {"skipped": 0, "carried": 0, "fast": 1, "full": 2, "partial": 2}

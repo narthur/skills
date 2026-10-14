@@ -43,7 +43,7 @@ SKELETON = [
 # every agent, forever. That makes it the busiest channel by which "code like this
 # already exists here" can quietly reduce review — busier by far than a one-off
 # gate skip. Same ban as runlog.py's, applied at the same kind of choke point.
-import runlog  # noqa: E402  (sits beside this file; see review-stats.py)
+import runlog  # noqa: E402  (sits beside this file; see plan.py)
 
 
 def today():

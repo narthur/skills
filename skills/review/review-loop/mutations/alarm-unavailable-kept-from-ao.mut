@@ -1,0 +1,8 @@
+target: skills/review/review-loop/plan.py
+verify: bash skills/review/review-loop/plan.test.sh
+expect: FAIL  under AO an unavailable alarm is routed to ao report too
+why:    an unattended run is where stderr reaches nobody, and the unavailable notice is the one alarm output that says the record could not be looked at at all. Routing only a real alarm to `ao report` left an AO session with an unreadable store exactly as silent as before the notice existed. Needs looper on PATH to run; without it the check skips and this entry survives rather than passing falsely.
+--- old
+        if os.environ.get("AO_SESSION_ID"):
+--- new
+        if rc == 0 and os.environ.get("AO_SESSION_ID"):

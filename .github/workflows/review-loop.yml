@@ -34,13 +34,15 @@ jobs:
           git config --global commit.gpgsign false
 
       # A deleted suite is invisible to a glob: the loop simply finds one fewer file and
-      # exits 0. Six of these have no mutation-catalog entry, so nothing else would notice
+      # exits 0. Two of these have no mutation-catalog entry, so nothing else would notice
       # either. Reproduced by removing plan.test.sh and re-running this job's own loop.
       # Raise the floor deliberately when adding a suite; that edit is the review trail.
+      # Lowered from 9 to 8 deliberately: review-stats.test.sh went with review-stats.py,
+      # whose alarm and report are `looper stats` now, pinned by looper's frozen goldens.
       - name: no suite has gone missing
         run: |
           n=$(ls *.test.sh | wc -l | tr -d ' ')
-          [ "$n" -ge 9 ] || { echo "only $n suites, expected at least 9 — was one deleted or renamed?"; exit 1; }
+          [ "$n" -ge 8 ] || { echo "only $n suites, expected at least 8 — was one deleted or renamed?"; exit 1; }
           echo "$n suites present"
 
       # Every module with a --selftest, run. Nine have one; before this step only the two
@@ -105,10 +107,11 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.4: the release SKILL.md installs, carrying the push-check and pr-report
-          # subcommands that replaced push-check.py and pr-report.py, and `record`, which
-          # replaced runlog.py's command line and is what Step 0's preflight probes for.
-          ref: 426d374959697b93c65c0f553a12baf089ba2631 # v0.2.4 (the commit; the annotated tag object is 7641230)
+          # v0.2.5: the release SKILL.md installs, carrying the push-check and pr-report
+          # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
+          # runlog.py's command line, and `stats`, which replaced review-stats.py and is what
+          # Step 0's preflight probes for.
+          ref: d0c59210be1d88fb64cd27695aae150e629372a6 # v0.2.5 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -119,7 +122,7 @@ jobs:
         run: go build -o "$RUNNER_TEMP/looper" ./cmd/looper
 
       # The tier and refusal vocabularies live twice now: looper record writes with its copies,
-      # and learn.py and review-stats.py read runlog.py's. looper's own CI holds them equal only
+      # and learn.py and plan.py read runlog.py's. looper's own CI holds them equal only
       # at its pinned skills commit, so a change here would pass this repo's CI and disagree with
       # the writer until looper bumped its pin. Hold them equal against THIS checkout. -v and the
       # PASS grep because the test skips, which go test reports as success, when it cannot find
@@ -142,8 +145,9 @@ jobs:
 
       # The checks that drive looper skip where it is not on PATH, which is the suites job.
       # This is where looper is built, so they run here: the Stop hook, record-skipped.sh,
-      # carry-review.sh and plan.py writing through `looper record`, and the rows it writes
-      # read back by the push gate, the report and the Python readers.
+      # carry-review.sh and plan.py writing through `looper record`, plan.py surfacing the Step 0
+      # alarm from `looper stats`, and the rows it writes read back by the push gate, the
+      # report, the alarm and the Python readers.
       - name: the suites that drive looper, with looper
         # Required to have RUN, not merely passed: without looper they skip, and each suite
         # still exits 0 — the skip-reads-as-success hazard this workflow guards elsewhere.
@@ -177,11 +181,13 @@ jobs:
       # A deleted catalog entry is silently accepted: the score is computed against however
       # many .mut files are present, so dropping one gives 12/12 and a green build with one
       # fewer defect guarded. looper only errors on an EMPTY catalog. Raise the floor
-      # deliberately when adding an entry.
+      # deliberately when adding an entry. Lowered from 42 to 30 deliberately: the fourteen
+      # entries against review-stats.py went with it, as did the n/a one, whose check ran
+      # through that script's alarm; three were added for plan.py surfacing a failed alarm.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 42 ] || { echo "only $n mutations, expected at least 42 — was one deleted?"; exit 1; }
+          [ "$n" -ge 30 ] || { echo "only $n mutations, expected at least 30 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # looper on PATH for the same reason as above: the entries that verify through the Stop
