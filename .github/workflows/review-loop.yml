@@ -188,7 +188,8 @@ jobs:
       # guards the same defect in `looper threat-model`), and plan-threat-model-failure-reads-
       # clean and plan-threat-model-ignores-broken-pins were added for plan.py reading that
       # command, so the floor was 31. Lowered to 21 deliberately: the ten entries against
-      # plan.py went with it; looper's plan-* mutations guard the same defects in `looper plan`.
+      # plan.py went with it; `looper plan`'s tests catch the same defects, and looper's catalog
+      # carries an entry for each (PinePeakDigital/looper, mutations/plan-*.mut).
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
