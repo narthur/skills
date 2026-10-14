@@ -140,10 +140,11 @@ Input: `~/.local/bin/looper threat-model` output plus this cycle's diff.
    delete (no longer true). Do not re-pin without re-reading — a blind re-pin is how a stale claim
    becomes permanent.
    **`broken_pins[]` go on the same list.** Each cites a sha that resolves nowhere here, so it can
-   never go stale while it still looks pinned. Read the cited code at `HEAD` and re-pin to a sha
-   that resolves, or rewrite or delete the claim as above. This includes entries under "Not an
-   issue here": a dismissal with a broken pin is a suppression nothing re-examines, so item 4 does
-   not protect it.
+   never go stale while it still looks pinned. Read the cited code and re-pin at `HEAD`, or
+   rewrite or delete the claim as above. This includes entries under "Not an issue here": a
+   dismissal with a broken pin is a suppression nothing re-examines, so item 4 does not protect
+   it. Name every "Not an issue here" or "Watch this spot" entry you rewrite or delete in your
+   output, so the change to the user's entries reaches the Step 14 report.
 2. **Add new surface from the diff.** New route, new job, new external integration, new sensitive
    field, new trust boundary, new metered resource, new outbound call → a new claim.
 3. **Demote what you could not verify.** An OBSERVED claim you could not confirm becomes INFERRED
