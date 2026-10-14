@@ -38,7 +38,7 @@ crow() { printf '{"run_id":"%s","phase":"cycle","n":%s,"applied":%s,"agents":%s,
 EMPTY='{}'  # not "${5:-{\}}": bash 3.2, macOS's /bin/bash, keeps the backslash
 frow() { printf '{"run_id":"%s","phase":"finish","finished_at":"2026-01-01T01:00:00","outcome":"%s","unresolved_asks":%s,"executed":%s}\n' \
 	"$2" "$3" "${4:-0}" "${5:-$EMPTY}" >> "$1"; }
-# The library under test, imported the way plan.py and learn.py import it.
+# The library under test, imported the way learn.py imports it.
 lib() { REVIEW_LOOP_RUNS="$1" "$PY" -c "import sys; sys.path.insert(0, '.'); import runlog; $2"; }
 conv() { lib "$1" "r = runlog.load(limit=None).get('$2'); print('NO-RUN' if r is None else (runlog.convergence(r) or 'unknown'))"; }
 
@@ -140,14 +140,11 @@ grep -q refusing <<<"$(banned "this is how the rest of the codebase does it")" \
 	&& ok "a paraphrased precedent reason is refused" || bad "a paraphrased precedent reason is refused"
 
 # A fat-fingered env override must not take down every importer. runlog.py parses
-# REVIEW_LOOP_TAIL at import, and plan.py imports it, so a crash there would take the plan
-# down at Step 0 with the alarm beside it. --dry-run keeps the plan off every store.
-# Assert the exact code and the absence of a traceback: an uncaught exception
-# also exits 1, so `-le 1` would pass on the very crash this guards against.
+# REVIEW_LOOP_TAIL at import, and learn.py imports it, so a crash there would take the
+# learnings capture down with it. Assert the exact code and the absence of a traceback:
+# an uncaught exception also exits 1, so `-le 1` would pass on the very crash this guards against.
 for badval in abc -5 "" "  "; do
-	err=$(printf '{"changed_lines":10,"fast_path_eligible_by_size":true,"base_branch":""}' \
-		| REVIEW_LOOP_TAIL="$badval" "$PY" plan.py --model test --dry-run \
-			--logic no --behavioral-goal no --runtime-change no --attacker-reachable no 2>&1 >/dev/null)
+	err=$(REVIEW_LOOP_TAIL="$badval" "$PY" -c 'import runlog' 2>&1 >/dev/null)
 	rc=$?
 	[ "$rc" -eq 0 ] && ! grep -q Traceback <<<"$err" \
 		&& ok "tail override '$badval' degrades, not crashes" \

@@ -35,16 +35,17 @@ jobs:
 
       # A deleted suite is invisible to a glob: the loop simply finds one fewer file and
       # exits 0. Two of these have no mutation-catalog entry, so nothing else would notice
-      # either. Reproduced by removing plan.test.sh and re-running this job's own loop.
+      # either. Reproduced by removing plan.test.sh (since deleted with plan.py) and re-running this job's own loop.
       # Raise the floor deliberately when adding a suite; that edit is the review trail.
       # Lowered from 9 to 8 deliberately: review-stats.test.sh went with review-stats.py,
       # whose alarm and report are `looper stats` now, pinned by looper's frozen goldens.
       # And from 8 to 7: deferred.test.sh went with deferred.py, which is `looper deferred`,
-      # pinned the same way.
+      # pinned the same way. And from 7 to 6: plan.test.sh went with plan.py, which is
+      # `looper plan`, pinned by looper's frozen goldens and mutations.
       - name: no suite has gone missing
         run: |
           n=$(ls *.test.sh | wc -l | tr -d ' ')
-          [ "$n" -ge 7 ] || { echo "only $n suites, expected at least 7 — was one deleted or renamed?"; exit 1; }
+          [ "$n" -ge 6 ] || { echo "only $n suites, expected at least 6 — was one deleted or renamed?"; exit 1; }
           echo "$n suites present"
 
       # Every module with a --selftest, run. Six have one now (nine before push-check.py,
@@ -107,12 +108,12 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.6: the release SKILL.md installs, carrying the push-check and pr-report
+          # v0.2.7: the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
-          # runlog.py's command line, `stats`, which replaced review-stats.py, and
-          # `threat-model` and `deferred`, which replaced threat-model.py, deferred.py and
-          # pins.py — `threat-model` is what Step 0's preflight probes for.
-          ref: b5f9aaaf87a8f828d9ad61b693f972e3a849af14 # v0.2.6 (the commit, not the annotated tag object)
+          # runlog.py's command line, `stats`, which replaced review-stats.py, `threat-model`
+          # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
+          # which replaced plan.py and is what Step 0's preflight probes for.
+          ref: fce8315443505c17809c9c782c6060e058381093 # v0.2.7 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -123,7 +124,7 @@ jobs:
         run: go build -o "$RUNNER_TEMP/looper" ./cmd/looper
 
       # The tier and refusal vocabularies live twice now: looper record writes with its copies,
-      # and learn.py and plan.py read runlog.py's. looper's own CI holds them equal only
+      # and learn.py reads runlog.py's. looper's own CI holds them equal only
       # at its pinned skills commit, so a change here would pass this repo's CI and disagree with
       # the writer until looper bumped its pin. Hold them equal against THIS checkout. -v and the
       # PASS grep because the test skips, which go test reports as success, when it cannot find
@@ -145,10 +146,9 @@ jobs:
           git config --global commit.gpgsign false
 
       # The checks that drive looper skip where it is not on PATH, which is the suites job.
-      # This is where looper is built, so they run here: the Stop hook, record-skipped.sh,
-      # carry-review.sh and plan.py writing through `looper record`, plan.py surfacing the Step 0
-      # alarm from `looper stats`, and the rows it writes read back by the push gate, the
-      # report, the alarm and the Python readers.
+      # This is where looper is built, so they run here: the Stop hook, record-skipped.sh and
+      # carry-review.sh writing through `looper record`, and the rows they write read back by
+      # the push gate, the report, the alarm and the Python readers.
       - name: the suites that drive looper, with looper
         # Required to have RUN, not merely passed: without looper they skip, and each suite
         # still exits 0 — the skip-reads-as-success hazard this workflow guards elsewhere.
@@ -160,8 +160,7 @@ jobs:
           for pair in \
             "runlog.test.sh:ok  the alarm reads looper's finish rows" \
             "record-skipped.test.sh:ok  a refusal leaves the prior record intact" \
-            "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp" \
-            "plan.test.sh:ok  the sizing decision reaches the persisted record"; do
+            "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp"; do
             t=${pair%%:*}; marker=${pair#*:}
             echo "::group::$t"
             PATH="$RUNNER_TEMP:$PATH" ./"$t" | tee "$RUNNER_TEMP/$t.log" || failed="$failed $t"
@@ -188,11 +187,12 @@ jobs:
       # broken-pins-never-reported went with pins.py (looper's ledger-broken-never-reported
       # guards the same defect in `looper threat-model`), and plan-threat-model-failure-reads-
       # clean and plan-threat-model-ignores-broken-pins were added for plan.py reading that
-      # command, so the floor is 31.
+      # command, so the floor was 31. Lowered to 21 deliberately: the ten entries against
+      # plan.py went with it; looper's plan-* mutations guard the same defects in `looper plan`.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 31 ] || { echo "only $n mutations, expected at least 31 — was one deleted?"; exit 1; }
+          [ "$n" -ge 21 ] || { echo "only $n mutations, expected at least 21 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # looper on PATH for the same reason as above: the entries that verify through the Stop

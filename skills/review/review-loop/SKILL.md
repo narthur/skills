@@ -16,12 +16,12 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — the run record's writer and Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-grep -q 'go test ./internal/ledger/' <<<"$(~/.local/bin/looper threat-model --selftest 2>&1)" || { echo "review-loop needs ~/.local/bin/looper v0.2.6 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.6" >&2; false; }
+~/.local/bin/looper plan -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.7 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.7" >&2; false; }
 ```
 
-The probe reads the refusal text, because the exit code cannot tell the versions apart: v0.2.6 refuses the ledger's selftest flag with exit 2 and a pointer to looper's own tests, and an older looper exits 2 too, as an unknown command. It captures rather than pipes, because a pipe's status under `pipefail` is that exit 2, which failed the probe on the right version.
+`plan -h` exits 0 from v0.2.7 on; an older looper exits 2 on it, as an unknown command.
 
-If it fails, whether looper is missing or older than v0.2.6, stop and give the user that command. v0.2.6 is the first release with `looper threat-model` and `looper deferred`, the ledger reports Steps 2a and 2b and `plan.py` run, which replaced `threat-model.py`, `deferred.py` and `pins.py`; v0.2.5 added `looper stats`, the Step 0 alarm, which replaced `review-stats.py`; v0.2.4 added `looper record`, which writes every row of the run record. It replaced `runlog.py`'s command line, and `runlog.py` remains only as a library the Python scripts import. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.7, stop and give the user that command. v0.2.7 is the first release with `looper plan`, Step 0b, which replaced `plan.py`; v0.2.6 added `looper threat-model` and `looper deferred`, the ledger reports Steps 2a and 2b and `plan.py` run, which replaced `threat-model.py`, `deferred.py` and `pins.py`; v0.2.5 added `looper stats`, the Step 0 alarm, which replaced `review-stats.py`; v0.2.4 added `looper record`, which writes every row of the run record. It replaced `runlog.py`'s command line, and `runlog.py` remains only as a library the Python scripts import. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then run the context gatherer once:
 
@@ -62,7 +62,7 @@ No-op unless this is a husky repo missing a delegator; when one is missing it dr
 Every gate below whose trigger is a value in a script's output is computed here, not remembered. This exists because the orchestrator carries the whole procedure while also doing the review work, and the steps it drops are exactly those gates.
 
 ```bash
-python3 ~/.claude/skills/review-loop/plan.py \
+~/.local/bin/looper plan \
   --context "$(git rev-parse --git-dir)/review-loop-context.json" \
   --model <your own model id> \
   --logic yes|no --behavioral-goal yes|no --runtime-change yes|no --attacker-reachable yes|no \
@@ -84,7 +84,7 @@ It prints the plan and writes the **planned** half of the run record, then print
 
 **"It already has precedent in the repo" never licenses reduced review.** Bugs pre-exist; copying a pattern propagates them; the copy is the cheapest moment to catch one. `looper record finish` rejects any skip or escalation reason citing precedent. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
 
-If `plan.py` prints an alarm on stderr, a gate has failed to complete three or more times across recent runs. Read it — that's the signal to fix the gate, not to log it again. If it prints `review-loop alarm unavailable: …` instead, `looper stats --alarm` could not run (most often a run store it cannot read). The plan is still good, so carry on, but tell the user: until that is fixed, no gate is being watched.
+If `looper plan` prints an alarm on stderr, a gate has failed to complete three or more times across recent runs. Read it — that's the signal to fix the gate, not to log it again. If it prints `review-loop alarm unavailable: …` instead, `looper stats --alarm` could not run (most often a run store it cannot read). The plan is still good, so carry on, but tell the user: until that is fixed, no gate is being watched.
 
 ## Step 0c: Backfill a deferred PR report (triggered)
 
@@ -167,7 +167,7 @@ Runs **once per run, before the loop** (the artifact is repo-scoped, not cycle-s
 ~/.local/bin/looper threat-model
 ```
 
-Exit 1 is the failure Step 2a describes for `looper deferred`: fix what stderr names before reading `exists: false` or an empty `stale` as the answer. `plan.py` already plans this step on such a failure, with looper's sentence in the reason.
+Exit 1 is the failure Step 2a describes for `looper deferred`: fix what stderr names before reading `exists: false` or an empty `stale` as the answer. `looper plan` already plans this step on such a failure, with the command's sentence in the reason.
 
 - **`exists: false`** → run the **bounded bootstrap** (one `sonnet` agent, hard caps: ~30 files read, ~60 lines written, four questions only). Skip entirely on a repo with no attacker-reachable surface — write one line saying so, so the next run doesn't retry.
 - **`exists: true`** → run the **update agent** (one `sonnet` agent) with the script output plus this cycle's diff. `stale[]` is the exact worklist: each entry's cited file changed since its commit pin, so the claim needs re-reading and then re-pinning, rewriting, or deleting. `broken_pins[]` is the worse case and belongs on the same worklist: the sha does not resolve here, so staleness can never be computed for that claim while it still *looks* pinned and stays out of `uncited` — and for a `Not an issue here` dismissal, which is the security review's per-repo suppression channel, that is a suppression nothing ever re-examines. Re-read it and re-pin at `HEAD`, or rewrite or delete it. The agent names every "Not an issue here" or "Watch this spot" entry it rewrote or deleted; carry that list into the Step 14 report, since those are the user's entries. Skip the agent entirely only when `stale` **and** `broken_pins` are empty and the diff touches no security-relevant surface.

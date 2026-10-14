@@ -16,7 +16,7 @@ run_id.
 The writer is `~/.local/bin/looper record`, a port of this file's former command
 line with the same rows, refusals and exit statuses, and `looper stats` replaced
 review-stats.py, this file's last reader of the store. What stays here is what
-is still imported: the precedent ban (learn.py), the agent cap (plan.py), and the
+is still imported: the precedent ban (learn.py), the agent cap, and the
 store path, phase-merge, derived convergence and the outcome and gate
 vocabularies, which looper's parity tests run as their oracle. Those tests hold
 looper's copies of the constants equal to these, so a change here is a change to
