@@ -269,11 +269,16 @@ tm_reason() {
 		| "$PY" -c 'import json,sys; g=json.load(sys.stdin)["gates"]["threat_model"]; print(g["planned"], g["reason"])'
 }
 got=$(tm_reason stale "echo '{\"exists\": true, \"stale\": [{}, {}]}'")
-[ "$got" = "run 2 stale claim(s) — each is a worklist item" ] \
+[ "$got" = "run 2 stale claim(s), 0 broken pin(s) — each is a worklist item" ] \
 	&& ok "a stale threat model plans the update" || bad "a stale threat model plans the update (got: $got)"
+# Step 2b puts a broken pin on the same worklist: its sha resolves nowhere, so it never goes
+# stale, and a gate keyed on stale alone skipped it for good.
+got=$(tm_reason broken "echo '{\"exists\": true, \"stale\": [], \"broken_pins\": [{}]}'")
+[ "$got" = "run 0 stale claim(s), 1 broken pin(s) — each is a worklist item" ] \
+	&& ok "a broken pin alone plans the update" || bad "a broken pin alone plans the update (got: $got)"
 got=$(tm_reason fails "echo 'looper threat-model: cannot read x' >&2; exit 1")
-[ "$got" = "run looper threat-model failed — run the update rather than assume clean" ] \
-	&& ok "a failed threat-model report plans the update" || bad "a failed threat-model report plans the update (got: $got)"
+[ "$got" = "run looper threat-model failed (looper threat-model: cannot read x) — run the update rather than assume clean" ] \
+	&& ok "a failed threat-model report plans the update, saying why" || bad "a failed threat-model report plans the update, saying why (got: $got)"
 
 # The checks that read what a real recording run prints and persists drive the real writer.
 # CI's trust job runs this suite with looper on PATH and requires the skip line to be absent.
@@ -393,7 +398,7 @@ echo
 #
 # Raise EXPECTED_CHECKS deliberately when you add an assertion. That edit is the review
 # trail, the same way the mutation-catalog floor works.
-EXPECTED_CHECKS=46
+EXPECTED_CHECKS=47
 if [ "$checks" -ne $((EXPECTED_CHECKS + looper_checks)) ]; then
 	echo "ran $checks checks, expected $((EXPECTED_CHECKS + looper_checks)) — an assertion vanished, or one was added without raising EXPECTED_CHECKS"
 	fails=$((fails + 1))

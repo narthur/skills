@@ -57,13 +57,15 @@ def gate(planned, reason):
 
 
 def threat_model_state():
-    rc, out, _ = run([LOOPER, "threat-model"])
+    """The `looper threat-model` report, or (None, why) when there is none to read. The why
+    is looper's own sentence — which ledger, which pin — so the plan says what to fix."""
+    rc, out, err = run([LOOPER, "threat-model"])
     if rc != 0:
-        return None
+        return None, err or f"exit {rc}"
     try:
-        return json.loads(out)
+        return json.loads(out), ""
     except ValueError:
-        return None
+        return None, "its report is not JSON"
 
 
 def pr_exists():
@@ -195,15 +197,19 @@ def build(ctx, a):
     gates["staleness_sweep"] = gate("run" if due else "skip", why)
 
     # --- threat model ---------------------------------------------------------
-    tm = threat_model_state()
+    tm, why = threat_model_state()
     if tm is None:
-        gates["threat_model"] = gate("run", "looper threat-model failed — run the update rather than assume clean")
+        gates["threat_model"] = gate("run", f"looper threat-model failed ({why}) — run the update rather than assume clean")
     elif not tm.get("exists"):
         gates["threat_model"] = gate("run", "no threat model yet — bounded bootstrap")
     else:
         stale = tm.get("stale") or []
-        if stale:
-            gates["threat_model"] = gate("run", f"{len(stale)} stale claim(s) — each is a worklist item")
+        broken = tm.get("broken_pins") or []
+        if stale or broken:
+            # Step 2b: a broken pin is on the same worklist. Its sha resolves nowhere, so it can
+            # never go stale, and a plan keyed on stale alone skipped the one agent that fixes it.
+            gates["threat_model"] = gate("run", f"{len(stale)} stale claim(s), {len(broken)} broken "
+                                                "pin(s) — each is a worklist item")
         elif a.attacker_reachable:
             gates["threat_model"] = gate("run", "diff touches attacker-reachable surface")
         else:
@@ -317,11 +323,10 @@ def main():
     plan = build(ctx, a)
     print(json.dumps(plan, indent=2))
 
-    looper = LOOPER
 
     # Repeat count beats calendar: surface a gate that keeps not completing at the
     # one moment the skill is already open, rather than waiting for a batch review.
-    rc, alarm, err = run([looper, "stats", "--alarm"], timeout=10)
+    rc, alarm, err = run([LOOPER, "stats", "--alarm"], timeout=10)
     if rc != 0:
         # An empty alarm is also what a working alarm prints over a healthy record, so
         # staying quiet here made "nothing is repeating" and "nothing could be read" the
@@ -341,8 +346,8 @@ def main():
     if a.dry_run:
         return
 
-    if not os.access(looper, os.X_OK):
-        print(f"plan: COMPUTED BUT NOT RECORDED — {looper} is missing, and it writes the run "
+    if not os.access(LOOPER, os.X_OK):
+        print(f"plan: COMPUTED BUT NOT RECORDED — {LOOPER} is missing, and it writes the run "
               "record. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install "
               f"github.com/pinepeakdigital/looper/cmd/looper@{LOOPER_VERSION}", file=sys.stderr)
         sys.exit(1)
@@ -355,7 +360,7 @@ def main():
                     "starting the review.")
     try:
         rc = subprocess.run([
-            looper, "record", "plan",
+            LOOPER, "record", "plan",
             "--tier", plan["tier_floor"],
             "--model", a.model,
             "--base", plan["base_branch"] or "",
@@ -370,7 +375,7 @@ def main():
     except OSError as e:
         # X_OK passes a directory or a binary for another architecture; running it raises
         # here, and the plan JSON already on stdout would otherwise end in a bare traceback.
-        print(f"plan: cannot run {looper}: {e}", file=sys.stderr)
+        print(f"plan: cannot run {LOOPER}: {e}", file=sys.stderr)
         print(not_recorded, file=sys.stderr)
         sys.exit(1)
     if rc.stderr:

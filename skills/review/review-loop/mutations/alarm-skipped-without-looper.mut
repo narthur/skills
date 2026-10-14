@@ -3,7 +3,7 @@ verify: bash skills/review/review-loop/plan.test.sh
 expect: FAIL  a missing looper says the alarm is unavailable
 why:    the plausible tidy-up — only ask looper for the alarm when the binary is there — makes a missing looper a silent Step 0 again: the alarm is skipped, nothing says so, and with --dry-run nothing else in plan.py mentions looper at all. A missing binary is a failure to surface like any other, which is why run() turning the OSError into an exit status is load-bearing here.
 --- old
-    rc, alarm, err = run([looper, "stats", "--alarm"], timeout=10)
+    rc, alarm, err = run([LOOPER, "stats", "--alarm"], timeout=10)
 --- new
-    rc, alarm, err = (run([looper, "stats", "--alarm"], timeout=10)
-                      if os.access(looper, os.X_OK) else (0, "", ""))
+    rc, alarm, err = (run([LOOPER, "stats", "--alarm"], timeout=10)
+                      if os.access(LOOPER, os.X_OK) else (0, "", ""))

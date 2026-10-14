@@ -47,12 +47,10 @@ jobs:
           [ "$n" -ge 7 ] || { echo "only $n suites, expected at least 7 — was one deleted or renamed?"; exit 1; }
           echo "$n suites present"
 
-      # Every module with a --selftest, run. Nine have one; before this step only the two
-      # with a wrapper *.test.sh were ever executed by CI. The seven that were not included
-      # push-check.py (the push gate, since ported to `looper push-check`), bucket.py
-      # (which owns SECURITY_FLOOR and the always-ask security routing) and
-      # threat-model.py (since ported to `looper threat-model`), whose own comment recorded
-      # that replacing broken_pins with [] once left every suite green.
+      # Every module with a --selftest, run. Six have one now (nine before push-check.py,
+      # threat-model.py and deferred.py were ported to looper). Before this step only the
+      # modules with a wrapper *.test.sh were ever executed by CI; the rest included
+      # bucket.py, which owns SECURITY_FLOOR and the always-ask security routing.
       - name: module selftests
         run: |
           failed=""
@@ -189,11 +187,12 @@ jobs:
       # through that script's alarm; three were added for plan.py surfacing a failed alarm.
       # broken-pins-never-reported went with pins.py (looper's ledger-broken-never-reported
       # guards the same defect in `looper threat-model`), and plan-threat-model-failure-reads-
-      # clean was added for plan.py reading that command, so the floor stays 30.
+      # clean and plan-threat-model-ignores-broken-pins were added for plan.py reading that
+      # command, so the floor is 31.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 30 ] || { echo "only $n mutations, expected at least 30 — was one deleted?"; exit 1; }
+          [ "$n" -ge 31 ] || { echo "only $n mutations, expected at least 31 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # looper on PATH for the same reason as above: the entries that verify through the Stop
