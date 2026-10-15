@@ -57,7 +57,7 @@ warn() {
 # By absolute path, never PATH (SKILL.md Step 0 says why). The store is non-empty, so a run
 # may well be open, and without looper nothing here can say whether one is.
 LOOPER="$HOME/.local/bin/looper"
-[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.7"
+[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.8"
 
 sid=$("$py" -I -c 'import json,sys; print(json.load(sys.stdin).get("session_id") or "")' <<<"$input" 2>/dev/null)
 errf=$(mktemp "${TMPDIR:-/tmp}/review-loop-stop.XXXXXX") || warn "could not create a temp file to run the unfinished-run check"

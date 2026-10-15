@@ -41,7 +41,9 @@ jobs:
       # whose alarm and report are `looper stats` now, pinned by looper's frozen goldens.
       # And from 8 to 7: deferred.test.sh went with deferred.py, which is `looper deferred`,
       # pinned the same way. And from 7 to 6: plan.test.sh went with plan.py, which is
-      # `looper plan`, pinned by looper's frozen goldens and mutations.
+      # `looper plan`, pinned by looper's frozen goldens and mutations. Held at 6:
+      # context-sizing.test.sh went with context.sh (`looper context`, pinned the same way),
+      # and mark-swept.test.sh replaced its one producer-and-reader check.
       - name: no suite has gone missing
         run: |
           n=$(ls *.test.sh | wc -l | tr -d ' ')
@@ -108,12 +110,13 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.7: the release SKILL.md installs, carrying the push-check and pr-report
+          # v0.2.8: the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
           # runlog.py's command line, `stats`, which replaced review-stats.py, `threat-model`
           # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
-          # which replaced plan.py and is what Step 0's preflight probes for.
-          ref: fce8315443505c17809c9c782c6060e058381093 # v0.2.7 (the commit, not the annotated tag object)
+          # which replaced plan.py, and `context`, which replaced context.sh and is what Step 0's
+          # preflight probes for.
+          ref: 123fd86b56ba2f018bbe011553f331f7e6ade059 # v0.2.8 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -160,7 +163,8 @@ jobs:
           for pair in \
             "runlog.test.sh:ok  the alarm reads looper's finish rows" \
             "record-skipped.test.sh:ok  a refusal leaves the prior record intact" \
-            "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp"; do
+            "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp" \
+            "mark-swept.test.sh:ok  what mark-swept.py writes is what looper context reads"; do
             t=${pair%%:*}; marker=${pair#*:}
             echo "::group::$t"
             PATH="$RUNNER_TEMP:$PATH" ./"$t" | tee "$RUNNER_TEMP/$t.log" || failed="$failed $t"
@@ -192,11 +196,19 @@ jobs:
       # internal/plan's tests and mutations/plan-*.mut, and looper's own CI enforces them
       # (complete as of PinePeakDigital/looper 24d2261, #21). This workflow does not run them:
       # from its looper checkout above it builds the release binary and runs only the runlog
-      # constants test, never internal/plan's tests or looper's own mutation catalog.
+      # constants test, never internal/plan's tests or looper's own mutation catalog. Lowered
+      # to 9 deliberately: the twelve entries against context.sh went with it. Eight have a
+      # looper counterpart in mutations/context-*.mut, guarded by internal/gather's tests. The
+      # sweep re-arming without regrowth is guarded there by the "learnings swept, not regrown"
+      # parity scenario. delta-verdict-ignores-the-stamp has no Go mutant: with no reviewed sha
+      # the delta is 0, so the stamp test it removed decides nothing there. Two (learnings-entries-double-fallback, changed-lines-double-fallback)
+      # were shell-only: `grep -c` and `||` fallbacks that have no Go analogue.
+      # sweep-marker-producer-drifts stays, now verified by mark-swept.test.sh against
+      # `looper context`.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 21 ] || { echo "only $n mutations, expected at least 21 — was one deleted?"; exit 1; }
+          [ "$n" -ge 9 ] || { echo "only $n mutations, expected at least 9 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # looper on PATH for the same reason as above: the entries that verify through the Stop

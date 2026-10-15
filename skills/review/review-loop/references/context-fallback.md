@@ -1,6 +1,6 @@
 # Context fallback (workspace detection + Steps 1–3)
 
-`context.sh` (SKILL Step 0) automates all of this and emits it as JSON. This file
+`looper context` (SKILL Step 0) automates all of this and emits it as JSON. This file
 is the **fallback** — consult it only if the script errors or returns `null` for
 a field you need. Don't run this bash by hand when the JSON already has the answer.
 
