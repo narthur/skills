@@ -197,11 +197,14 @@ jobs:
       # (complete as of PinePeakDigital/looper 24d2261, #21). This workflow does not run them:
       # from its looper checkout above it builds the release binary and runs only the runlog
       # constants test, never internal/plan's tests or looper's own mutation catalog. Lowered
-      # to 9 deliberately: the twelve entries against context.sh went with it. Eight have a
-      # looper counterpart in mutations/context-*.mut, guarded by internal/gather's tests. The
-      # sweep re-arming without regrowth is guarded there by the "learnings swept, not regrown"
-      # parity scenario. delta-verdict-ignores-the-stamp has no Go mutant: with no reviewed sha
-      # the delta is 0, so the stamp test it removed decides nothing there. Two (learnings-entries-double-fallback, changed-lines-double-fallback)
+      # to 9 deliberately: the twelve entries against context.sh went with it. Ten have a
+      # looper counterpart in mutations/context-*.mut, guarded by internal/gather's tests:
+      # eight by name, sweep-retriggers-without-growth as context-regrowth-margin-short, and
+      # delta-verdict-ignores-the-stamp as context-delta-verdict-is-the-branch-verdict. The
+      # suite's checks that no looper scenario pinned (the size verdict on semantic lines, a
+      # dist/ path without the marker, the regrowth margin from both sides, a small follow-up
+      # on a big reviewed branch) were frozen from context.sh into looper first
+      # (PinePeakDigital/looper 97360e2). Two (learnings-entries-double-fallback, changed-lines-double-fallback)
       # were shell-only: `grep -c` and `||` fallbacks that have no Go analogue.
       # sweep-marker-producer-drifts stays, now verified by mark-swept.test.sh against
       # `looper context`.
