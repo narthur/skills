@@ -1,8 +1,0 @@
-target: skills/review/review-loop/context.sh
-verify: bash skills/review/review-loop/context-sizing.test.sh
-expect: FAIL  a sweep that ended below the cap re-arms early, at the cap line
-why:    a low-yield sweep (44 + 8 = 52) would re-arm past the 50-entry cap, handing compaction to learn.py's blunt age-based prune instead of the relevance sweep. The clamp keeps the re-arm point at the cap line, and nothing tested it until the past-the-cap fix touched the same expression.
---- old
-        rearm_at = min(rearm_at, LEARN_CAP - 2)
---- new
-        pass

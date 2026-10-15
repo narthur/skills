@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Stamp a learnings file with the entry count a sweep left behind.
 
-`context.sh` will not re-arm the compaction trigger until the file has grown past this
+`looper context` will not re-arm the compaction trigger until the file has grown past this
 number, so the marker is what stops a relevance-based sweep from re-spawning an agent
 every run for zero evictions. It exists as a script because the format had no producer:
 the only instruction to write it was prose aimed at an LLM, and a missing space, a
