@@ -590,7 +590,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
    numbers and the roster from the run record, appends your narrative verbatim, labels the PR
-   `review:<convergence>`, and writes the pending-report file by itself when there is no PR — or
+   `review:<convergence>` and, from v0.2.9, `risk:high|medium|low` from the plan's logic, runtime-change and attacker-reachable answers
+   (or removes any `risk:*` label when they give no level), and writes the pending-report file by itself when there is no PR — or
    when the post *fails*, so a transient GitHub error cannot destroy the report. It keeps that
    local copy after a *successful* post too, and labels the PR whenever one exists, even if the
    comment failed.
