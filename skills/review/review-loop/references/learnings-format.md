@@ -18,7 +18,7 @@ The learnings file is loaded into every future cycle's agent prompts, so its siz
 
 ## Writing rules
 
-**Entry shape** — one line, ~150 chars max. Lead with the date and either the literal token `PATTERN:` (for a broad, reusable rule) or a concrete one-off. PATTERN entries are the goal — they survive over time; one-off entries are pruned first.
+**Entry shape** — one line, ~150 chars max. Lead with the date and either the literal token `PATTERN:` or `PATTERN —` (for a broad, reusable rule; either one makes prune keep it) or a concrete one-off. PATTERN entries are the goal — they survive over time; one-off entries are pruned first.
 
 **Before adding a new entry, dedup.** Read the file. If a similar entry already exists:
 
