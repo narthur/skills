@@ -66,7 +66,7 @@ Every gate below whose trigger is a value in a script's output is computed here,
   --context "$(git rev-parse --git-dir)/review-loop-context.json" \
   --model <your own model id> \
   --logic yes|no --behavioral-goal yes|no --runtime-change yes|no --attacker-reachable yes|no \
-  [--spec-artifact yes|no]
+  [--spec-artifact yes|no] [--delta-logic yes|no]
 ```
 
 Four booleans, because they are the only inputs a script can't measure — and because free text here is where improvisation re-enters wearing a manifest. Answer them about the branch diff:
@@ -76,7 +76,13 @@ Four booleans, because they are the only inputs a script can't measure — and b
 - `--runtime-change` — does runtime behavior change? Gates Steps 13 and 13.5.
 - `--attacker-reachable` — is any changed path attacker-reachable?
 
-It prints the plan and writes the **planned** half of the run record, then prints the `run_id` on the last line. **A non-zero exit, or no `run_id` on that last line, means there is no plan: stop and show the user its stderr.** Its stderr says which: COMPUTED BUT NOT RECORDED is a record write that failed (exit 1 or 2, the record's own code), a context it could not read or parse says to re-run context.sh (its name for `looper context`), and a context field of the wrong type names the field (a `looper context` bug, which re-running will not fix). Never write a plan by hand to get past it — an improvised plan is the failure this step exists to prevent. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned. Note the order: the JSON first, the id last, so `sed '$d'` gets you parseable JSON.
+One more, only on a fast-path re-entry (Step 3b). Pass it only when the context's `fast_path_eligible_by_delta` is true, and answer it about the delta, `git diff <last_reviewed_sha>..HEAD`, not the branch:
+
+- `--delta-logic` — does the delta since `last_reviewed_sha` change program logic? With `--delta-logic no` and an eligible delta, the plan floors the tier at `fast` even when the branch as a whole is too big for it or holds logic. Left out, nothing is lowered.
+
+Keep `--logic` answered about the whole branch even then. The two are separate because the PR's `risk:` label (Step 14) is computed from `--logic`, never from `--delta-logic`: answering `--logic` about a logic-free follow-up labels a branch full of logic `risk:low`, which is what happened on skills #11. `--delta-logic` moves only the floor, and the plan records it as `delta_logic` so the run shows why the floor was lowered.
+
+It prints the plan and writes the **planned** half of the run record, then prints the `run_id` on the last line. **A non-zero exit, or no `run_id` on that last line, means there is no plan: stop and show the user its stderr.** Its stderr says which: COMPUTED BUT NOT RECORDED is a record write that failed (exit 1 or 2, the record's own code), a context it could not read or parse says to run `looper context` first, and a context field of the wrong type names the field (a `looper context` bug, which re-running will not fix). Never write a plan by hand to get past it — an improvised plan is the failure this step exists to prevent. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned. Note the order: the JSON first, the id last, so `sed '$d'` gets you parseable JSON.
 
 **Call this ONCE per run.** Every invocation without `--dry-run` writes another planned run record, so re-running it to re-read or re-parse its own output forges runs that then have to be abandoned by hand — and each one lands in the Step 0 alarm's own denominator. If you need the plan again, use `--dry-run`, which computes and prints it and writes nothing.
 
@@ -198,12 +204,12 @@ Nothing aggregates those reasons yet — `looper stats --alarm` reads gate compl
 
 You already ran the loop this session, reached a clean exit, then made a **small follow-up commit** (a comment, a doc line, a config tweak) — often to satisfy review feedback or your own polish. The pre-push gate will (correctly) block it: the tip changed, so this exact state hasn't been reviewed. **Do not** reach for `record-reviewed.sh` by hand to clear it — that stamps "reviewed" on something the loop never saw (see Step 14).
 
-Instead, re-enter here cheaply. Step 0 already found the sha and sized the delta — `last_reviewed_sha` and `review_delta_lines`, with `fast_path_eligible_by_delta` as the size verdict. Diff against it (`git diff <last_reviewed_sha>..HEAD`) and then:
+Instead, re-enter here cheaply. Step 0 already found the sha and sized the delta — `last_reviewed_sha` and `review_delta_lines`, with `fast_path_eligible_by_delta` as the size verdict. Diff against it (`git diff <last_reviewed_sha>..HEAD`); that diff is what Step 0b's `--delta-logic` answers about. The plan's `tier_floor` then reflects that answer. It is `fast` only when `fast_path_eligible_by_delta` is true and you passed `--delta-logic no`. Otherwise it is the branch's floor, and that floor still holds: the floor is a floor, and judging the delta small yourself does not lower it. Then:
 
-- **Fast-path-eligible** (`fast_path_eligible_by_delta` is true, and no program logic in the delta) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then Step 14 as normal (post or defer the summary comment, `record-reviewed.sh`, push check). This is ~10 seconds and ends with a *legitimate* reviewed stamp.
+- **Fast-path-eligible** (`fast_path_eligible_by_delta` is true, `--delta-logic no`, and the plan's `tier_floor` is `fast`) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then Step 14 as normal (post or defer the summary comment, `record-reviewed.sh`, push check). This is ~10 seconds and ends with a *legitimate* reviewed stamp.
 - **Genuinely beneath even that** (e.g. a one-word typo fix in a comment) → `record-skipped.sh "<reason>"` (Step 14). Honest, auditable, one line.
 - **The tip changed only because of a rebase or amend, with no content change** → nothing to do. The `post-rewrite` hook already carried the record by `patch-id`. Do not reach for `record-skipped.sh` to paper over a rewritten sha. If the record did not carry, treat the delta as unreviewed — usually because the patch differs, but confirm the hook is actually installed here before concluding that, since an uninstalled hook is silent in exactly the same way.
-- **Touches logic, or you're unsure** → run the full loop from cycle 1 on the delta. The re-entry is a shortcut for *trivial* follow-ups, not a way to shrink review of real changes.
+- **Touches logic, or you're unsure** → answer `--delta-logic yes`, and run the full loop from cycle 1 on the delta at no less than the plan's floor. The re-entry is a shortcut for *trivial* follow-ups, not a way to shrink review of real changes.
 
 The point: make the honest lightweight path as cheap as the dishonest shortcut was, so there's never a reason to fake the stamp.
 
