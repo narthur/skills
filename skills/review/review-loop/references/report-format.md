@@ -143,11 +143,17 @@ branch. (Pending file but still no PR → leave it in place and continue the run
    risk labels alone for those.
 
    ```bash
-   gh label create risk:<level> --color <colour> 2>/dev/null || true   # skip both for "no risk label"
+   gh label create risk:<level> --color <colour> 2>/dev/null || true
    gh pr edit <n> --add-label risk:<level>
    for l in high medium low; do
      [ "$l" = <level> ] || gh pr edit <n> --remove-label "risk:$l" 2>/dev/null
    done
+   ```
+
+   For `no risk label`, there is no level to add, so only the removal runs:
+
+   ```bash
+   for l in high medium low; do gh pr edit <n> --remove-label "risk:$l" 2>/dev/null; done
    ```
 
    Colours: high `d93f0b`, medium `fbca04`, low `0e8a16`.

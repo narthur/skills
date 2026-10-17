@@ -158,8 +158,10 @@ jobs:
             echo "::group::$t"
             PATH="$RUNNER_TEMP:$PATH" ./"$t" | tee "$RUNNER_TEMP/$t.log" || failed="$failed $t"
             echo "::endgroup::"
-            if grep -q "skip  looper" "$RUNNER_TEMP/$t.log" || ! grep -qF "$marker" "$RUNNER_TEMP/$t.log"; then
-              echo "$t: its looper checks did not run"; failed="$failed $t"
+            if grep -q "skip  looper" "$RUNNER_TEMP/$t.log"; then
+              echo "$t: its looper checks skipped, as if looper were not on PATH"; failed="$failed $t"
+            elif ! grep -qF "$marker" "$RUNNER_TEMP/$t.log"; then
+              echo "$t: its last looper check never printed: $marker"; failed="$failed $t"
             fi
           done
           [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }

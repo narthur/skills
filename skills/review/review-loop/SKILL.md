@@ -501,6 +501,8 @@ Do the edits with `looper learn` — you judge match/novelty/section; the comman
 - Novel entry → `~/.local/bin/looper learn add <file> "<text, no date>" --section dismissed|accepted` (stamps today's date; creates the file/sections if missing; `--section` may come before or after the text).
 - Cap fallback → `~/.local/bin/looper learn prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).
 
+A non-zero exit means nothing was written: show its stderr and never report the learning as recorded. The two you will meet: `bump` matched no entry (exit 1; `add` it instead), and `add --section dismissed` refused a reason that cites precedent (exit 1; reword it with a measurable reason, or drop it).
+
 For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping, and the cap/split fallbacks, **Read `references/learnings-format.md`**. When in doubt whether an entry is worth writing, don't — the file's value is being scannable, not exhaustive.
 
 ## Step 12: "Remember X" Requests During the Session
