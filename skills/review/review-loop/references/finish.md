@@ -125,11 +125,14 @@ the error verbatim in the final report and continue — do not retry, do not for
   blocks rather than disclosing `unknown`; stderr names the run and the store that was read.
 - **A run that was never finished (no finish row).** Step 14 closes the record before it posts
   the report, so an unfinished run skipped a step and its report rendered no outcome or tier.
-  Close it with `~/.local/bin/looper record finish --run-id <run_id> …` (SKILL Step 14), re-post
-  with `~/.local/bin/looper pr-report --run-id <run_id> --post </dev/null`, then ask again. A
-  session that died mid-loop closes it the same way, with a `cycle-limit` finish: that outcome is
-  not broken, so the run pushes with whatever disclosure its cycles derive. A finish row whose line
-  was torn reads exactly like a missing one, and stderr says so; record the finish again.
+  Close it with `~/.local/bin/looper record finish --run-id <run_id> …` (SKILL Step 14, with an
+  `--executed` entry per planned gate or `--allow-unaccounted`), re-post with
+  `~/.local/bin/looper pr-report --run-id <run_id> --post </dev/null`, then ask again. A session
+  that died mid-loop is different: its review stopped partway and Step 9 may never have run, so do
+  not finish it as `cycle-limit` and stamp a tip the loop never finished. Close it with
+  `~/.local/bin/looper record abandon --run-id <run_id> --missing '<gates you are not running>'`,
+  which blocks that run id, and review the tip with a fresh run. A finish row whose line was torn reads exactly like a missing one,
+  and stderr says so; record the finish again.
 - **The run recorded `test-failure`, `blocked` or `abandoned`.** The branch is in a known-broken
   state; do not propagate it. Read from the record's `outcome`, so a Step 9 short-circuit reaches
   the decision even though it jumps out of the loop before the cycle row is written.
