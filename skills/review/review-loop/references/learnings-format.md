@@ -32,7 +32,8 @@ The learnings file is loaded into every future cycle's agent prompts, so its siz
 **Cap at ~50 entries.** The primary maintenance mechanism is the **Step 2a staleness sweep** — relevance-based eviction (dead paths, unused one-offs) triggered automatically at ≥40 entries, which normally keeps the file well under the cap. This age-based cap is the **fallback** for the rare case the file still exceeds ~50 (e.g. the sweep couldn't run); `looper learn prune` enforces it, evicting in this order:
 1. Oldest non-PATTERN dismissed entries (the specific one-off skips).
 2. Oldest non-PATTERN accepted entries.
-3. PATTERN entries last, and only if redundant with a newer one.
+
+It never evicts a PATTERN entry — one containing `PATTERN:` or `PATTERN —` — so a file over the cap with only PATTERNs left stays over it. Consolidating redundant PATTERNs is the sweep's job, or yours.
 
 **If the file passes ~75 entries even after pruning**, that's a signal the repo's review tastes are heterogeneous enough to need topic splits. At that point (not before), split into a `<git-common-dir>/info/review-loop-learnings/` directory with topic files (`comments.md`, `tests.md`, `refactor.md`, …) and concatenate them when loading. Don't pre-split — single file is simpler when the volume is small.
 

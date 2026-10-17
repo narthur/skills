@@ -128,7 +128,8 @@ the error verbatim in the final report and continue — do not retry, do not for
   Close it with `~/.local/bin/looper record finish --run-id <run_id> …` (SKILL Step 14), re-post
   with `~/.local/bin/looper pr-report --run-id <run_id> --post </dev/null`, then ask again. A
   session that died mid-loop closes it the same way, with a `cycle-limit` finish: that outcome is
-  not broken, so the run pushes with whatever disclosure its cycles derive.
+  not broken, so the run pushes with whatever disclosure its cycles derive. A finish row whose line
+  was torn reads exactly like a missing one, and stderr says so; record the finish again.
 - **The run recorded `test-failure`, `blocked` or `abandoned`.** The branch is in a known-broken
   state; do not propagate it. Read from the record's `outcome`, so a Step 9 short-circuit reaches
   the decision even though it jumps out of the loop before the cycle row is written.
