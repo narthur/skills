@@ -131,8 +131,9 @@ the error verbatim in the final report and continue — do not retry, do not for
   that died mid-loop is different: its review stopped partway and Step 9 may never have run, so do
   not finish it as `cycle-limit` and stamp a tip the loop never finished. Close it with
   `~/.local/bin/looper record abandon --run-id <run_id> --missing '<gates you are not running>'`,
-  which blocks that run id, and review the tip with a fresh run. A finish row whose line was torn reads exactly like a missing one,
-  and stderr says so; record the finish again.
+  which blocks that run id (its push-check then says "broken, not merely unfinished", which is
+  expected), and review the tip with a fresh run. A finish row whose line was torn
+  reads exactly like a missing one, and stderr says so; record the finish again.
 - **The run recorded `test-failure`, `blocked` or `abandoned`.** The branch is in a known-broken
   state; do not propagate it. Read from the record's `outcome`, so a Step 9 short-circuit reaches
   the decision even though it jumps out of the loop before the cycle row is written.

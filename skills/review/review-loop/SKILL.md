@@ -256,7 +256,9 @@ If the loop exits with work still outstanding:
     Say so, and list the remaining findings. `convergence` is derived from the
     cycle rows, not from this report: spending the budget derives `capped`,
     stopping for any other reason (an interrupt, a test failure) derives
-    `halted`, and both push with a disclosure rather than stalling.
+    `halted`, and both push with a disclosure rather than stalling. That holds
+    when this session goes on to finish the run; a session that died before
+    Step 14 is abandoned instead (references/finish.md) and the tip gets a fresh run.
     The last cycle's row (outstanding work: applied > 0, asked > 0, or the analysis pass
     still changing files) is what makes this derivable rather than asserted. Not converging
     no longer blocks the push — Step 14 pushes with the `disclose` line the checker emits,
