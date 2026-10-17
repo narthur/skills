@@ -43,15 +43,18 @@ jobs:
       # pinned the same way. And from 7 to 6: plan.test.sh went with plan.py, which is
       # `looper plan`, pinned by looper's frozen goldens and mutations. Held at 6:
       # context-sizing.test.sh went with context.sh (`looper context`, pinned the same way),
-      # and mark-swept.test.sh replaced its one producer-and-reader check.
+      # and mark-swept.test.sh replaced its one producer-and-reader check. And from 6 to 5:
+      # learn.test.sh went with learn.py (`looper learn`, pinned by looper's frozen goldens),
+      # and runlog.test.sh with runlog.py, whose library checks had nothing left to test;
+      # its Stop hook and looper read-back checks moved to stop-hook.test.sh.
       - name: no suite has gone missing
         run: |
           n=$(ls *.test.sh | wc -l | tr -d ' ')
-          [ "$n" -ge 6 ] || { echo "only $n suites, expected at least 6 — was one deleted or renamed?"; exit 1; }
+          [ "$n" -ge 5 ] || { echo "only $n suites, expected at least 5 — was one deleted or renamed?"; exit 1; }
           echo "$n suites present"
 
-      # Every module with a --selftest, run. Six have one now (nine before push-check.py,
-      # threat-model.py and deferred.py were ported to looper). Before this step only the
+      # Every module with a --selftest, run. Five have one now (nine before push-check.py,
+      # threat-model.py, deferred.py and learn.py were ported to looper). Before this step only the
       # modules with a wrapper *.test.sh were ever executed by CI; the rest included
       # bucket.py, which owns SECURITY_FLOOR and the always-ask security routing.
       - name: module selftests
@@ -62,7 +65,7 @@ jobs:
             python3 "$f" --selftest >/dev/null 2>&1 || failed="$failed $f"
           done
           # Quiet on success, but a failure must say WHAT failed. The first run of this
-          # step reported only "selftest failed: learn.py", which named the file and threw
+          # step reported only "selftest failed: learn.py" (since ported), which named the file and threw
           # away the assertion — and the failure does not reproduce on the author's
           # machine, so the discarded output was the only evidence there was.
           if [ -n "$failed" ]; then
@@ -110,13 +113,14 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.8: the release SKILL.md installs, carrying the push-check and pr-report
+          # v0.2.9: the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
           # runlog.py's command line, `stats`, which replaced review-stats.py, `threat-model`
           # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
           # which replaced plan.py, and `context`, which replaced context.sh and is what Step 0's
-          # preflight probes for.
-          ref: 123fd86b56ba2f018bbe011553f331f7e6ade059 # v0.2.8 (the commit, not the annotated tag object)
+          # preflight probed for until v0.2.9. v0.2.9 adds `learn`, which replaced learn.py and
+          # is what the preflight probes for now.
+          ref: 6ee5d892e8f998cb47577c2abc6bdb291ec92e56 # v0.2.9 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
@@ -125,21 +129,6 @@ jobs:
       - name: build looper
         working-directory: .looper
         run: go build -o "$RUNNER_TEMP/looper" ./cmd/looper
-
-      # The tier and refusal vocabularies live twice now: looper record writes with its copies,
-      # and learn.py reads runlog.py's. looper's own CI holds them equal only
-      # at its pinned skills commit, so a change here would pass this repo's CI and disagree with
-      # the writer until looper bumped its pin. Hold them equal against THIS checkout. -v and the
-      # PASS grep because the test skips, which go test reports as success, when it cannot find
-      # runlog.py.
-      - name: runlog.py's constants match looper record's
-        working-directory: .looper
-        env:
-          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/skills/review/review-loop/runlog.py
-        run: |
-          go test -count=1 -v -run '^TestWriteConstantsMatchThePython$' ./internal/record/ | tee "$RUNNER_TEMP/constants.log"
-          grep -q -- '--- PASS: TestWriteConstantsMatchThePython' "$RUNNER_TEMP/constants.log" \
-            || { echo "the constants check did not run"; exit 1; }
 
       - name: git identity for fixture repos
         run: |
@@ -151,7 +140,7 @@ jobs:
       # The checks that drive looper skip where it is not on PATH, which is the suites job.
       # This is where looper is built, so they run here: the Stop hook, record-skipped.sh and
       # carry-review.sh writing through `looper record`, and the rows they write read back by
-      # the push gate, the report, the alarm and the Python readers.
+      # the push gate, the report and the alarm.
       - name: the suites that drive looper, with looper
         # Required to have RUN, not merely passed: without looper they skip, and each suite
         # still exits 0 — the skip-reads-as-success hazard this workflow guards elsewhere.
@@ -161,7 +150,7 @@ jobs:
           cd skills/review/review-loop
           failed=""
           for pair in \
-            "runlog.test.sh:ok  the alarm reads looper's finish rows" \
+            "stop-hook.test.sh:ok  the alarm reads looper's finish rows" \
             "record-skipped.test.sh:ok  a refusal leaves the prior record intact" \
             "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp" \
             "mark-swept.test.sh:ok  what mark-swept.py writes is what looper context reads"; do
@@ -169,8 +158,10 @@ jobs:
             echo "::group::$t"
             PATH="$RUNNER_TEMP:$PATH" ./"$t" | tee "$RUNNER_TEMP/$t.log" || failed="$failed $t"
             echo "::endgroup::"
-            if grep -q "skip  looper" "$RUNNER_TEMP/$t.log" || ! grep -qF "$marker" "$RUNNER_TEMP/$t.log"; then
-              echo "$t: its looper checks did not run"; failed="$failed $t"
+            if grep -q "skip  looper" "$RUNNER_TEMP/$t.log"; then
+              echo "$t: its looper checks skipped, as if looper were not on PATH"; failed="$failed $t"
+            elif ! grep -qF "$marker" "$RUNNER_TEMP/$t.log"; then
+              echo "$t: its last looper check never printed: $marker"; failed="$failed $t"
             fi
           done
           [ -z "$failed" ] || { echo "failed:$failed"; exit 1; }
@@ -195,8 +186,8 @@ jobs:
       # plan.py went with it. The defects they guarded are now guarded in looper, by
       # internal/plan's tests and mutations/plan-*.mut, and looper's own CI enforces them
       # (complete as of PinePeakDigital/looper 24d2261, #21). This workflow does not run them:
-      # from its looper checkout above it builds the release binary and runs only the runlog
-      # constants test, never internal/plan's tests or looper's own mutation catalog. Lowered
+      # from its looper checkout above it builds the release binary and runs none of looper's
+      # tests, never internal/plan's or looper's own mutation catalog. Lowered
       # to 9 deliberately: the twelve entries against context.sh went with it. Ten have a
       # looper counterpart in mutations/context-*.mut, guarded by internal/gather's tests:
       # eight under a context- name (three shortened: sweep-clamp-past-the-cap,
@@ -209,11 +200,18 @@ jobs:
       # (PinePeakDigital/looper 97360e2). Two (learnings-entries-double-fallback, changed-lines-double-fallback)
       # were shell-only: `grep -c` and `||` fallbacks that have no Go analogue.
       # sweep-marker-producer-drifts stays, now verified by mark-swept.test.sh against
-      # `looper context`.
+      # `looper context`. Lowered to 6 deliberately: banned-reason-raw-match,
+      # convergence-ignores-unresolved-asks and cycles-deduped-by-n went with runlog.py, the
+      # library they mutated. `looper record` owns the precedent ban and the derived
+      # convergence now, guarded in looper by internal/record's tests (the whitespace ban
+      # among them) and mutations/record-asks-at-finish-ignored.mut and
+      # record-cycles-collapsed-to-the-last.mut. vanished-assertion-
+      # goes-unnoticed moved from learn.test.sh to stop-hook.test.sh, and the two stop-hook-*
+      # entries verify through stop-hook.test.sh now.
       - name: no catalog entry has gone missing
         run: |
           n=$(ls skills/review/review-loop/mutations/*.mut | wc -l | tr -d ' ')
-          [ "$n" -ge 9 ] || { echo "only $n mutations, expected at least 9 — was one deleted?"; exit 1; }
+          [ "$n" -ge 6 ] || { echo "only $n mutations, expected at least 6 — was one deleted?"; exit 1; }
           echo "$n mutations present"
 
       # looper on PATH for the same reason as above: the entries that verify through the Stop

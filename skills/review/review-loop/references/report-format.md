@@ -135,6 +135,28 @@ branch. (Pending file but still no PR → leave it in place and continue the run
 
    Colours match what `looper pr-report` uses: converged `0e8a16`, capped `fbca04`, halted
    `d93f0b`, unknown `b60205`.
+
+   From looper v0.2.9 a second line moves the risk label the same way. Either it names
+   `label risk:<level> also owed` with its create and add commands, or it says `no risk label`
+   because the plan's inputs cannot say, and then every `risk:*` label comes off rather than one
+   left standing from an earlier run. Notes written before v0.2.9 have no risk line; leave the
+   risk labels alone for those.
+
+   ```bash
+   gh label create risk:<level> --color <colour> 2>/dev/null || true
+   gh pr edit <n> --add-label risk:<level>
+   for l in high medium low; do
+     [ "$l" = <level> ] || gh pr edit <n> --remove-label "risk:$l" 2>/dev/null
+   done
+   ```
+
+   For `no risk label`, there is no level to add, so only the removal runs:
+
+   ```bash
+   for l in high medium low; do gh pr edit <n> --remove-label "risk:$l" 2>/dev/null; done
+   ```
+
+   Colours: high `d93f0b`, medium `fbca04`, low `0e8a16`.
 2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
 3. Delete the pending file.
 4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.

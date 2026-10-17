@@ -16,12 +16,12 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — the run record's writer and Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-~/.local/bin/looper context -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.8 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.8" >&2; false; }
+~/.local/bin/looper learn -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.9 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.9" >&2; false; }
 ```
 
-`context -h` exits 0 from v0.2.8 on; an older looper exits 2 on it, as an unknown command.
+`learn -h` exits 0 from v0.2.9 on; an older looper exits 2 on it, as an unknown command.
 
-If it fails, whether looper is missing or older than v0.2.8, stop and give the user that command. v0.2.8 is the first release with `looper context`, Step 0 below, which replaced `context.sh`; v0.2.7 added `looper plan`, Step 0b, which replaced `plan.py`; v0.2.6 added `looper threat-model` and `looper deferred`, the ledger reports Steps 2a and 2b run, and Step 0b's plan reads, which replaced `threat-model.py`, `deferred.py` and `pins.py`; v0.2.5 added `looper stats`, the Step 0 alarm, which replaced `review-stats.py`; v0.2.4 added `looper record`, which writes every row of the run record. It replaced `runlog.py`'s command line, and `runlog.py` remains only as a library the Python scripts import. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.9, stop and give the user that command. v0.2.9 is the first release with `looper learn`, Step 11; which release replaced which script is in this file's git history. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then run the context gatherer once:
 
@@ -256,7 +256,9 @@ If the loop exits with work still outstanding:
     Say so, and list the remaining findings. `convergence` is derived from the
     cycle rows, not from this report: spending the budget derives `capped`,
     stopping for any other reason (an interrupt, a test failure) derives
-    `halted`, and both push with a disclosure rather than stalling.
+    `halted`, and both push with a disclosure rather than stalling. That holds
+    when this session goes on to finish the run; a session that died before
+    Step 14 is abandoned instead (references/finish.md) and the tip gets a fresh run.
     The last cycle's row (outstanding work: applied > 0, asked > 0, or the analysis pass
     still changing files) is what makes this derivable rather than asserted. Not converging
     no longer blocks the push — Step 14 pushes with the `disclose` line the checker emits,
@@ -495,11 +497,13 @@ On Step 8b outcomes, record learnings in `<git-common-dir>/info/review-loop-lear
 
 **Security dismissals go to the threat model, not here.** When the user skips a *security* finding at Step 8b, write it under `## Not an issue here` in `<git-common-dir>/info/review-loop-threat-model.md` with today's date and a `[path @ sha]` pin. That file is the per-repo override channel for the vendored exclusion list, and it is the only section the security review reads for suppressions. A security dismissal in the learnings file is invisible to it.
 
-Do the edits with `learn.py` — you judge match/novelty/section; the script does the dated surgery:
+Do the edits with `looper learn` — you judge match/novelty/section; the command does the dated surgery:
 
-- Re-match of an existing entry → `python3 ~/.claude/skills/review-loop/learn.py bump <file> "<substring>"` (bumps its date to today — the freshness signal Step 2a depends on).
-- Novel entry → `learn.py add <file> "<text, no date>" --section dismissed|accepted` (stamps today's date; creates the file/sections if missing). `--section` goes after the text: argparse before 3.13 rejects a positional that follows an option here, so the other order fails on Python 3.12.
-- Cap fallback → `learn.py prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).
+- Re-match of an existing entry → `~/.local/bin/looper learn bump <file> "<substring>"` (bumps its date to today — the freshness signal Step 2a depends on).
+- Novel entry → `~/.local/bin/looper learn add <file> "<text, no date>" --section dismissed|accepted` (stamps today's date; creates the file/sections if missing; `--section` may come before or after the text).
+- Cap fallback → `~/.local/bin/looper learn prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).
+
+A non-zero exit means nothing was written: show its stderr and never report the learning as recorded. A usage error exits 2; the two refusals you will meet exit 1: `bump` matched no entry (`add` it instead), and `add --section dismissed` refused a reason that cites precedent (reword it with a measurable reason, or drop it).
 
 For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping, and the cap/split fallbacks, **Read `references/learnings-format.md`**. When in doubt whether an entry is worth writing, don't — the file's value is being scannable, not exhaustive.
 
@@ -590,7 +594,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
    numbers and the roster from the run record, appends your narrative verbatim, labels the PR
-   `review:<convergence>`, and writes the pending-report file by itself when there is no PR — or
+   `review:<convergence>` and, from v0.2.9, `risk:high|medium|low` from the plan's logic, runtime-change and attacker-reachable answers
+   (or removes any `risk:*` label when they give no level), and writes the pending-report file by itself when there is no PR — or
    when the post *fails*, so a transient GitHub error cannot destroy the report. It keeps that
    local copy after a *successful* post too, and labels the PR whenever one exists, even if the
    comment failed.
