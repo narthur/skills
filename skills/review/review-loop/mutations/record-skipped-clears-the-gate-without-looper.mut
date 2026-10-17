@@ -4,7 +4,7 @@ expect: FAIL  no looper refuses the skip
 why:    this script wrapped its run-record write in `if [ -f "$RUNLOG" ]`, so with the writer absent it stamped the sha skipped and exited 0 while the run record never heard of it — the unexplained gate-clear the script exists to replace, reached through a partial install. A missing looper has to refuse, not quietly drop the audit row.
 --- old
 if [ ! -x "$LOOPER" ]; then
-	echo "record-skipped: $LOOPER is missing, so the skip cannot be recorded; nothing recorded. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.8" >&2
+	echo "record-skipped: $LOOPER is missing, so the skip cannot be recorded; nothing recorded. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.9" >&2
 	exit 1
 fi
 if ! "$LOOPER" record skipped --reason "$reason" >/dev/null; then
