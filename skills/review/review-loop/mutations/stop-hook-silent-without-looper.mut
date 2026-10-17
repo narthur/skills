@@ -1,5 +1,5 @@
 target: skills/review/review-loop/stop-hook.sh
-verify: bash skills/review/review-loop/runlog.test.sh
+verify: bash skills/review/review-loop/stop-hook.test.sh
 expect: FAIL  a missing looper is reported, not swallowed
 why:    the hook resolved its record reader and exited 0 when it was absent (`[ -x "$RUNLOG" ] || exit 0`), so a broken install turned off the only net under an unfinished run and said nothing. It must never block on its own breakage, but silence is the one answer that cannot be told apart from "nothing open".
 --- old
