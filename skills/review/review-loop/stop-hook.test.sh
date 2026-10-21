@@ -70,7 +70,7 @@ msg=$("$PY" -c 'import json,sys; d=json.loads(sys.stdin.read()); print("BLOCKS" 
 # --- into a fixture HOME rather than found on PATH.
 looper_checks=0
 if real_looper=$(command -v looper); then
-	looper_checks=15
+	looper_checks=16
 	lhome="$TMP/looper-home"; mkdir -p "$lhome/.local/bin" && ln -s "$real_looper" "$lhome/.local/bin/looper"
 	L="$lhome/.local/bin/looper"
 
@@ -145,8 +145,15 @@ if real_looper=$(command -v looper); then
 		&& ok "looper push-check refuses a run that was never finished" || bad "looper push-check refuses a run that was never finished: $pc"
 	"$L" record finish --run-id "$lrid" --outcome cycle-limit --tier full >/dev/null 2>&1
 	pc=$("$L" push-check --run-id "$lrid" --branch feat/x --default-branch main 2>/dev/null)
+	pcrc=$?
 	grep -q '"push":false' <<<"$pc" && grep -q 'report has not reached' <<<"$pc" \
 		&& ok "looper push-check refuses a run whose report has not landed" || bad "looper push-check refuses a run whose report has not landed: $pc"
+	# SKILL.md Step 14 says a refusal exits 3 with its JSON still on stdout, so a command
+	# chained on push-check with && runs only on an allowed push. Before v0.2.10 a refusal
+	# exited 0 and such a chain pushed on push:false.
+	[ "$pcrc" -eq 3 ] && grep -q '"reason"' <<<"$pc" \
+		&& ok "looper push-check exits 3 on a refusal and still prints its reason" \
+		|| bad "looper push-check exits 3 on a refusal and still prints its reason (exit $pcrc: $pc)"
 
 	# And the alarm over finishes looper wrote: the third skip of one gate fires it. looper
 	# stats' goldens are hand-written rows, so this is where the writer's rows reach it.

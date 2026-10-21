@@ -119,8 +119,14 @@ jobs:
           # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
           # which replaced plan.py, and `context`, which replaced context.sh and is what Step 0's
           # preflight probed for until v0.2.9. v0.2.9 adds `learn`, which replaced learn.py and
-          # is what the preflight probes for now.
-          ref: 6ee5d892e8f998cb47577c2abc6bdb291ec92e56 # v0.2.9 (the commit, not the annotated tag object)
+          # is what the preflight probed for until v0.2.10. v0.2.10 adds `record pending --all`,
+          # which Step 0c flushes every branch's deferred report through and the preflight probes
+          # for now; push-check's exit 3 for a refusal and its branch defaults; and `record
+          # finish`'s refusals of a malformed escalation and a contradictory or second finish.
+          # 889f06e is the tip of looper's friction-2026-10-21 branch, whose changes ship as v0.2.10.
+          # Until that release is tagged and pushed this ref may not be fetchable and the trust job
+          # fails; once it is, confirm the tag's commit is this one, or re-pin to it.
+          ref: 889f06e74ddcbd7ca5d2f6fff0f49a592cddbb73 # v0.2.10 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

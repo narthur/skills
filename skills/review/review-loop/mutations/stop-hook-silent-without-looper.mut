@@ -3,6 +3,6 @@ verify: bash skills/review/review-loop/stop-hook.test.sh
 expect: FAIL  a missing looper is reported, not swallowed
 why:    the hook exited 0 when looper was absent (`[ -x "$LOOPER" ] || exit 0`; before v0.2.4 the same check was on runlog.py), so a broken install turned off the only net under an unfinished run and said nothing. It must never block on its own breakage, but silence is the one answer that cannot be told apart from "nothing open".
 --- old
-[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.9"
+[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.10"
 --- new
 [ -x "$LOOPER" ] || exit 0
