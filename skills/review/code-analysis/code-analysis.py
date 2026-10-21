@@ -64,10 +64,21 @@ CACHE_VARS = {
 }
 
 
+def cache_root(tmp: Path) -> Path:
+    """Owner-only cache dir. The fallback temp dir can be shared (/tmp), and a cache
+    another user planted there would feed packages straight into uvx/npx."""
+    root = tmp / f"code-analysis-cache-{os.getuid()}"
+    root.mkdir(mode=0o700, exist_ok=True)
+    st = root.lstat()
+    if root.is_symlink() or st.st_uid != os.getuid() or st.st_mode & 0o077:
+        raise RuntimeError(f"{root} is not an owner-only directory; refusing to use it as a cache")
+    return root
+
+
 def tool_env(base_env=None) -> dict:
     """Environment for analyzer subprocesses, with writable cache dirs filled in."""
     env = dict(os.environ if base_env is None else base_env)
-    root = Path(env.get("TMPDIR") or tempfile.gettempdir()) / "code-analysis-cache"
+    root = cache_root(Path(env.get("TMPDIR") or tempfile.gettempdir()))
     # npm reads its config env case-insensitively; respect either spelling.
     taken = {k.lower() for k, v in env.items() if v}
     for var, sub in CACHE_VARS.items():
@@ -823,12 +834,21 @@ def selftest() -> int:
         base = {"TMPDIR": td, "HOME": os.environ.get("HOME", td), "PATH": os.environ["PATH"],
                 "XDG_CACHE_HOME": str(tdp / "callers-own")}
         env = tool_env(base)
-        cache_root = tdp / "code-analysis-cache"
+        croot = tdp / f"code-analysis-cache-{os.getuid()}"
+        check(croot.stat().st_mode & 0o077 == 0, "the cache root is owner-only")
+        loose = tdp / "loose"
+        (loose / f"code-analysis-cache-{os.getuid()}").mkdir(parents=True, mode=0o777)
+        os.chmod(loose / f"code-analysis-cache-{os.getuid()}", 0o777)
+        try:
+            cache_root(loose)
+            check(False, "a group/world-writable cache root is refused")
+        except RuntimeError:
+            check(True, "a group/world-writable cache root is refused")
         for var, sub in CACHE_VARS.items():
             if var == "XDG_CACHE_HOME":
                 continue
             p = Path(env.get(var, ""))
-            check(env.get(var, "").startswith(str(cache_root))
+            check(env.get(var, "").startswith(str(croot))
                   and (p if sub.endswith("/") else p.parent).is_dir(),
                   f"{var} points at a created dir under $TMPDIR")
         check(env["XDG_CACHE_HOME"] == str(tdp / "callers-own"),
