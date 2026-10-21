@@ -196,7 +196,7 @@ fi
   {one JSON object per line}
   ```
 - Use parallel background jobs (`&` + `wait`) for multiple API calls
-- Store temp files in `$(mktemp -d)` with `trap 'rm -rf "$tmpdir"' EXIT`
+- Store temp files in `tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/<skill-name>.XXXXXX")` with `trap 'rm -rf "$tmpdir"' EXIT`. Always pass a template: macOS `mktemp` without one ignores `$TMPDIR` and writes under `/var/folders`, which the Claude Code sandbox denies. If the script then `cd`s into the dir, make a failed `mktemp` or `cd` stop it (`set -e`, or `cd "$tmpdir" || exit 1`); otherwise it carries on in the caller's directory.
 
 ### Step 5: Create Reference Files (if needed)
 

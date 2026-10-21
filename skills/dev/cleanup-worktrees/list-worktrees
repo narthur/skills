@@ -34,7 +34,7 @@ echo ""
 # Collect worktrees from git
 # porcelain format: groups of lines separated by blank lines
 # Each group: "worktree <path>\nHEAD <sha>\nbranch <ref>" (or "detached")
-tmpfile=$(mktemp)
+tmpfile=$(mktemp "${TMPDIR:-/tmp}/list-worktrees.XXXXXX")
 git -C "$REPO" worktree list --porcelain > "$tmpfile"
 
 found_any=false

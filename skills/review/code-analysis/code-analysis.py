@@ -13,9 +13,11 @@ import argparse
 import concurrent.futures
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import tomllib
@@ -38,9 +40,49 @@ SKIP_DIRS = {".git", "node_modules", "vendor", "dist", "build", ".next",
 # --------------------------------------------------------------------------- #
 # repo inspection
 # --------------------------------------------------------------------------- #
-def run(cmd, cwd=None, timeout=600):
+def run(cmd, cwd=None, timeout=600, env=None):
     return subprocess.run(cmd, cwd=cwd, capture_output=True, text=True,
-                          timeout=timeout)
+                          timeout=timeout, env=env)
+
+
+# Cache/state locations the analyzers (and their uvx/npx/bunx runners) write to.
+# Under the Claude Code sandbox the defaults (~/.cache, ~/.npm, ~/.semgrep,
+# ~/Library/Caches) are unwritable, and semgrep, zizmor, yamllint, markdownlint and
+# htmlhint then exited nonzero or printed nothing — which read as 0 findings.
+# Each points at a scratch dir under $TMPDIR unless the caller already set it.
+# Values are paths under the scratch root; a trailing "/" marks a directory,
+# anything else is a file whose parent directory gets created.
+CACHE_VARS = {
+    "UV_CACHE_DIR": "uv/",
+    "XDG_CACHE_HOME": "xdg/",
+    "npm_config_cache": "npm/",
+    "BUN_INSTALL_CACHE_DIR": "bun/",
+    "SEMGREP_LOG_FILE": "semgrep/semgrep.log",
+    "SEMGREP_VERSION_CACHE_PATH": "semgrep/semgrep_version",
+    "GOCACHE": "go-build/",
+    "GOLANGCI_LINT_CACHE": "golangci-lint/",
+}
+
+
+def tool_env(base_env=None) -> dict:
+    """Environment for analyzer subprocesses, with writable cache dirs filled in."""
+    env = dict(os.environ if base_env is None else base_env)
+    root = Path(env.get("TMPDIR") or tempfile.gettempdir()) / "code-analysis-cache"
+    # npm reads its config env case-insensitively; respect either spelling.
+    taken = {k.lower() for k, v in env.items() if v}
+    for var, sub in CACHE_VARS.items():
+        if var.lower() in taken:
+            continue
+        path = root / sub
+        (path if sub.endswith("/") else path.parent).mkdir(parents=True, exist_ok=True)
+        env[var] = str(path)
+    # semgrep's settings file can hold a login token, so only redirect it when
+    # semgrep would otherwise have to create it (first run writes an anonymous id).
+    if "SEMGREP_SETTINGS_FILE" not in env and not (
+            Path.home() / ".semgrep" / "settings.yml").exists():
+        (root / "semgrep").mkdir(parents=True, exist_ok=True)
+        env["SEMGREP_SETTINGS_FILE"] = str(root / "semgrep" / "settings.yml")
+    return env
 
 
 def is_git(root: Path) -> bool:
@@ -415,6 +457,14 @@ def c_pa11yci(o, e):
     return len(fnd), fnd
 
 
+def c_markdownlint(o, e):
+    """markdownlint-cli2 prints its banner/summary to stdout and the findings to
+    stderr as `path:line[:col] rule message`; counting stdout lines reported a
+    constant 4 whether the repo had 0 issues or 1883."""
+    fnd = [l for l in (e or "").splitlines() if re.match(r"^\S+:\d+(:\d+)? ", l)]
+    return len(fnd), fnd[:50]
+
+
 def c_generic_json(o, e):
     d = _load(o)
     if isinstance(d, list):
@@ -446,7 +496,7 @@ COUNTERS = {
     "semgrep": c_semgrep, "golangci": c_golangci, "govulncheck": c_govulncheck,
     "zizmor": c_zizmor, "sqlfluff": c_sqlfluff, "brakeman": c_brakeman,
     "generic_json": c_generic_json, "gitleaks": c_gitleaks, "fallow": c_fallow,
-    "pa11yci": c_pa11yci,
+    "pa11yci": c_pa11yci, "markdownlint": c_markdownlint,
 }
 
 
@@ -465,7 +515,7 @@ def build_argv(base, args, target_paths, report_path):
     return argv
 
 
-def run_tool(name, t, root, files, scoped, do_fix, rawdir):
+def run_tool(name, t, root, files, scoped, do_fix, rawdir, env=None):
     base = resolve_runner(t["runners"])
     if base is None:
         return {"tool": name, "status": "skipped",
@@ -496,13 +546,13 @@ def run_tool(name, t, root, files, scoped, do_fix, rawdir):
                              and not basename_matches(files, t.get("configs", [])))
     if fix_ok and t.get("fix"):
         try:
-            run(build_argv(base, t["fix"], target, report_path), cwd=root)
+            run(build_argv(base, t["fix"], target, report_path), cwd=root, env=env)
         except (subprocess.TimeoutExpired, OSError):
             pass
 
     argv = build_argv(base, t["cmd"], target, report_path)
     try:
-        p = run(argv, cwd=root)
+        p = run(argv, cwd=root, env=env)
     except subprocess.TimeoutExpired:
         return {"tool": name, "status": "error", "reason": "timeout", "cmd": " ".join(argv)}
     except OSError as ex:
@@ -520,8 +570,27 @@ def run_tool(name, t, root, files, scoped, do_fix, rawdir):
     raw = (p.stdout or "") + (("\n[stderr]\n" + p.stderr) if p.stderr.strip() else "")
     (rawdir / f"{name}.txt").write_text(raw)
 
+    # A tool that crashed (sandbox-denied cache, bad config, missing network) still
+    # exits, and its counter happily parses empty stdout as 0 findings. Only the
+    # exit codes the tool documents as a completed scan count as a result.
+    ok = t.get("ok_exit", [0])
+    reason = None
+    if p.returncode not in ok:
+        reason = f"exit {p.returncode}, not one of its result codes {ok}"
+    elif p.returncode != 0 and n == 0:
+        reason = f"exit {p.returncode} signals findings, but none could be parsed"
+    if reason:
+        return {"tool": name, "status": "error", "reason": reason,
+                "exit": p.returncode, "stderr": _excerpt(p.stderr or p.stdout),
+                "cmd": " ".join(argv)}
+
     return {"tool": name, "status": "ran", "exit": p.returncode,
             "findings": n, "sample": fnd[:25], "cmd": " ".join(argv)}
+
+
+def _excerpt(text: str, limit: int = 600) -> str:
+    text = (text or "").strip()
+    return text if len(text) <= limit else "…" + text[-limit:]
 
 
 # --------------------------------------------------------------------------- #
@@ -533,6 +602,9 @@ def write_report(outdir: Path, summary: dict):
     L = ["# Static analysis report", ""]
     L.append(f"- scope: **{summary['scope']}**  ·  target: `{summary['target']}`")
     L.append(f"- total findings: **{summary['total_findings']}**")
+    if summary["tools_errored"]:
+        L.append(f"- **NOT CLEAN — {len(summary['tools_errored'])} tool(s) errored:** "
+                 + ", ".join(summary["tools_errored"]))
     ran = [r for r in summary["results"] if r["status"] == "ran"]
     skipped = [r for r in summary["results"] if r["status"] == "skipped"]
     errored = [r for r in summary["results"] if r["status"] == "error"]
@@ -545,9 +617,11 @@ def write_report(outdir: Path, summary: dict):
             hint = f" — install: `{r['install_hint']}`" if r.get("install_hint") else ""
             L.append(f"- **{r['tool']}**: {r['reason']}{hint}")
     if errored:
-        L += ["", "## Errors", ""]
+        L += ["", "## Errors — these tools did not scan; their 0 is not a pass", ""]
         for r in errored:
             L.append(f"- **{r['tool']}**: {r['reason']}")
+            if r.get("stderr"):
+                L += ["  ```", *("  " + l for l in r["stderr"].splitlines()), "  ```"]
     for r in sorted(ran, key=lambda r: -r["findings"]):
         if r["findings"]:
             L += ["", f"### {r['tool']} ({r['findings']})", "```"]
@@ -570,7 +644,11 @@ def main() -> int:
     ap.add_argument("--sql", action="store_true", help="include SQLFluff (on-demand)")
     ap.add_argument("--exit-zero", action="store_true", help="always exit 0")
     ap.add_argument("--jobs", type=int, default=min(8, (os.cpu_count() or 4)))
+    ap.add_argument("--selftest", action="store_true",
+                    help="check exit-code and cache-env handling, then exit")
     args = ap.parse_args()
+    if args.selftest:
+        return selftest()
 
     root = Path(args.path).resolve()
     if not root.is_dir():
@@ -604,32 +682,168 @@ def main() -> int:
     for old in rawdir.glob("*"):
         old.unlink()
 
+    env = tool_env()
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
-        futs = {ex.submit(run_tool, n, reg[n], root, all_files, scoped, args.fix, rawdir): n
+        futs = {ex.submit(run_tool, n, reg[n], root, all_files, scoped, args.fix,
+                          rawdir, env): n
                 for n in tools}
         for fut in concurrent.futures.as_completed(futs):
             results.append(fut.result())
 
-    total = sum(r.get("findings", 0) for r in results if r["status"] == "ran")
-    summary = {
-        "scope": scope,
-        "target": str(root),
-        "total_findings": total,
-        "tools_run": sorted(r["tool"] for r in results if r["status"] == "ran"),
-        "tools_skipped": sorted(r["tool"] for r in results if r["status"] == "skipped"),
-        "results": sorted(results, key=lambda r: r["tool"]),
-    }
+    summary = summarize(results, scope, root)
     write_report(outdir, summary)
-
-    print(f"code-analysis: {total} findings across {len(summary['tools_run'])} tools "
-          f"({len(summary['tools_skipped'])} skipped) -> {OUTDIR}/report.md")
+    print(headline(summary) + f" -> {OUTDIR}/report.md")
 
     if args.exit_zero:
         return 0
-    if any(r["status"] == "error" for r in results):
+    return exit_code(summary)
+
+
+def summarize(results: list[dict], scope: str, root: Path) -> dict:
+    total = sum(r.get("findings", 0) for r in results if r["status"] == "ran")
+    errored = sorted(r["tool"] for r in results if r["status"] == "error")
+    return {
+        "scope": scope,
+        "target": str(root),
+        "total_findings": total,
+        # clean means every selected tool completed a scan and found nothing. An
+        # errored tool never contributes to it, whatever it printed.
+        "clean": total == 0 and not errored,
+        "tools_run": sorted(r["tool"] for r in results if r["status"] == "ran"),
+        "tools_skipped": sorted(r["tool"] for r in results if r["status"] == "skipped"),
+        "tools_errored": errored,
+        "results": sorted(results, key=lambda r: r["tool"]),
+    }
+
+
+def headline(summary: dict) -> str:
+    line = (f"code-analysis: {summary['total_findings']} findings across "
+            f"{len(summary['tools_run'])} tools ({len(summary['tools_skipped'])} skipped")
+    if summary["tools_errored"]:
+        line += (f", {len(summary['tools_errored'])} ERRORED: "
+                 f"{', '.join(summary['tools_errored'])} — not a clean result")
+    return line + ")"
+
+
+def exit_code(summary: dict) -> int:
+    if summary["tools_errored"]:
         return 2
-    return 1 if total else 0
+    return 1 if summary["total_findings"] else 0
+
+
+# --------------------------------------------------------------------------- #
+# selftest
+# --------------------------------------------------------------------------- #
+def selftest() -> int:
+    """Fake analyzers (python3 one-liners) through the real run_tool/summarize path.
+
+    Guards the two silent-zero failures seen under the sandbox: a crashed scanner
+    summarised as "0 findings", and analyzers handed unwritable cache dirs.
+    """
+    failures = []
+
+    def check(cond, msg):
+        print(("ok    " if cond else "FAIL  ") + msg)
+        if not cond:
+            failures.append(msg)
+
+    def fake(script, ok_exit=None, count=""):
+        t = {"runners": [f"path:{sys.executable}"], "cmd": ["-c", script],
+             "target": "none", "count": count}
+        if ok_exit is not None:
+            t["ok_exit"] = ok_exit
+        return t
+
+    banner = "markdownlint-cli2 v0.24.0\nFinding: a.md\nLinting: 1 file(s)\nSummary: 0 error(s)\n"
+    check(c_markdownlint(banner, "")[0] == 0
+          and c_markdownlint(banner, "a.md:3:81 error MD013/line-length Line length\n")[0] == 1,
+          "markdownlint counts stderr findings, not its stdout banner")
+
+    reg = tomllib.loads(REGISTRY.read_text())
+    missing = sorted(n for n, t in reg.items() if "ok_exit" not in t)
+    check(not missing, f"every registry tool declares ok_exit (missing: {missing or 'none'})")
+
+    with tempfile.TemporaryDirectory(dir=os.environ.get("TMPDIR") or None) as td:
+        tdp = Path(td)
+        rawdir = tdp / "raw"
+        rawdir.mkdir()
+        files = ["x.py"]
+
+        def go(name, t, env=None):
+            return run_tool(name, t, tdp, files, None, False, rawdir, env)
+
+        crashed = go("crashed", fake(
+            "import sys; sys.stderr.write('Permission denied: ~/.semgrep\\n'); sys.exit(2)",
+            ok_exit=[0, 1], count="semgrep"))
+        check(crashed["status"] == "error", "exit outside ok_exit -> status error")
+        check("exit 2" in crashed.get("reason", "")
+              and "Permission denied" in crashed.get("stderr", ""),
+              "errored result carries the exit code and a stderr excerpt")
+
+        # Partial output from a failed run must not rescue it: semgrep can print
+        # some results and still exit 2 on a rule or parse error.
+        partial = go("partial", fake(
+            "import json,sys; print(json.dumps({'results':[{'path':'x.py','check_id':'r'}]}));"
+            " sys.exit(2)", ok_exit=[0, 1], count="semgrep"))
+        check(partial["status"] == "error"
+              and "not one of its result codes" in partial.get("reason", ""),
+              "exit outside ok_exit with parsed output -> still status error")
+
+        undeclared = go("undeclared", fake("import sys; print('a line'); sys.exit(1)"))
+        check(undeclared["status"] == "error", "no ok_exit -> only exit 0 counts as a scan")
+
+        hollow = go("hollow", fake("import sys; sys.exit(1)", ok_exit=[0, 1],
+                                   count="semgrep"))
+        check(hollow["status"] == "error",
+              "'found issues' exit with nothing parsed -> status error")
+
+        found = go("found", fake(
+            "import json,sys; print(json.dumps({'results':[{'path':'x.py','check_id':'r'}]}));"
+            " sys.exit(1)", ok_exit=[0, 1], count="semgrep"))
+        check(found["status"] == "ran" and found["findings"] == 1,
+              "documented 'found issues' exit with findings -> ran, counted")
+
+        clean = go("clean", fake("print('{\"results\": []}')", ok_exit=[0, 1],
+                                 count="semgrep"))
+        check(clean["status"] == "ran" and clean["findings"] == 0, "exit 0, empty -> ran clean")
+
+        s = summarize([clean, crashed], "whole-repo", tdp)
+        check(s["clean"] is False and s["tools_errored"] == ["crashed"],
+              "an errored tool never makes the summary clean")
+        check("ERRORED: crashed" in headline(s), "headline names the errored tool")
+        check(exit_code(s) == 2, "errored run exits 2, not 0")
+        write_report(tdp, s)
+        check("did not scan" in (tdp / "report.md").read_text(),
+              "report.md flags errored tools as not a pass")
+        check(summarize([clean], "whole-repo", tdp)["clean"] is True,
+              "all tools ran with 0 findings -> clean")
+
+        # cache env: filled in under $TMPDIR, created, and caller values respected
+        base = {"TMPDIR": td, "HOME": os.environ.get("HOME", td), "PATH": os.environ["PATH"],
+                "XDG_CACHE_HOME": str(tdp / "callers-own")}
+        env = tool_env(base)
+        cache_root = tdp / "code-analysis-cache"
+        for var, sub in CACHE_VARS.items():
+            if var == "XDG_CACHE_HOME":
+                continue
+            p = Path(env.get(var, ""))
+            check(env.get(var, "").startswith(str(cache_root))
+                  and (p if sub.endswith("/") else p.parent).is_dir(),
+                  f"{var} points at a created dir under $TMPDIR")
+        check(env["XDG_CACHE_HOME"] == str(tdp / "callers-own"),
+              "a cache var the caller set is left alone")
+        check(tool_env({**base, "NPM_CONFIG_CACHE": "/x"}).get("npm_config_cache") is None,
+              "npm cache set in either case is respected")
+
+        seen = go("env", fake(
+            "import os; print(os.environ.get('UV_CACHE_DIR', 'UNSET'))", ok_exit=[0]), env)
+        raw = (rawdir / "env.txt").read_text().strip()
+        check(seen["status"] == "ran" and raw == env["UV_CACHE_DIR"],
+              "analyzer subprocesses receive the cache env")
+
+    print(f"\nselftest FAILED: {len(failures)} check(s)" if failures else "\nselftest passed")
+    return 1 if failures else 0
 
 
 if __name__ == "__main__":

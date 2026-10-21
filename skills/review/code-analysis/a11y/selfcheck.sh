@@ -4,7 +4,7 @@
 # instead of erroring. Asserts a known-bad file is caught and a clean one is not.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TMP="$(mktemp -d)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/a11y-selfcheck.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 printf 'export const Bad = () => <img src="x" />;\n' > "$TMP/bad.tsx"

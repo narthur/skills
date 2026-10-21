@@ -23,7 +23,7 @@ echo "$repo"
 # Needs the `security_events` (or `repo`) scope. A 403 usually means the token
 # lacks it — fix with: gh auth refresh -s security_events
 echo "=== ALERTS ==="
-err_file=$(mktemp)
+err_file=$(mktemp "${TMPDIR:-/tmp}/fetch-alerts.XXXXXX")
 trap 'rm -f "$err_file"' EXIT
 alerts_raw=$(gh api --paginate "/repos/$repo/dependabot/alerts?state=open&per_page=100" 2>"$err_file") || {
   err=$(cat "$err_file")

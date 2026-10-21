@@ -22,7 +22,13 @@ python3 ~/.claude/skills/code-analysis/code-analysis.py [PATH] [flags]
 - `--sql` — include SQLFluff (otherwise on-demand: only runs if the repo has a sqlfluff config).
 - `--exit-zero` — always exit 0 (for callers that don't want the gate).
 
-**Exit codes:** `0` clean or only skips · `1` findings present · `2` script error.
+**Exit codes:** `0` clean or only skips · `1` findings present · `2` script error or an analyzer errored.
+
+**Errored ≠ clean.** A tool whose exit code isn't one of its documented result codes (`ok_exit` in `registry.toml`) is recorded as `status: "error"` with its exit code and a stderr excerpt, listed in `summary.json`'s `tools_errored`, and called out in the one-line summary and `report.md`. `summary.json`'s `clean` is true only when every selected tool completed a scan and found nothing. Relay errored tools as unscanned, never as 0 findings.
+
+**Sandbox caches.** Analyzer subprocesses get `UV_CACHE_DIR`, `XDG_CACHE_HOME`, `npm_config_cache`, `BUN_INSTALL_CACHE_DIR`, `SEMGREP_LOG_FILE`, `SEMGREP_VERSION_CACHE_PATH`, `GOCACHE` and `GOLANGCI_LINT_CACHE` pointed at `$TMPDIR/code-analysis-cache/` (plus `SEMGREP_SETTINGS_FILE` when `~/.semgrep/settings.yml` doesn't exist yet), unless the caller already set them. The ephemeral runners (uvx/npx) still need network to fetch a tool on first use; under the sandbox that shows up as an errored tool, not a silent zero.
+
+`python3 code-analysis.py --selftest` checks both behaviours.
 
 ## Output (git-ignored, latest overwrites)
 
@@ -42,7 +48,7 @@ python3 ~/.claude/skills/code-analysis/code-analysis.py [PATH] [flags]
 ## Adding a tool
 
 Edit `registry.toml` — one table per tool (fields documented at the top of that
-file). Add a count parser in `code-analysis.py` (`COUNTERS`) only if the tool
+file), including `ok_exit` from the tool's documented exit codes. Add a count parser in `code-analysis.py` (`COUNTERS`) only if the tool
 emits clean JSON; otherwise it falls back to exit-code + line count automatically.
 
 ## Scope
