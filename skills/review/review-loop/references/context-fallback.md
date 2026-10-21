@@ -54,7 +54,7 @@ Search for project-standard test and lint commands. Check (in this order):
 1. Root `CLAUDE.md` — look for explicit "test command" / "lint command" instructions
 2. `package.json` `scripts` — `test`, `lint` (note if `lint` supports `--fix` or a `lint:fix` script exists)
 3. `Makefile` — `test`, `lint` targets
-4. Language-specific configs: `pytest.ini` / `pyproject.toml` → `pytest`; `ruff.toml` / `.ruff.toml` → `ruff check --fix`; `.eslintrc*` → `eslint --fix`; `.rubocop.yml` → `rubocop -A`; `Cargo.toml` → `cargo clippy --fix` and `cargo test`
+4. Language-specific configs: `pytest.ini` / `pyproject.toml` → `pytest`; `ruff.toml` / `.ruff.toml` → `ruff check --fix`; `.eslintrc*` → `eslint --fix`; `.rubocop.yml` → `rubocop -A`; `Cargo.toml` → `cargo clippy --fix` and `cargo test`; `go.mod` → `go test ./...` and `go fmt ./... && go vet ./...` (which rewrites files, so stage what it changes)
 5. CI config (`.github/workflows/*.yml`) as a last-resort hint
 
 Record what you found. If no test command can be detected, warn the user once at the start: "No test command detected — fix-induced regressions won't be caught between cycles." Same for lint.

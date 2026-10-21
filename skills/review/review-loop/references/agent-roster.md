@@ -8,6 +8,12 @@ in `conditional-agents.md`.
 
 > The user prefers an immutable style as the default: `const` over `let`-reassignment, expression forms (`??`/`||` short-circuit chains, ternaries, `map`/`filter`/`reduce`) over accumulate-and-mutate flows. Flag diff-introduced mutable patterns ONLY when they collapse cleanly into an immutable form with identical behavior. Do NOT flag mutability that is clearly more readable (deep nesting to avoid it, unwieldy expression) or measurably faster (hot loops, large-array copies) — those are the legitimate exceptions, not violations.
 
+**Scratch files (pass to every agent this skill spawns, verbatim, with the run dir's absolute path filled in)** — review agents, scorers, the security stages, the conditional agents, the threat-model and sweep agents:
+
+> Do not edit the repo under review; the only file you may change is one your brief names. Write scratch files only under `<run dir>` or `$TMPDIR`, never in the repo's working directory. Before any write, confirm that the `mktemp` or `cd` it depends on succeeded (`d=$(mktemp -d "$TMPDIR/x.XXXXXX") || exit 1`, `cd "$d" || exit 1`): when the sandbox denies a path, a failed `cd` silently leaves you at the repo root and the next write lands in the code under review. A fake `HOME` must be an absolute path outside the repo, such as `HOME="$TMPDIR/fake-home"`, never a bare name like `HOME=nonexistent-home`, which resolves against the repo root and lets tools write caches into it. If you wrote anything into the repo by mistake, say so in your output.
+
+Two agents broke this before it was written down. A read-only agent's `mktemp` was denied, its `cd` failed, and its edit script rewrote a source file in the repo under review; another set `HOME` to a relative name and Python wrote a bytecode cache into the repo, which `looper mutate` then refused to start on.
+
 ### Agent #1 — Standards compliance `[model: sonnet]` · file-scoped, whole-file, batched
 - You receive the whole changed file(s) in your batch plus the diff of what changed.
 - List all relevant `CLAUDE.md` files (root + every directory touched by the batch)
