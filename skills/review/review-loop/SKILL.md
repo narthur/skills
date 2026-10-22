@@ -479,7 +479,7 @@ For each ask-bucket finding, form your recommendation first: apply the fix, skip
 
 - **No clear recommendation.** You would not pick the same option again on a re-read, or the choice turns on the user's intent or taste (which of several structural deletions to take, whether behaviour X was intended).
 - **The suggested fix is unclear or conflicts with the current state** (Step 7, item 3).
-- **A behavioral finding with no `observed_failure`** (`bucket.py` routes these to ask). Apply it on recommendation only after constructing the failing case and watching it fail, as Step 8a requires; otherwise ask.
+- **A behavioral finding with no `observed_failure`** (`bucket.py` routes these to ask). It leaves this list only once you construct the failing case, watch it fail, and can state that failure as its `observed_failure` (Step 8a); then it is decided like any other finding.
 - **A `CLAUDE.md` file or learnings entry says "always ask the user about X"** and the finding is about X. The user's own instruction outranks the acceptance rate above.
 - **An authorization finding (`5-security-authz`).** A wrong authz fix looks exactly like a right one until real users are locked out.
 - **A spec-conformance finding (Agent #11).** The spec is the user's; whether the code or the spec moves is theirs to say.
@@ -625,7 +625,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
      --executed '{"<gate>":{"status":"done|skipped|failed|n/a","reason":"..."}}' \
      --escalations '[{"gate":"...","reason":"..."}]' \
      --agents '[{"id":"2-bugs","model":"sonnet","status":"ok","findings":3}]' \
-     --findings '{"auto_fix":N,"asked":N,"recommended":N,"skipped":N}' --asks <questions still owed to the user>
+     --findings '{"auto_fix":N,"asked":N,"recommended_applied":N,"recommended_skipped":N,"skipped":N}' --asks <questions still owed to the user>
    ```
 
    **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
@@ -654,11 +654,14 @@ honesty rule, and the full "when NOT to auto-push" spec.
    claim, and it has to, because nothing downstream enforces it: the push gate never reads the tier
    and the PR label is keyed on `convergence`. The tier reaches the PR comment body and
    `looper stats`, so a laundered `full` is wrong exactly where a human would read it.
-   The four counts are disjoint: `auto_fix` is Step 7/8a auto-fixes, `asked` is questions put to
-   the user, `recommended` is findings Step 8b settled on recommendation (applied or skipped, listed
-   in the report), and `skipped` is the <50 bucket. `--asks` is only the questions still owed to the
-   user; a recommended skip is settled, not owed. Keep `recommended` apart from `asked`: it is how a
-   later review tells whether acting on recommendations is drawing reversals.
+   The counts are disjoint: `auto_fix` is Step 7/8a auto-fixes, `asked` is questions put to the
+   user, `recommended_applied` and `recommended_skipped` are findings Step 8b settled on
+   recommendation (listed in the report), and `skipped` is the <50 bucket. `--asks` is only the
+   questions still owed to the user; a recommended skip is settled, not owed. The two
+   `recommended_*` counts are the denominators for checking whether acting on recommendations draws
+   reversals: a reverted applied one shows up as a `Revert` of a commit found by
+   `git log --grep='applied on recommendation'`, and a reversed skip as the user asking for it in a
+   later turn.
    Non-interactive session (`AskUserQuestion` aborts in headless and AO worker runs): Step 8b
    applies unchanged, since acting on a recommendation never needed anyone present, and the report
    is where an absent user reverses it. Leave the findings Step 8b says to ask unapplied, list them

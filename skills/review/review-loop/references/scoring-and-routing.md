@@ -51,7 +51,7 @@ Plus four hard rules that override the matrix:
 
 ## Framing the question for non-expert readers (Step 8b)
 
-This applies only to the findings Step 8b still asks (its "Still ask" list). The user is choosing whether to apply a fix; they need enough context to decide without re-reading the diff. Every finding that reaches this point is one you could not settle yourself — no clear recommendation, or a rule that reserves the call for the user — so the user is genuinely being asked to make a judgment call.
+This applies only to the findings Step 8b still asks (its "Still ask" list). The user is choosing whether to apply a fix; they need enough context to decide without re-reading the diff. Every finding that reaches this point either had no clear recommendation or is one a rule reserves for the user; either way the call is theirs. When you do hold a recommendation on a reserved finding, say so in the question.
 
 Before the options, write a short framing in the `question` field that covers:
 
