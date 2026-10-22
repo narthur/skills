@@ -629,16 +629,18 @@ honesty rule, and the full "when NOT to auto-push" spec.
    ```
 
    **Pick the outcome by what stopped the run, broken tree first.** A Step 9 failure is
-   `test-failure` and a blocked gate is `blocked`, even with asks still open: pass the open count as
-   `--asks` anyway, and never let `asks-open` stand in for a broken tree, since `asks-open` pushes and
-   gets stamped. With the tree sound, any question still owed to the user (interactive or not) is
-   `asks-open`; a spent agent budget with nothing owed is `cycle-limit`; nothing left at all is
+   `test-failure`, and a tree you know is broken is `blocked`, even with asks still open: pass the
+   open count as `--asks` anyway, and never let `asks-open` stand in for a broken tree, since
+   `asks-open` pushes and gets stamped. (A blocked evidence or measurement gate is not an outcome; it
+   goes to push-check as `--gate-state blocked`.) With the tree sound, any question still owed to the
+   user (interactive or not) is `asks-open`, even when the agent budget is also spent, and it derives
+   `halted`, not `capped`; a spent budget with nothing owed is `cycle-limit`; nothing left at all is
    `clean`.
 
    **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
    `--escalations` that is not a list of `{"gate":"…","reason":"…"}` objects with both strings
    non-blank (a non-empty object such as `{"security":"why"}` is refused; with nothing to escalate, pass `[]` or leave the flag out); `--outcome clean` with `--asks`
-   above zero (unresolved asks are a halted run, not a clean one: record `asks-open`); `--outcome asks-open` with no `--asks` above zero;
+   above zero (unresolved asks are a halted run, not a clean one: pick the outcome as above); `--outcome asks-open` with no `--asks` above zero;
    a second finish for the same run id (a wrong finish is fixed by starting a new run, never by
    finishing again); and a row its own readers could not decode, which it checks before appending,
    so a refused finish leaves the run open rather than poisoned. Show its stderr and fix the input.
@@ -647,9 +649,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
    the push decision on purpose (`push-check` refuses a run with no finish row, and the report
    renders the outcome and tier from it), so `record_reviewed`, which runs at step 3 below and only
    on `push: true`, has not run yet: never record it as `done` here. If the plan marked it `run`,
-   account for it as `n/a` with the reason that it follows the push decision (on a run that did
-   not converge, the reason is the outcome; `references/finish.md` explains why `n/a` and not
-   `skipped`).
+   account for it as `n/a` with the reason that it follows the push decision, whatever the run's
+   convergence (`references/finish.md` explains why `n/a` and not `skipped`).
 
    One `executed` entry per gate the plan marked `run` — **`finish` refuses and writes nothing if
    one is missing**, so account for each gate or record an escalation. If a planned gate genuinely
@@ -672,9 +673,9 @@ honesty rule, and the full "when NOT to auto-push" spec.
    Non-interactive session (`AskUserQuestion` aborts in headless and AO worker runs): Step 8b
    applies unchanged, since acting on a recommendation never needed anyone present, and the report
    is where an absent user reverses it. Leave the findings Step 8b says to ask unapplied, list them
-   in the PR as open questions, and record `--outcome asks-open` with that count as `--asks`;
+   in the PR as open questions, and, with the tree sound, record `--outcome asks-open` with that count as `--asks`;
    inside AO also `ao report --needs-input`. Never act on one of those because nobody is there to
-   ask. **`asks-open`, never `blocked`, is the outcome for a run that ended on open asks**: `blocked`
+   ask. **With the tree sound, `asks-open`, never `blocked`, is the outcome for a run that ended on open asks**: `blocked`
    means a broken tree, so push-check refuses it, and a refused run's tip is never stamped. The
    next run then measures its delta from the base branch and re-reviews everything (looper #41).
    When the user answers later, follow `references/finish.md` *Answers after the run*.
