@@ -42,7 +42,7 @@ COMMENT_TEXT="${2:-}"
 # If no comment text provided, open editor
 if [[ -z "$COMMENT_TEXT" ]]; then
   EDITOR="${EDITOR:-vi}"
-  TEMP_FILE=$(mktemp)
+  TEMP_FILE=$(mktemp "${TMPDIR:-/tmp}/pr-comment.XXXXXX")
   
   # Add helpful header
   cat > "$TEMP_FILE" <<EOF

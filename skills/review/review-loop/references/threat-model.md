@@ -27,8 +27,12 @@ Location: `<git-common-dir>/info/review-loop-threat-model.md`. Resolve with
 Every claim is **OBSERVED** or **INFERRED**.
 
 - **OBSERVED** — verified by reading the code. Carries a citation: `[path:line @ sha]`,
-  `[path:start-end @ sha]`, or `[path @ sha]` for a whole-file claim. The sha is the commit the
-  claim was verified at (`git rev-parse --short HEAD`).
+  `[path:start-end @ sha]`, `[path:206,225-231 @ sha]` (a comma-separated list of lines and
+  ranges, no spaces), or `[path @ sha]` for a whole-file claim. The sha is the commit the claim was
+  verified at (`git rev-parse --short HEAD`), 7 to 40 lower-case hex digits. A claim is its
+  `OBSERVED:` line plus the indented continuation lines after it, up to a blank line, an
+  unindented line or an indented bullet of its own, so a pin on a wrapped line still cites it. A
+  claim may carry several pins, on one line or several, and `looper threat-model` checks every one.
 - **INFERRED** — a reasonable belief that was not verified. No citation. Consumers treat it as a
   hypothesis to check, not a fact to rely on.
 
@@ -133,7 +137,17 @@ does not retry.
 
 ## Update brief (every subsequent run)
 
-Input: `~/.local/bin/looper threat-model` output plus this cycle's diff.
+Input: `~/.local/bin/looper threat-model` output plus this cycle's diff. Its fields, so the agent
+reads them right: `claims` counts OBSERVED claims, not citation lines; `uncited` counts OBSERVED
+claims with no pin anywhere in their block; `stale[]` holds pins whose file moved since their sha,
+with the commits that moved it; `broken_pins[]` holds pins whose sha names no commit here, **and**
+entries shaped `{line, malformed}`, which are pin-shaped text that does not parse as a pin (a stray
+space, an upper-case or six-character sha, a range written `1-`), quoted as written.
+
+Pass the agent the absolute path of the run dir (SKILL.md Step 0) and the safety rules from
+`references/agent-roster.md`'s *Scratch files* section. In a worktree-isolated session its edit to
+the threat model may be refused: it writes the full updated file to `<run dir>/ledger-threat-model.md`
+instead and says so, and the orchestrator reports it for the main session to apply.
 
 1. **Re-verify the stale claims.** Each entry in `stale[]` has a cited file that changed since its
    pin. Read the current code. Then either re-pin at `HEAD` (still true), rewrite (changed), or
@@ -145,6 +159,9 @@ Input: `~/.local/bin/looper threat-model` output plus this cycle's diff.
    dismissal with a broken pin is a suppression nothing re-examines, so item 4 does not protect
    it. Name every "Not an issue here" or "Watch this spot" entry you rewrite or delete in your
    output, so the change to the user's entries reaches the Step 14 report.
+   A `{line, malformed}` entry is fixed by rewriting that pin on that line into a form above —
+   usually the sha or the line spec is what is wrong. Re-read the cited code before giving it a
+   new sha, as for a stale pin.
 2. **Add new surface from the diff.** New route, new job, new external integration, new sensitive
    field, new trust boundary, new metered resource, new outbound call → a new claim.
 3. **Demote what you could not verify.** An OBSERVED claim you could not confirm becomes INFERRED

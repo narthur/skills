@@ -16,26 +16,41 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — the run record's writer and Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-~/.local/bin/looper learn -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.9 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.9" >&2; false; }
+~/.local/bin/looper record pending --all -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.10 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.10" >&2; false; }
 ```
 
-`learn -h` exits 0 from v0.2.9 on; an older looper exits 2 on it, as an unknown command.
+`record pending --all -h` prints usage and exits 0 from v0.2.10 on. v0.2.9 and earlier exit 2 on it (`flag provided but not defined: -all`), and a looper with no `record` at all exits 2 on the unknown command. `-h` writes nothing and reads no store. The probe is a flag rather than `looper version` because a looper built from a checkout prints `(devel)` or a pseudo-version there, which no string comparison can order.
 
-If it fails, whether looper is missing or older than v0.2.9, stop and give the user that command. v0.2.9 is the first release with `looper learn`, Step 11; which release replaced which script is in this file's git history. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.10, stop and give the user that command. v0.2.10 is the first release with `record pending --all` (Step 0c), push-check's exit 3 for a refusal and its branch defaults (Step 14), and `record finish`'s refusals of a malformed escalation, a contradictory or second finish, and a row it cannot read back (Step 14). Which release replaced which script is in this file's git history. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
-Then run the context gatherer once:
+Then make this run's **run dir** and run the context gatherer once into it:
 
 ```bash
-~/.local/bin/looper context > "$(git rev-parse --git-dir)/review-loop-context.json"
-cat "$(git rev-parse --git-dir)/review-loop-context.json"
+mkdir -p ~/.claude/review-loop/run && mktemp -d ~/.claude/review-loop/run/new.XXXXXX
 ```
 
-Save it rather than reading it straight off the terminal: Step 0b needs the same JSON as a file, and re-running `looper context` there would re-fetch and could resolve a different base.
+```bash
+~/.local/bin/looper context > <run dir>/context.json
+cat <run dir>/context.json
+```
 
-It emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* deterministically — workspace detection, base-branch resolution (with `git fetch`), learnings load, and test/lint/diff-size detection. Read its fields instead of re-running those steps by hand:
+`<run dir>` is the absolute path `mktemp` printed; write it out in full in every later command, since shell state does not survive between calls. If `mktemp` failed or printed nothing, stop rather than improvise a path: a relative or empty one resolves against the working directory, which is the repo under review. Save the context rather than reading it straight off the terminal: Step 0b needs the same JSON as a file, and re-running `looper context` there would re-fetch and could resolve a different base. Once Step 0b prints the `run_id`, rename the dir to `~/.claude/review-loop/run/<run_id>` (`mv <run dir> ~/.claude/review-loop/run/<run_id>`) and use that path from then on, so the inputs on disk carry the id the record carries.
+
+**The run dir holds every per-run input** — the context JSON, the diffs, the briefs, the spec artifact, the prior PR comments, the findings narrative, any script you run looper through. It is `~/.claude/review-loop/run/<run_id>/` because:
+
+- **It is the same path inside and outside the sandbox.** `$TMPDIR` is not: it resolves to a different directory with the sandbox on vs. off, so a file written by an unsandboxed `gh` fetch could silently miss the copy the agents read (that is how Agent #11 once got an empty spec).
+- **It is outside `.git`.** Claude Code's worktree isolation refuses any command naming a path under `.git/`, so the old locations, `$(git rev-parse --git-dir)/review-loop-context.json` and `<git-common-dir>/info/review-loop-run/`, could not be written by a worktree-isolated builder at all.
+- **It is per run.** `<git-common-dir>` is shared by every worktree of the repo, and a fixed dir there was clobbered mid-fan-out by concurrent sessions in other worktrees, which then reviewed another session's diff. A run id belongs to one run.
+- **`~/.claude/review-loop/` is already where looper writes `runs.jsonl`**, so any session that can run the loop can write there.
+
+Delete a run dir once its run is closed (a finish or abandon row, which `~/.local/bin/looper record show --run-id <run_id>` lists) **and** nothing in it is still owed: a ledger update a worktree-isolated session could not apply (below) stays until the main session has applied it. A `new.*` dir with no run id was a Step 0 that never reached a plan, and may go once its session has ended.
+
+**In a worktree-isolated session**, two more things are refused that a main session can do. A write under `<git-common-dir>/info/` (the threat model, the learnings file, the deferred list, the pending reports) may be refused: write the update into the run dir instead, as `ledger-<name>.md` holding the exact text to add or the edit to make, and say in the report that it is waiting for the main session to apply. Never skip a ledger update silently; an unrecorded learning or deferral is one the next run cannot see. And a looper command carrying inline JSON (`--executed '{…}'`) may be refused as unverifiable: put the command in a script under the run dir and run that with `bash <run dir>/<name>.sh`.
+
+`looper context` emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* deterministically — workspace detection, base-branch resolution (with `git fetch`), learnings load, and test/lint/diff-size detection. Read its fields instead of re-running those steps by hand:
 
 - `base_branch` — the resolved base; `null` means all three fallbacks failed → ask the user (Step 1)
-- `test_cmd`, `lint_cmd`, `lint_fix` — detected commands (Step 3); `null` test_cmd → warn once per Step 3
+- `test_cmd`, `lint_cmd`, `lint_fix` — detected commands (Step 3); `null` test_cmd → warn once per Step 3. `lint_fix: true` means the lint command rewrites files (a Go module's `go fmt ./... && go vet ./...` is one), so Step 4a stages what it changed
 - `learnings` — contents of the learnings file, or `null` (Step 2)
 - `learnings_entries`, `learnings_compaction_due`, `today` — entry count, whether the staleness sweep should run (Step 2a), and today's date for the sweep's age math
 - `diff_stat`, `changed_lines` — branch diff size, raw
@@ -63,10 +78,10 @@ Every gate below whose trigger is a value in a script's output is computed here,
 
 ```bash
 ~/.local/bin/looper plan \
-  --context "$(git rev-parse --git-dir)/review-loop-context.json" \
+  --context <run dir>/context.json \
   --model <your own model id> \
   --logic yes|no --behavioral-goal yes|no --runtime-change yes|no --attacker-reachable yes|no \
-  [--spec-artifact yes|no]
+  [--spec-artifact yes|no] [--delta-logic yes|no]
 ```
 
 Four booleans, because they are the only inputs a script can't measure — and because free text here is where improvisation re-enters wearing a manifest. Answer them about the branch diff:
@@ -76,7 +91,13 @@ Four booleans, because they are the only inputs a script can't measure — and b
 - `--runtime-change` — does runtime behavior change? Gates Steps 13 and 13.5.
 - `--attacker-reachable` — is any changed path attacker-reachable?
 
-It prints the plan and writes the **planned** half of the run record, then prints the `run_id` on the last line. **A non-zero exit, or no `run_id` on that last line, means there is no plan: stop and show the user its stderr.** Its stderr says which: COMPUTED BUT NOT RECORDED is a record write that failed (exit 1 or 2, the record's own code), a context it could not read or parse says to re-run context.sh (its name for `looper context`), and a context field of the wrong type names the field (a `looper context` bug, which re-running will not fix). Never write a plan by hand to get past it — an improvised plan is the failure this step exists to prevent. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned. Note the order: the JSON first, the id last, so `sed '$d'` gets you parseable JSON.
+One more, only on a fast-path re-entry (Step 3b). Pass it only when the context's `fast_path_eligible_by_delta` is true, and answer it about the delta, `git diff <last_reviewed_sha>..HEAD`, not the branch:
+
+- `--delta-logic` — does the delta since `last_reviewed_sha` change program logic? With `--delta-logic no` and an eligible delta, the plan floors the tier at `fast` even when the branch as a whole is too big for it or holds logic. Left out, nothing is lowered.
+
+Keep `--logic` answered about the whole branch even then. The two are separate because the PR's `risk:` label (Step 14) is computed from `--logic`, never from `--delta-logic`: answering `--logic` about a logic-free follow-up labels a branch full of logic `risk:low`, which is what happened on skills #11. `--delta-logic` moves only the floor, and the plan records it as `delta_logic` so the run shows why the floor was lowered.
+
+It prints the plan and writes the **planned** half of the run record, then prints the `run_id` on the last line. **A non-zero exit, or no `run_id` on that last line, means there is no plan: stop and show the user its stderr.** Its stderr says which: COMPUTED BUT NOT RECORDED is a record write that failed (exit 1 or 2, the record's own code), a context it could not read or parse says to run `looper context` first, and a context field of the wrong type names the field (a `looper context` bug, which re-running will not fix). Never write a plan by hand to get past it — an improvised plan is the failure this step exists to prevent. **Keep that `run_id`** — Step 14 needs it, and a `Stop` hook will block the session until the run is finished or explicitly abandoned. Note the order: the JSON first, the id last, so `sed '$d'` gets you parseable JSON.
 
 **Call this ONCE per run.** Every invocation without `--dry-run` writes another planned run record, so re-running it to re-read or re-parse its own output forges runs that then have to be abandoned by hand — and each one lands in the Step 0 alarm's own denominator. If you need the plan again, use `--dry-run`, which computes and prints it and writes nothing.
 
@@ -91,13 +112,23 @@ If `looper plan` prints an alarm on stderr, a gate has failed to complete three 
 The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
-~/.local/bin/looper record pending
-gh pr view --json number -q .number 2>/dev/null
+~/.local/bin/looper record pending --all
 ```
 
-The pending files live under `<git-common-dir>`, which every branch and linked worktree shares, so `pending` prints (as absolute paths) only files whose run was planned on **this** branch. A file from another branch stays where it is for that branch's own Step 0c; posting it here would put another branch's report and convergence label on this PR. A file with no run record is named on stderr and left in place: mention it rather than guess its branch. On a detached HEAD it lists nothing.
+The pending files live under `<git-common-dir>`, which every branch and linked worktree shares. `pending --all` prints every one of them, one per line as `<path>\t<branch>`, where the branch is the one its run was planned on, whatever is checked out (a detached HEAD included). **Flush each against its own branch's PR, never against this one:** posting another branch's file here would put that branch's report and convergence label on the wrong PR. (Plain `record pending` lists only this branch's files; it is what left a report deferred on a branch you then left unflushed for good, which is why this step no longer uses it.) A file with no run record, or whose run recorded no branch or a detached `HEAD`, is named on stderr and stays in place: list it in the report rather than guess its branch.
 
-Nothing listed, or still no PR → continue (leave the files in place). Both present → first drop any file that already landed: a successful post keeps a local copy, so a pending file whose `<!-- review-loop:run=<id> -->` marker already appears in a PR comment (`gh pr view --json comments -q '.comments[].body' | grep -qF '<!-- review-loop:run=<id> -->'`) is deleted, not posted again. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
+For each listed branch, ask GitHub for its newest PR in any state, as a **lone** command (a `gh` that is chained, piped or captured runs inside the sandbox, where its TLS fails):
+
+```bash
+gh pr list --head <branch> --state all --json number,state -q '.[0].number'
+```
+
+A branch name can be reused, so confirm that PR is this run's before using it. Its head (a lone `gh api 'repos/{owner}/{repo}/pulls/<n>' --jq .head.sha`) must be the run's head or a descendant of it. The run's head is `head_at_finish` from `~/.local/bin/looper record show --run-id <id> | jq -r '.head_at_finish // .head'` (`head`, the planned head, when no finish row carries one). Test descent with `git merge-base --is-ancestor <run head> <PR head>` after a `git fetch`: exit 0 means it is this run's PR, exit 1 means it is not (treat the branch as having no PR for this file), and any other exit, or an empty run head, means it could not be checked: leave the file and list it in the report.
+
+- **No PR for that branch** → leave the file in place and continue. A file whose branch never gets a PR (a run planned on `main`, say) stays, and is listed in every report under *Pending reports with no PR*, with its branch, until the user decides what to do with it. It is never deleted unposted: it is the only copy of that run's narrative.
+- **A PR exists** (open, merged or closed) → first drop the file if it already landed: a successful post keeps a local copy, so a file whose `<!-- review-loop:run=<id> -->` marker already appears in a comment on that PR is not posted again. The marker proves only the post: run only the file's owed label steps (step 1 of the *Backfilling* section, without the post), then step 3; steps 2 and 4 belong to the first flush, which already happened. Check with a lone `gh api 'repos/{owner}/{repo}/issues/<n>/comments' --paginate --jq '[.[] | select(.body | contains("<!-- review-loop:run=<id> -->"))] | length'`; any non-zero line means it landed. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
+
+In a worktree-isolated session, a command naming the pending file's path under `.git/` may be refused; then leave the file and list it in the report for the main session, as Step 0's run-dir rule says for ledgers.
 
 ## Step 2a: Cheap record checks (always), then the learnings sweep (triggered)
 
@@ -128,7 +159,11 @@ when nobody remembers it exists.
 - **`broken_pins[]` is worse than unpinned.** The sha does not name a commit in this repo — a typo,
   a rebased-away commit, one copied from elsewhere — so staleness can never be computed for it,
   while the entry still *looks* pinned and therefore stays out of `unpinned[]`. Re-pin to a sha that
-  resolves.
+  resolves. An entry shaped `{line, malformed}` is pin-shaped text that does not parse as a pin (a
+  stray space, an upper-case or six-character sha, a range written `1-`), quoted as written: rewrite
+  it as `[path:line @ sha]`, `[path:start-end @ sha]`, `[path:206,225-231 @ sha]` (a comma list, no
+  spaces) or `[path @ sha]`, with a 7-40 character lower-case sha. A line may carry several pins, and
+  every one is checked.
 - **`unguarded[]` is the question never asked.** The `Guard:` line records what would now fail if the
   grounding broke, and "none, because …" is a valid answer; a missing line means nobody considered
   it. Add the line.
@@ -170,7 +205,7 @@ Runs **once per run, before the loop** (the artifact is repo-scoped, not cycle-s
 Exit 1 is the failure Step 2a describes for `looper deferred`: fix what stderr names before reading `exists: false` or an empty `stale` as the answer. `looper plan` already plans this step on such a failure, with the command's sentence in the reason.
 
 - **`exists: false`** → run the **bounded bootstrap** (one `sonnet` agent, hard caps: ~30 files read, ~60 lines written, four questions only). Skip entirely on a repo with no attacker-reachable surface — write one line saying so, so the next run doesn't retry.
-- **`exists: true`** → run the **update agent** (one `sonnet` agent) with the script output plus this cycle's diff. `stale[]` is the exact worklist: each entry's cited file changed since its commit pin, so the claim needs re-reading and then re-pinning, rewriting, or deleting. `broken_pins[]` is the worse case and belongs on the same worklist: the sha does not resolve here, so staleness can never be computed for that claim while it still *looks* pinned and stays out of `uncited` — and for a `Not an issue here` dismissal, which is the security review's per-repo suppression channel, that is a suppression nothing ever re-examines. Re-read it and re-pin at `HEAD`, or rewrite or delete it. The agent names every "Not an issue here" or "Watch this spot" entry it rewrote or deleted; carry that list into the Step 14 report, since those are the user's entries. Skip the agent entirely only when `stale` **and** `broken_pins` are empty and the diff touches no security-relevant surface.
+- **`exists: true`** → run the **update agent** (one `sonnet` agent) with the script output plus this cycle's diff. `stale[]` is the exact worklist: each entry's cited file changed since its commit pin, so the claim needs re-reading and then re-pinning, rewriting, or deleting. `broken_pins[]` is the worse case and belongs on the same worklist: the sha does not resolve here, so staleness can never be computed for that claim while it still *looks* pinned and stays out of `uncited` — and for a `Not an issue here` dismissal, which is the security review's per-repo suppression channel, that is a suppression nothing ever re-examines. Re-read it and re-pin at `HEAD`, or rewrite or delete it; a `{line, malformed}` entry is a pin written wrong, fixed by rewriting the pin. `claims` counts OBSERVED claims (each `OBSERVED:` line opens one, and its pin may sit on a continuation line), and `uncited` counts the claims with no pin anywhere in their block. The agent names every "Not an issue here" or "Watch this spot" entry it rewrote or deleted; carry that list into the Step 14 report, since those are the user's entries. Skip the agent entirely only when `stale` **and** `broken_pins` are empty and the diff touches no security-relevant surface.
 
 Every claim is **OBSERVED** (verified, carries `[file:line @ sha]`) or **INFERRED** (unverified, uncited). The consumer treats OBSERVED as fact and INFERRED as a hypothesis to check. This split exists because the user is not a security expert and cannot audit this file — it makes a wrong inference cost a redundant check rather than a missed vulnerability.
 
@@ -198,12 +233,12 @@ Nothing aggregates those reasons yet — `looper stats --alarm` reads gate compl
 
 You already ran the loop this session, reached a clean exit, then made a **small follow-up commit** (a comment, a doc line, a config tweak) — often to satisfy review feedback or your own polish. The pre-push gate will (correctly) block it: the tip changed, so this exact state hasn't been reviewed. **Do not** reach for `record-reviewed.sh` by hand to clear it — that stamps "reviewed" on something the loop never saw (see Step 14).
 
-Instead, re-enter here cheaply. Step 0 already found the sha and sized the delta — `last_reviewed_sha` and `review_delta_lines`, with `fast_path_eligible_by_delta` as the size verdict. Diff against it (`git diff <last_reviewed_sha>..HEAD`) and then:
+Instead, re-enter here cheaply. Step 0 already found the sha and sized the delta — `last_reviewed_sha` and `review_delta_lines`, with `fast_path_eligible_by_delta` as the size verdict. Diff against it (`git diff <last_reviewed_sha>..HEAD`); that diff is what Step 0b's `--delta-logic` answers about. The plan's `tier_floor` then reflects that answer. It is `fast` only when `fast_path_eligible_by_delta` is true and you passed `--delta-logic no`. Otherwise it is the branch's floor, and that floor still holds: the floor is a floor, and judging the delta small yourself does not lower it. Then:
 
-- **Fast-path-eligible** (`fast_path_eligible_by_delta` is true, and no program logic in the delta) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then Step 14 as normal (post or defer the summary comment, `record-reviewed.sh`, push check). This is ~10 seconds and ends with a *legitimate* reviewed stamp.
+- **Fast-path-eligible** (`fast_path_eligible_by_delta` is true, `--delta-logic no`, and the plan's `tier_floor` is `fast`) → run the fast path on the delta only: Step 4a static analysis + one combined reviewer + one scorer, then Step 14 as normal (finish the record, post or defer the summary comment, push check, then `record-reviewed.sh` on `push: true`). This is ~10 seconds and ends with a *legitimate* reviewed stamp.
 - **Genuinely beneath even that** (e.g. a one-word typo fix in a comment) → `record-skipped.sh "<reason>"` (Step 14). Honest, auditable, one line.
 - **The tip changed only because of a rebase or amend, with no content change** → nothing to do. The `post-rewrite` hook already carried the record by `patch-id`. Do not reach for `record-skipped.sh` to paper over a rewritten sha. If the record did not carry, treat the delta as unreviewed — usually because the patch differs, but confirm the hook is actually installed here before concluding that, since an uninstalled hook is silent in exactly the same way.
-- **Touches logic, or you're unsure** → run the full loop from cycle 1 on the delta. The re-entry is a shortcut for *trivial* follow-ups, not a way to shrink review of real changes.
+- **Touches logic, or you're unsure** → answer `--delta-logic yes`, and run the full loop from cycle 1 on the delta at no less than the plan's floor. The re-entry is a shortcut for *trivial* follow-ups, not a way to shrink review of real changes.
 
 The point: make the honest lightweight path as cheap as the dishonest shortcut was, so there's never a reason to fake the stamp.
 
@@ -280,12 +315,13 @@ python3 ~/.claude/skills/code-analysis/code-analysis.py . --diff --fix --exit-ze
 
 It detects the repo's languages/configs and runs the curated analyzer set (ESLint/Biome/oxlint, Ruff, RuboCop, Stylelint, golangci-lint, govulncheck, gitleaks, Semgrep, actionlint, zizmor, markdownlint, hadolint, shellcheck, jsx-a11y, pa11y, …), applies safe autofixers, and writes `.code-analysis/summary.json` + `report.md` (git-ignored — never appears in the diff). Stage whatever the autofixers changed.
 
-**2. Then run the project linter --fix if one was detected** (Step 3) — it catches formatting (Prettier), type-checking (tsc), and custom lint rules the analyzer set doesn't replicate. Stage those changes too.
+**2. Then run the project linter --fix if one was detected** (Step 3) — it catches formatting (Prettier), type-checking (tsc), and custom lint rules the analyzer set doesn't replicate. Stage those changes too. `lint_fix: true` in the context means the detected `lint_cmd` rewrites files when it runs: for a Go module that is `go fmt ./... && go vet ./...`, and `go fmt` reformats in place, so check `git status` after it and stage what it changed (the test command there is `go test ./...`).
 
 **3. Read `.code-analysis/summary.json` and fold the *remaining* (non-autofixed) findings into the cycle:**
 
 - **Security / secrets / SAST** — findings from `gitleaks`, `semgrep`, `brakeman`, `govulncheck`, `zizmor`: treat each as a high-confidence (≥80) finding. **Do not Haiku-score them** — the tool already verified them. Attempt a fix and route through Step 7 / Step 8a exactly like a review-agent finding (the risk profile still decides auto-apply vs. ask). These are the ones that matter.
 - **Quality / style residue** — anything the autofixers couldn't fix: don't run it through the agents or Haiku (deterministic, mostly low-value). Carry the per-tool counts into the final report (Step 14).
+- **Errored tools are not scanned, never zero findings.** `summary.json` lists them in `tools_errored` (each result's `status` is `"error"`, with its exit code or reason), and its `clean` is true only when every selected tool completed and found nothing. `--exit-zero` hides the errored exit code, so read the field; do not infer a clean pass from the exit status or from an absent count. A security tool that errored (gitleaks, semgrep, govulncheck, zizmor, brakeman) means that class went unchecked this cycle: name it in the Step 14 report as not scanned (`references/report-format.md`'s static-analysis line has a slot for it), and never cite it as evidence for step e's "surfaced no unresolved security/secret/SAST findings". Under the sandbox an ephemeral runner that could not fetch its tool shows up here.
 - **Skipped tools** — if the run skipped analyzers (not installed, no ephemeral runner) and you can prompt the user (main interactive agent, not a headless subagent), offer once to install them (use each entry's `install_hint`) and re-run. In a subagent run, just note the skips in the report; never block.
 
 ## Step 4b: Establish PR Intent (for Agent #9) and capture the spec artifact (for Agent #11)
@@ -296,7 +332,7 @@ Agent #9 (intent reconciliation, Step 5) reviews the change against what it is *
 2. **Gate — decide whether Agent #9 runs at all.** Skip it (and the rest of this step) when the change has no reviewable intent to model against: dependency bumps, pure refactors/renames, formatting, config-only changes, or any diff whose purpose can't be stated as intended *behavior*. It earns its cost only on feature / behavior-changing work with a derivable goal.
 3. **Build the intent statement — do NOT edit the PR description here.** Distil the sources into an internal statement of the change's purpose and intended behavior for Agent #9. Keep it to GOALS ("users can reconnect a third-party account"), never claims about what the code does or that an edge case is handled — an intent derived by reading the implementation just mirrors the code and blinds Agent #9 to the omissions it exists to catch. If the sources are too thin to state a goal: derive one from the issue/commits, or (interactive runs only) ask the author; if none can be established, gate Agent #9 off (step 2). The description itself is made accurate and complete *later* — **Step 14 reconciles it against the final reviewed change**, when doing so is safe (the code is final, so describing it can't launder a bug into intent) and useful (the PR ends merge-ready).
 4. The resulting intent statement is what Agent #9's stage 1 consumes. Treat it as *desired behavior to be verified against the code*, not as ground truth about what the code does.
-5. **Capture the written spec artifact, if one exists — this is separate from the intent statement.** Intent is *distilled goals*; the artifact is *the text someone wrote down and is accountable to*: an agent brief comment on the issue, a linked issue body with acceptance criteria, or a spec file under `docs/`/`specs/`/`.scratch/`. Fetch it **verbatim** (`gh issue view <n> --comments`) and keep it as-is — Agent #11 quotes its lines, so paraphrase destroys the point. If several exist, prefer the most specific and most recent: an agent brief beats the issue body it was posted on. If none exists, record that and gate #11 off. If the fetch fails or returns an error instead of the text (e.g. a sandbox `Forbidden`), treat it the same way — gate #11 off and say so; never hand #11 an error message as its spec. This is a fetch, not a judgement call — do not synthesise an artifact from the code or the commits; a spec derived from the diff can only ever agree with it.
+5. **Capture the written spec artifact, if one exists — this is separate from the intent statement.** Intent is *distilled goals*; the artifact is *the text someone wrote down and is accountable to*: an agent brief comment on the issue, a linked issue body with acceptance criteria, or a spec file under `docs/`/`specs/`/`.scratch/`. Fetch it **verbatim** (`gh issue view <n> --comments`, run as a lone command) and keep it as-is — Agent #11 quotes its lines, so paraphrase destroys the point. Save what it printed to `<run dir>/spec.md` with the Write tool rather than a shell redirect (a redirected `gh` runs sandboxed, and one such fetch wrote 0 bytes), then check the file is non-empty before #11 sees it. If several exist, prefer the most specific and most recent: an agent brief beats the issue body it was posted on. If none exists, record that and gate #11 off. If the fetch fails or returns an error instead of the text (e.g. a sandbox `Forbidden`), treat it the same way — gate #11 off and say so; never hand #11 an error message as its spec. This is a fetch, not a judgement call — do not synthesise an artifact from the code or the commits; a spec derived from the diff can only ever agree with it.
 6. **While intent is in hand, draft the measurement hypothesis** for Step 13.5 — one line: the user-visible effect this change is supposed to produce, stated directionally ("fewer users drop at the mapping step"). It costs nothing here and it's the honest version: written from the goal, before you've seen which numbers happen to be available. Carry it to Step 13.5, which turns it into a plan and verifies the instrumentation. Skip if that step's gate obviously won't fire (no user-facing behavior changes).
 
 ## Step 5: Parallel Review Agents
@@ -320,9 +356,11 @@ It bin-packs the changed files into **batches under a ~1500-line whole-file budg
 
 **`near_duplicates` is the width answer, so don't re-derive it by eye.** Packing by file *size* alone measured the wrong thing: nine test suites received one identical check-count guard, split across four batches, and cost twelve agents for a change there was mostly one of — and the width then looked like something to ask about. Six of the nine suites normalize to one fingerprint there; `runlog.test.sh`, `context-sizing.test.sh` and `review-stats.test.sh` carried additional edits and correctly do not group. Any batch figure here is range-specific and not a general ratio — on `aaaebb4...1de3722` collapsing changes nothing (four batches either way), while on this branch it is five without and four with. An earlier version of this paragraph advertised four-to-three on that first range; that reduction existed only because the budget was not counting the sibling hunks the agents are told to read, and it disappeared once they were counted. The mechanism is sound, the saving is smaller than first claimed, and it is the collapsed *agent count* that reliably drops rather than the batch count. The script normalizes each file's hunks (whitespace collapsed, integer literals folded) and keeps one representative per identical-edit group. For each entry in `near_duplicates`, give the representative's agents the whole representative file as usual, plus **each sibling's hunk and the value that differs in it** — nothing else. Reading nine copies of one edit does not find a tenth file that should have had the edit and doesn't; only enumerating the files that should carry it does, which is a separate check and belongs in the mechanical batch.
 
-**Shared agent inputs go in one fixed place:** `<git-common-dir>/info/review-loop-run/` (clear it at the start of each run). Write the diff, the spec artifact, and any shared brief there and pass agents the path. Not `$TMPDIR`: it resolves to a different directory with the sandbox on vs. off, so a file written by an unsandboxed fetch can silently miss the copy the agents read.
+**Shared agent inputs go in the run dir** (`~/.claude/review-loop/run/<run_id>/`, Step 0 says why). Write the diff, the spec artifact, the prior PR comments and any shared brief there and pass agents the absolute path. It is per run, so there is nothing to clear and no other session's files to collide with.
 
 Each agent must also receive:
+
+- The *Scratch files* rules from `references/agent-roster.md`, verbatim, with the run dir's path filled in
 
 - The contents of `<git-common-dir>/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
 - The agent's specific focus (below)
@@ -365,7 +403,7 @@ Evaluate each gate every run; the gate is here, the focus/scoring/routing is in 
 - **#8 Observability & cost coverage** `[sonnet]` — spawn when the diff is substantial/risky (#7's threshold) **AND** either the repo has an observability convention (logger/metrics/error reporter) **or** the diff touches a metered resource (paid API, LLM call, CI workflow, cron schedule, queue, cache, storage). Skip the observability half if the project logs nothing. Normal Step 6 rubric; fixes usually additive/auto-applied.
 - **#9 Intent reconciliation** `[sonnet]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Never auto-applied** (asked at ≥40, report-only below); highest false-positive rate — lean on the Dismissed list.
 - **#11 Spec conformance** `[sonnet]` — spawn **only in cycle 1**, and only when Step 4b captured a **written spec artifact**. Checks the diff against that text on three axes: requirements missing/partial, behaviour present that the spec never asked for (scope creep), and requirements implemented but implemented wrong. Every finding quotes the spec line. **Bypasses Step 6 scoring entirely and is always ask-routed**; reported in its own section so a spec miss can never be outranked by a style nit. Distinct from #9 — #9 *derives* expected behaviour and hunts omissions; #11 *checks against text someone wrote*.
-- **#10 Prior review feedback** `[sonnet]` — spawn **only in cycle 1**, and only when `gh` is authenticated and the repo has a GitHub remote. Mines review comments on past merged PRs that touched the same files and checks whether any apply again here. Skip on a repo with no PR history for the changed files. Normal Step 6 rubric; findings carry a citation to the prior comment.
+- **#10 Prior review feedback** `[sonnet]` — spawn **only in cycle 1**, and only when `gh` is authenticated and the repo has a GitHub remote. Mines review comments on past merged PRs that touched the same files and checks whether any apply again here. **You fetch the comments, not the agent:** an agent's `gh` runs inside the sandbox, where its TLS fails (`x509: OSStatus -26276`), and it returns an empty skip. Fetch them with lone `gh` commands into `<run dir>/prior-comments.txt`, check that file is non-empty, and hand #10 the file; the reference has the commands. Skip on a repo with no PR history for the changed files. Normal Step 6 rubric; findings carry a citation to the prior comment.
 
 ## Step 6: Haiku Scoring
 
@@ -503,7 +541,11 @@ Do the edits with `looper learn` — you judge match/novelty/section; the comman
 - Novel entry → `~/.local/bin/looper learn add <file> "<text, no date>" --section dismissed|accepted` (stamps today's date; creates the file/sections if missing; `--section` may come before or after the text).
 - Cap fallback → `~/.local/bin/looper learn prune <file>` (evicts oldest non-PATTERN, dismissed first; PATTERN entries never auto-pruned).
 
-A non-zero exit means nothing was written: show its stderr and never report the learning as recorded. A usage error exits 2; the two refusals you will meet exit 1: `bump` matched no entry (`add` it instead), and `add --section dismissed` refused a reason that cites precedent (reword it with a measurable reason, or drop it).
+`add` stamps the date itself. One ISO date opening the text (with the colon or spaces after it) is dropped so it is not written twice, but pass the text without one anyway; a date later in the text is kept as text.
+
+A non-zero exit means nothing was written: show its stderr and never report the learning as recorded. A usage error exits 2; the refusals you will meet exit 1: `bump` matched no entry (`add` it instead), `bump` was given an empty match, which every entry contains, `add --section dismissed` refused a reason that cites precedent (reword it with a measurable reason, or drop it), and `add` refused text under 10 characters once trimmed (a learning that short is a probe or an empty argument, not an entry).
+
+**Never probe `looper learn add` with dummy text** to see what it does: a text of 10 characters or more is written to the real learnings file as an entry, which is how a stray `x` once became one. Read `~/.local/bin/looper learn -h`, or point it at a file under the run dir.
 
 For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping, and the cap/split fallbacks, **Read `references/learnings-format.md`**. When in doubt whether an entry is worth writing, don't — the file's value is being scannable, not exhaustive.
 
@@ -560,6 +602,22 @@ honesty rule, and the full "when NOT to auto-push" spec.
      --findings '{"auto_fix":N,"asked":N,"skipped":N}' --asks <unresolved ask-bucket items>
    ```
 
+   **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
+   `--escalations` that is not a list of `{"gate":"…","reason":"…"}` objects with both strings
+   non-blank (a non-empty object such as `{"security":"why"}` is refused; with nothing to escalate, pass `[]` or leave the flag out); `--outcome clean` with `--asks`
+   above zero (unresolved asks are a halted run, not a clean one: record the outcome it ended with);
+   a second finish for the same run id (a wrong finish is fixed by starting a new run, never by
+   finishing again); and a row its own readers could not decode, which it checks before appending,
+   so a refused finish leaves the run open rather than poisoned. Show its stderr and fix the input.
+
+   **`--executed` lists only gates that have already run.** The finish comes before the report and
+   the push decision on purpose (`push-check` refuses a run with no finish row, and the report
+   renders the outcome and tier from it), so `record_reviewed`, which runs at step 3 below and only
+   on `push: true`, has not run yet: never record it as `done` here. If the plan marked it `run`,
+   account for it as `n/a` with the reason that it follows the push decision (on a run that did
+   not converge, the reason is the outcome; `references/finish.md` explains why `n/a` and not
+   `skipped`).
+
    One `executed` entry per gate the plan marked `run` — **`finish` refuses and writes nothing if
    one is missing**, so account for each gate or record an escalation. If a planned gate genuinely
    went unrun, add `--allow-unaccounted`: the run is recorded, the gate is named as unaccounted, and
@@ -585,11 +643,12 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    Publish it **from the record, not from memory**:
 
-   `--findings-file -` is what makes looper read the piped narrative. Stdin is read only when asked for, so an idle inherited pipe cannot hang the call, and without the flag the narrative is dropped.
+   Write the narrative to `<run dir>/narrative.md` (the Write tool is simplest) and pass the file.
+   Without `--findings-file` the narrative is dropped; `--findings-file -` reads it from stdin
+   instead, and stdin is read only when asked for, so an idle inherited pipe cannot hang the call.
 
    ```bash
-   printf '%s\n' "<your findings narrative>" \
-     | ~/.local/bin/looper pr-report --run-id <run_id> --findings-file - --post --label
+   ~/.local/bin/looper pr-report --run-id <run_id> --findings-file <run dir>/narrative.md --post --label </dev/null
    ```
 
    It renders convergence, the disclosure, every gate with its reason, the cycle table, the sizing
@@ -613,9 +672,24 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    ```bash
    ~/.local/bin/looper push-check --run-id <run_id> \
-     --gate-state <passed|skipped|blocked> [--unresolved-skip] \
-     --branch <current> --default-branch <default>
+     --gate-state <passed|skipped|blocked> [--unresolved-skip]
    ```
+
+   **Its exit status is the decision**: 0 means push allowed, 3 means refused (the JSON with
+   `reason` is still printed), and 1 or 2 means it could not decide (stdout empty, stderr says why).
+   A non-zero exit never pushes, so chaining a command on it with `&&` is safe: before v0.2.10 a
+   refusal exited 0, so a plain `push-check … && git push` would push on `push:false`. The two
+   logged incidents piped push-check through `tail`, which hides any exit status. So run it on its own and read the JSON it printed either
+   way: `reason` says what to do on a refusal, and on an allowed push whether the branch has no
+   upstream yet (then the push is `git push -u origin <branch>`); `disclose` is the line the PR
+   summary owes. And step 3's stamp comes between this and the push, so a bare `&& git push` skips
+   it. Exit 1 or 2 is a tool failure, not a refusal: surface stderr and do not push.
+
+   `--branch` and `--default-branch` are read from git when omitted: the current branch, and the
+   branch `refs/remotes/origin/HEAD` names. A flag you pass wins. What git cannot name still refuses
+   with "current or default branch unknown": a detached HEAD, or an origin/HEAD that was never set
+   (a clone sets it; `git remote add` and a fetch do not, and `git remote set-head origin -a` does).
+   Pass `--default-branch` explicitly in that second case.
 
    If its `reason` names a command (`run looper pr-report … --post first`), run it as `~/.local/bin/looper …` with `</dev/null`, not as written.
 

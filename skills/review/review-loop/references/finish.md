@@ -10,6 +10,10 @@ Runs on **every** terminal exit — clean, cycle-limit, test-failure, or blocked
 
 Give one `executed` entry per gate the plan marked `run`, each with `status` (`done` / `skipped` / `failed`) and, for anything but `done`, a reason.
 
+**`executed` records gates that have already run, and nothing else.** The order is finish → report → push-check → `record-reviewed.sh`, and it is deliberate: `push-check` refuses a run with no finish row, and the report renders the outcome and tier from it. So when the finish is written, `record_reviewed` has not run. Recording it `done` there claims a stamp that may never happen (push-check can still refuse), and one run did exactly that, with `outcome: clean` and two unresolved asks besides. Account for it as `n/a`, with the reason that it follows the push decision, or on a run that did not converge, the outcome (below).
+
+**A finish is final, and `finish` checks its own row.** It refuses, exits 1 and writes nothing for: `--escalations` that is not a list of `{"gate":"…","reason":"…"}` objects, both strings non-blank; `--outcome clean` with `--asks` above zero; a second finish for the same run id; and any row its own readers could not decode, which it tests before appending. Before v0.2.10 an object passed as `--escalations` was written, and the unreadable row poisoned the run for `pr-report` and `push-check` for good, since a later row cannot clear it. A wrong finish is fixed by starting a new run, never by finishing again.
+
 **A planned gate you don't account for makes `finish` refuse and write nothing.** Every gate the plan marked `run` needs either an `executed` entry or an escalation. That refusal is the point: without it, `finish` records whatever you chose to mention, and a dropped gate is once again only as visible as you chose to make it. If a planned gate genuinely went unrun and you are recording that fact, pass `--allow-unaccounted` — the run is written, the gate is named in the record as unaccounted, and the tier becomes `partial`.
 
 **Reasons citing precedent are rejected and nothing is written.** "It matches an existing pattern here" is not evidence the existing pattern is correct — a copied pattern carries its bugs, and the copy is the cheapest moment to catch them. State a measurable reason (size, no logic touched, no runtime change) or run the gate.
@@ -91,11 +95,27 @@ beneath the loop is a legitimate call; making that call *silently look like a re
 
 ```bash
 ~/.local/bin/looper push-check --run-id <run_id> \
-  --gate-state <passed|skipped|blocked> [--unresolved-skip] \
-  --branch <current> --default-branch <default>
+  --gate-state <passed|skipped|blocked> [--unresolved-skip]
 ```
 
-Pass the gate state and the branch names. **Do not pass convergence — it is read from the record**,
+| exit | meaning | stdout |
+| --- | --- | --- |
+| 0 | push allowed | the JSON, `"push":true` |
+| 3 | push refused | the JSON, `"push":false` and the `reason` |
+| 1, 2 | no decision: a usage error, an unreadable store, a run id that is not plain | empty; stderr says why |
+
+A non-zero exit never pushes, so a command chained on it with `&&` runs only on an allowed push.
+Until v0.2.10 a refusal exited 0, so a plain `push-check … && git push` would push on
+`push:false`. The two incidents the friction log records piped push-check through `tail`, whose
+exit status hid it, and no exit code fixes that. Chaining is safe now without a pipe, but read
+the JSON either way: the exit status does not carry `reason` (what a refusal needs, or that an
+allowed push needs `-u origin <branch>`) or `disclose`, and `record-reviewed.sh` (section 2
+above) comes between this decision and the push.
+
+Pass the gate state. `--branch` and `--default-branch` are read from git when omitted — the
+current branch, and the branch `refs/remotes/origin/HEAD` names — and a flag you pass wins. What
+git cannot name stays unknown and refuses: a detached HEAD, or an origin/HEAD that was never set
+(`git remote set-head origin -a` sets it). **Do not pass convergence — it is read from the record**,
 derived from the `cycle` rows recorded at Step 10. `--clean-exit` is gone: it let the orchestrator
 assert the answer to the only question here, and a run did record `clean` while not having
 converged. A run with no cycle rows derives as *unknown*, which every consumer treats as "did not
@@ -143,8 +163,8 @@ the error verbatim in the final report and continue — do not retry, do not for
   `~/.local/bin/looper pr-report --run-id <run_id> --post </dev/null` first.
 - **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That is
   an unresolved ambiguity they may still want to think about; let them push when ready.
-- **The current or default branch name is unknown.** Fail closed rather than skip the
-  default-branch guard.
+- **The current or default branch name is unknown** — neither passed nor readable from git (a
+  detached HEAD, an unset origin/HEAD). Fail closed rather than skip the default-branch guard.
 - **Branch is the repo's default branch (main/master).** Never auto-push to main; surface the
   unusual state instead.
 - **The Step 13 evidence gate is blocked or hit its restart cap.** Untested (or known-broken)

@@ -4,7 +4,7 @@
 # looked like zero findings would silently vouch for an unaudited page.
 set -uo pipefail
 RUN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/run"
-TMP="$(mktemp -d)"; trap 'rm -rf "$TMP"' EXIT
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/pa11y-selfcheck.XXXXXX")" || exit 1; trap 'rm -rf "$TMP"' EXIT
 cd "$TMP" || exit 1
 
 check() { # <label> <expected-stderr-fragment>

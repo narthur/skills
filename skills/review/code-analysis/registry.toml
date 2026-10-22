@@ -13,6 +13,12 @@
 #               to the path/file list.
 #   target      how {target} is filled: dir | files | dockerfiles | workflows
 #   count       parser key (see COUNTERS in code-analysis.py); "" = exit+lines
+#   ok_exit     exit codes the tool documents as "ran clean" or "ran, found
+#               issues". Any other code records the tool as errored, never as
+#               0 findings (a sandbox-denied semgrep exits 2 with no JSON, which
+#               used to read as a clean pass). Missing => [0] only. A nonzero
+#               code from this list with nothing parsed is also an error.
+#               Required on every tool; `--selftest` enforces it.
 #   fix         optional args for --fix (autofix), "{target}" expands as above
 #   accepts_files  true if the tool can be given an explicit changed-file list
 #                  (used by --diff/--staged); false => always whole-repo
@@ -31,6 +37,7 @@ cmd = ["check", "--reporter=json", "{target}"]
 fix = ["check", "--write", "{target}"]
 target = "dir"
 count = "biome"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "npm i -D @biomejs/biome"
 
@@ -44,6 +51,7 @@ cmd = ["-f", "json", "{target}"]
 fix = ["--fix", "{target}"]
 target = "dir"
 count = "eslint"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "npm i -D eslint"
 
@@ -57,6 +65,7 @@ cmd = ["-f", "json", "{target}"]
 fix = ["--fix", "{target}"]
 target = "dir"
 count = "oxlint"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "npm i -D oxlint"
 
@@ -71,6 +80,7 @@ runners = ["npx:fallow", "bunx:fallow", "path:fallow"]
 cmd = ["--format", "json"]
 target = "none"
 count = "fallow"
+ok_exit = [0, 1]
 accepts_files = false
 install_hint = "npm i -D fallow && npx fallow init"
 
@@ -83,6 +93,7 @@ cmd = ["--format", "json", "{target}"]
 fix = ["-a", "{target}"]
 target = "dir"
 count = "rubocop"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "gem install rubocop  (or add to Gemfile)"
 
@@ -93,6 +104,7 @@ runners = ["path:brakeman"]
 cmd = ["-f", "json", "-q", "--no-progress", "."]
 target = "dir"
 count = "brakeman"
+ok_exit = [0, 3]
 accepts_files = false
 install_hint = "gem install brakeman"
 
@@ -104,6 +116,7 @@ cmd = ["check", "--output-format", "json", "{target}"]
 fix = ["check", "--fix", "{target}"]
 target = "dir"
 count = "ruff"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "uv tool install ruff"
 
@@ -114,6 +127,7 @@ runners = ["path:golangci-lint"]
 cmd = ["run", "--output.json.path=stdout", "./..."]
 target = "dir"
 count = "golangci"
+ok_exit = [0, 1]
 accepts_files = false
 install_hint = "brew install golangci-lint"
 
@@ -123,6 +137,7 @@ runners = ["path:govulncheck", "go:golang.org/x/vuln/cmd/govulncheck@latest"]
 cmd = ["-json", "./..."]
 target = "dir"
 count = "govulncheck"
+ok_exit = [0, 3]
 accepts_files = false
 install_hint = "go install golang.org/x/vuln/cmd/govulncheck@latest"
 
@@ -136,6 +151,7 @@ cmd = ["--formatter", "json", "{target}"]
 fix = ["--fix", "{target}"]
 target = "styleglob"
 count = "stylelint"
+ok_exit = [0, 2]
 accepts_files = true
 install_hint = "npm i -D stylelint"
 
@@ -150,7 +166,8 @@ runners = ["npx:markdownlint-cli2", "bunx:markdownlint-cli2", "path:markdownlint
 cmd = ["{target}"]
 fix = ["--fix", "{target}"]
 target = "mdglob"
-count = ""
+count = "markdownlint"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "npm i -g markdownlint-cli2"
 
@@ -160,6 +177,7 @@ runners = ["npx:htmlhint", "bunx:htmlhint", "path:htmlhint"]
 cmd = ["--format", "json", "{target}"]
 target = "files"
 count = "generic_json"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "npm i -g htmlhint"
 
@@ -170,6 +188,7 @@ runners = ["path:yamllint", "uvx:yamllint"]
 cmd = ["-d", "relaxed", "--no-warnings", "-f", "parsable", "{target}"]
 target = "files"
 count = ""
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "uv tool install yamllint"
 
@@ -180,6 +199,7 @@ runners = ["path:actionlint"]
 cmd = []
 target = "none"
 count = ""
+ok_exit = [0, 1]
 accepts_files = false
 diff_gate = ".github/"
 install_hint = "brew install actionlint"
@@ -191,6 +211,7 @@ runners = ["path:zizmor", "uvx:zizmor"]
 cmd = ["--format", "json", ".github/workflows"]
 target = "none"
 count = "zizmor"
+ok_exit = [0, 10, 11, 12, 13, 14]
 accepts_files = false
 diff_gate = ".github/"
 install_hint = "uv tool install zizmor"
@@ -205,6 +226,7 @@ cmd = ["lint", "--format", "json", "{target}"]
 fix = ["fix", "--force", "{target}"]
 target = "dir"
 count = "sqlfluff"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "uv tool install sqlfluff"
 
@@ -215,6 +237,7 @@ runners = ["path:shellcheck"]
 cmd = ["-f", "json", "{target}"]
 target = "files"
 count = "generic_json"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "brew install shellcheck"
 
@@ -226,6 +249,7 @@ runners = ["path:hadolint"]
 cmd = ["-f", "json", "{target}"]
 target = "dockerfiles"
 count = "generic_json"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "brew install hadolint"
 
@@ -236,6 +260,7 @@ runners = ["path:gitleaks"]
 cmd = ["dir", ".", "--report-format", "json", "--report-path", "{report}", "--no-banner", "--exit-code", "0"]
 target = "none"
 count = "gitleaks"
+ok_exit = [0]
 accepts_files = false
 install_hint = "brew install gitleaks"
 
@@ -245,6 +270,7 @@ runners = ["path:semgrep", "uvx:semgrep", "pipx:semgrep"]
 cmd = ["--config", "auto", "--json", "--quiet", "--error", "{target}"]
 target = "dir"
 count = "semgrep"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "uv tool install semgrep"
 
@@ -258,6 +284,7 @@ runners = ["path:{skill}/depend/run"]
 cmd = ["-f", "json", "package.json"]
 target = "none"
 count = "eslint"
+ok_exit = [0, 1]
 accepts_files = false
 install_hint = "needs node/npm on PATH; deps install themselves on first run"
 
@@ -271,6 +298,7 @@ runners = ["path:{skill}/a11y/run"]
 cmd = ["-f", "json", "{target}"]
 target = "files"
 count = "eslint"
+ok_exit = [0, 1]
 accepts_files = true
 install_hint = "needs node/npm on PATH; deps install themselves on first run"
 
@@ -287,6 +315,7 @@ runners = ["path:{skill}/pa11y/run"]
 cmd = []
 target = "none"
 count = "pa11yci"
+ok_exit = [0, 2]
 accepts_files = false
 ondemand = true
 install_hint = "npm i -D pa11y-ci  (and start the dev server)"

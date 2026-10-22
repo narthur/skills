@@ -6,7 +6,7 @@
 # Reads ANSI text (file or stdin), converts it to HTML (ansi2html.py), then
 # rasterises to PNG. Prints the PNG path on stdout.
 #
-#   -o   output PNG path (default: alongside input, or /tmp/ascii-shot-<ts>.png for stdin)
+#   -o   output PNG path (default: alongside input, or ${TMPDIR:-/tmp}/ascii-shot-<pid>.png for stdin)
 #   -s   max image dimension in px (default 1400)
 #
 # Rasteriser preference: macOS Quick Look (qlmanage, zero-install) → wkhtmltoimage
@@ -28,13 +28,13 @@ while [ "$#" -gt 0 ]; do
 done
 [ -n "$input" ] || { echo "usage: render.sh <input.ansi|-> [-o out.png] [-s SCALE]" >&2; exit 2; }
 
-work="$(mktemp -d)"
+work="$(mktemp -d "${TMPDIR:-/tmp}/ascii-screenshot.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 html="$work/page.html"
 
 if [ "$input" = "-" ]; then
   python3 "$here/ansi2html.py" - > "$html"
-  [ -n "$out" ] || out="/tmp/ascii-shot-$$.png"
+  [ -n "$out" ] || out="${TMPDIR:-/tmp}/ascii-shot-$$.png"
 else
   python3 "$here/ansi2html.py" "$input" > "$html"
   [ -n "$out" ] || out="${input%.*}.png"

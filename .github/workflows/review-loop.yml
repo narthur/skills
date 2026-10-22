@@ -79,6 +79,20 @@ jobs:
             exit 1
           fi
 
+      # code-analysis.py is outside this job's working directory, so the loop above never
+      # sees it, and its --selftest guards silent-zero failures (a crashed or skipped scanner
+      # read as clean, an unwritable cache dir). Run from the repo root for that reason.
+      - name: code-analysis selftest
+        working-directory: .
+        run: |
+          python3 skills/review/code-analysis/code-analysis.py --selftest >"$RUNNER_TEMP/ca-selftest.log" 2>&1 || {
+            echo "::group::code-analysis.py --selftest"
+            python3 -VV
+            cat "$RUNNER_TEMP/ca-selftest.log"
+            echo "::endgroup::"
+            exit 1
+          }
+
       # Named individually so a failure says which suite. Stopping at the first would
       # hide the rest; this runs them all and then fails.
       - name: test suites
@@ -113,14 +127,19 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.9: the release SKILL.md installs, carrying the push-check and pr-report
+          # v0.2.10 is the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
           # runlog.py's command line, `stats`, which replaced review-stats.py, `threat-model`
           # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
           # which replaced plan.py, and `context`, which replaced context.sh and is what Step 0's
           # preflight probed for until v0.2.9. v0.2.9 adds `learn`, which replaced learn.py and
-          # is what the preflight probes for now.
-          ref: 6ee5d892e8f998cb47577c2abc6bdb291ec92e56 # v0.2.9 (the commit, not the annotated tag object)
+          # is what the preflight probed for until v0.2.10. v0.2.10 adds `record pending --all`,
+          # which Step 0c flushes every branch's deferred report through and the preflight probes
+          # for now; push-check's exit 3 for a refusal and its branch defaults; and `record
+          # finish`'s refusals of a malformed escalation and a contradictory or second finish.
+          # 37dc374 is v0.2.10's commit: the merge of looper PR #40, whose tree is the reviewed tip
+          # 9e27818.
+          ref: 37dc374ea1304c611503289c4fc88b041bfac408 # v0.2.10 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

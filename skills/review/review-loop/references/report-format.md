@@ -92,7 +92,10 @@ Spec artifact (Step 4b): <agent brief on #N | issue #N body | path | none — #1
 Threat model (Step 2b): <bootstrapped — N claims | updated — R re-verified, A added, D dropped | unchanged>.
 Upstream security prompt (Step 2a): <in sync at claude-code X.Y.Z | DRIFT — vendored X.Y.Z, installed A.B.C; run `upstream-check.py --extract` to diff>.
 
-Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>.
+Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>; errored tools, NOT scanned: <tool (exit/reason), … | none>.
+
+Pending reports with no PR (Step 0c): <path — branch, … | none>. Left in place, not deleted; also any file `record pending --all` named on stderr as unroutable.
+Ledger updates owed to the main session: <run-dir file — ledger, … | none>. (Worktree-isolated runs only; see SKILL.md Step 0.)
 
 Learnings sweep (Step 2a): <ran — dropped N (D dead-path, S stale), promoted P, now E entries | not triggered — <E> entries>.
 
@@ -116,8 +119,17 @@ Notes written by looper v0.2.3 or earlier suggest `looper pr-report --run-id <id
 which does not do this: `--label` takes effect only with `--post`, and `--post` would add a second
 comment. Read only the label from those.
 
-Reached when `~/.local/bin/looper record pending` lists a file for this branch **and** a PR now exists for the
-branch. (Pending file but still no PR → leave it in place and continue the run.)
+Reached when `~/.local/bin/looper record pending --all` lists a file **and** a PR now exists for
+the branch printed beside it. `<n>` below is that branch's PR, which is not this branch's PR
+unless the listed branch is the one checked out. (Pending file but still no PR for its branch →
+leave it in place, continue the run, and list it in the report.)
+
+Run each `gh` below as its own command, with nothing chained, piped or redirected onto it: `gh`
+is excluded from the sandbox only when it runs alone, and inside the sandbox its TLS fails.
+
+**A file from another branch gets steps 1 and 3 only.** Its evidence gate, measurement gate and
+description reconcile belong to that branch's checkout, and its PR may already be merged; post it,
+label it, delete it, and say in this run's report that those gates were not run for it.
 
 1. Post the file's contents as a PR comment (`gh pr comment <n> --body-file <the pending file>`),
    then label it with the convergence the note names (`label review:<convergence> still owed`).
@@ -126,12 +138,20 @@ branch. (Pending file but still no PR → leave it in place and continue the run
    not have, and remove the other three so two cannot stand at once:
 
    ```bash
-   gh label create review:<convergence> --color <colour> 2>/dev/null || true
-   gh pr edit <n> --add-label review:<convergence>
-   for c in converged capped halted unknown; do
-     [ "$c" = <convergence> ] || gh pr edit <n> --remove-label "review:$c" 2>/dev/null
-   done
+   gh label create review:<convergence> --color <colour>
    ```
+
+   ```bash
+   gh pr edit <n> --add-label review:<convergence>
+   ```
+
+   ```bash
+   gh pr edit <n> --remove-label review:<other>
+   ```
+
+   The create fails harmlessly when the label already exists. Run the removal once for each of
+   `converged`, `capped`, `halted`, `unknown` that is not this convergence, each as its own command,
+   and read a failure there as harmless only when its error says the label does not exist.
 
    Colours match what `looper pr-report` uses: converged `0e8a16`, capped `fbca04`, halted
    `d93f0b`, unknown `b60205`.
@@ -143,21 +163,23 @@ branch. (Pending file but still no PR → leave it in place and continue the run
    risk labels alone for those.
 
    ```bash
-   gh label create risk:<level> --color <colour> 2>/dev/null || true
-   gh pr edit <n> --add-label risk:<level>
-   for l in high medium low; do
-     [ "$l" = <level> ] || gh pr edit <n> --remove-label "risk:$l" 2>/dev/null
-   done
+   gh label create risk:<level> --color <colour>
    ```
-
-   For `no risk label`, there is no level to add, so only the removal runs:
 
    ```bash
-   for l in high medium low; do gh pr edit <n> --remove-label "risk:$l" 2>/dev/null; done
+   gh pr edit <n> --add-label risk:<level>
    ```
 
+   ```bash
+   gh pr edit <n> --remove-label risk:<other>
+   ```
+
+   The removal runs once for each of `high`, `medium`, `low` that is not this level, each as its
+   own command, as for the review label. For `no risk label`, there is no level to add, so only
+   the removal runs, once for each of the three.
+
    Colours: high `d93f0b`, medium `fbca04`, low `0e8a16`.
-2. Run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
-3. Delete the pending file.
-4. If HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
+2. This branch's file only: run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
+3. Delete the pending file, but only once the post (or, for a file whose marker had already landed, nothing) and every label command in step 1 succeeded. If any failed, keep it: the next Step 0c retries, and the landed marker then skips the repost.
+4. This branch's file only: if HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
 

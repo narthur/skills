@@ -132,7 +132,7 @@ set_snooze() {
   expiry=$(date -u -d "+${seconds} seconds" --iso-8601=seconds)
 
   local tmp
-  tmp=$(mktemp)
+  tmp=$(mktemp "${TMPDIR:-/tmp}/grooming-session.XXXXXX")
   jq --arg repo "$repo" --arg num "$issue_number" --arg exp "$expiry" \
     '.[$repo] //= {} | .[$repo][$num] = $exp' "$SNOOZE_FILE" > "$tmp" && mv "$tmp" "$SNOOZE_FILE"
 
@@ -143,7 +143,7 @@ remove_snooze() {
   local repo="$1" issue_number="$2"
   ensure_snooze_file
   local tmp
-  tmp=$(mktemp)
+  tmp=$(mktemp "${TMPDIR:-/tmp}/grooming-session.XXXXXX")
   jq --arg repo "$repo" --arg num "$issue_number" \
     'if .[$repo] then .[$repo] |= del(.[$num]) else . end' "$SNOOZE_FILE" > "$tmp" && mv "$tmp" "$SNOOZE_FILE"
 }
@@ -390,7 +390,7 @@ cmd_reset() {
   repo=$(get_repo)
   ensure_snooze_file
   local tmp
-  tmp=$(mktemp)
+  tmp=$(mktemp "${TMPDIR:-/tmp}/grooming-session.XXXXXX")
   jq --arg repo "$repo" 'del(.[$repo])' "$SNOOZE_FILE" > "$tmp" && mv "$tmp" "$SNOOZE_FILE"
   echo "Reset grooming session for $repo"
 }
