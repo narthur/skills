@@ -43,7 +43,7 @@ A finding goes to **auto-fix** when all three are low-risk; otherwise **ask-user
 
 Plus four hard rules that override the matrix:
 
-- **Structural finding (from Agent #7)** → never auto-apply. A behavior-preserving restructuring is inherently high-blast-radius and high-forward-binding; surface it as a proposal and let the user decide. This holds even if the Haiku score is ≥80. "Never auto-apply" means the score alone never applies it; Step 8b may still act on a clear recommendation and report it, since the user took the recommendation on every structural question in the 2026-10-22 transcript check. Asked at ≥ `ASK_FLOOR` (40); below it, report-only rather than an interruption.
+- **Structural finding (from Agent #7)** → never auto-apply. A behavior-preserving restructuring is inherently high-blast-radius and high-forward-binding; surface it as a proposal and let the user decide. This holds even if the Haiku score is ≥80. "Never auto-apply" means the score alone never applies it; Step 8b may still act on a clear recommendation and report it. In the 2026-10-22 transcript check, every structural question that carried a recommendation was answered as recommended; the one offered without a recommendation was where the user chose. Asked at ≥ `ASK_FLOOR` (40); below it, report-only rather than an interruption.
 - **Suggested fix is unclear or conflicts with current state** → always ask. (Same as Step 7.)
 - **A `CLAUDE.md` file or learnings entry explicitly says "always ask the user about X"** → never auto-apply; asked at ≥ `ASK_FLOOR` (40), report-only below.
 - **An authorization finding (`agent: "5-security-authz"`)** → never auto-apply. `bucket.py` applies `SECURITY_FLOOR` (80) *before* the always-ask rules, so an authz finding the Stage-2 filter scored below 80 is report-only like any other security finding; at or above it, always ask. Adding or tightening an authz check is high-blast-radius by construction: the failure mode is locking legitimate users out of production, and it is the one class where an auto-applied wrong fix looks exactly like a right one. Injection fixes (parameterize a query) and data-exposure fixes (drop a field from a log payload) are mechanical and subtractive — those take the normal matrix.
@@ -51,7 +51,7 @@ Plus four hard rules that override the matrix:
 
 ## Framing the question for non-expert readers (Step 8b)
 
-This applies only to the findings Step 8b still asks: the ones with no clear recommendation, plus authz, spec-conformance and review-gate questions. The user is choosing whether to apply a fix; they need enough context to decide without re-reading the diff. The Haiku scorer's confidence was 50-79, which means *you* aren't sure either — so the user is genuinely being asked to make a judgment call.
+This applies only to the findings Step 8b still asks (its "Still ask" list). The user is choosing whether to apply a fix; they need enough context to decide without re-reading the diff. The Haiku scorer's confidence was 50-79, which means *you* aren't sure either — so the user is genuinely being asked to make a judgment call.
 
 Before the options, write a short framing in the `question` field that covers:
 

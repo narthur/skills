@@ -12,6 +12,7 @@ Input: JSON array of findings, each {id, agent, score, risk, always_ask,
 cost_recurrence, category, behavioral, observed_failure}.
 Use these exact agent ids; any other string gets the default routing.
 - agent "7-structural" or "9-intent" -> always ask (a proposal, never auto-applied), even at >=80.
+  "ask" means a Step 8b candidate: SKILL.md Step 8b may settle one on a clear recommendation.
 - agent "5-security-authz" -> always ask (an authz fix locks real users out if wrong).
 - security agents -> nothing below 80 is actioned; see SECURITY_AGENTS below. This runs
   FIRST, so it applies to 5-security-authz too: an authz finding the Stage-2 filter scored
