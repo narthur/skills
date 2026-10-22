@@ -665,6 +665,11 @@ def main() -> int:
         print(f"error: {root} is not a directory", file=sys.stderr)
         return 2
 
+    # An earlier run's result must not be readable as this run's, on any exit below.
+    outdir = root / OUTDIR
+    for stale in ("summary.json", "report.md"):
+        (outdir / stale).unlink(missing_ok=True)
+
     reg = tomllib.loads(REGISTRY.read_text())
     all_files = list_files(root)
     if not all_files:
@@ -686,14 +691,10 @@ def main() -> int:
         print("no applicable tools for this repo")
         return 0
 
-    outdir = root / OUTDIR
     rawdir = outdir / "raw"
     rawdir.mkdir(parents=True, exist_ok=True)
     for old in rawdir.glob("*"):
         old.unlink()
-    # An earlier run's result must not be readable as this run's.
-    for stale in ("summary.json", "report.md"):
-        (outdir / stale).unlink(missing_ok=True)
 
     try:
         env = tool_env()
