@@ -479,6 +479,7 @@ For each ask-bucket finding, form your recommendation first: apply the fix, skip
 
 - **No clear recommendation.** You would not pick the same option again on a re-read, or the choice turns on the user's intent or taste (which of several structural deletions to take, whether behaviour X was intended).
 - **The suggested fix is unclear or conflicts with the current state** (Step 7, item 3).
+- **A behavioral finding with no `observed_failure`** (`bucket.py` routes these to ask). Apply it on recommendation only after constructing the failing case and watching it fail, as Step 8a requires; otherwise ask.
 - **A `CLAUDE.md` file or learnings entry says "always ask the user about X"** and the finding is about X. The user's own instruction outranks the acceptance rate above.
 - **An authorization finding (`5-security-authz`).** A wrong authz fix looks exactly like a right one until real users are locked out.
 - **A spec-conformance finding (Agent #11).** The spec is the user's; whether the code or the spec moves is theirs to say.
@@ -515,7 +516,7 @@ Run the detected test command. Stream output. If exit code is non-zero:
 
 ## Step 10: Commit the Cycle
 
-Stage the files changed this cycle by lint --fix, auto-fixes and user-approved fixes — not the fixes applied on recommendation — and commit with a conventional commit message summarizing the cycle. Fixes applied on recommendation (Step 8b) get a **second commit** right after it, so one `git revert` undoes them: this works when they touch files no other fix this cycle touched (no interactive `git add -p` here), and subject it `fix(review): cycle <N> — applied on recommendation` (same scope rule as below). When they share a file with another fix, make one commit, say so in its message, and use the report's combined-commit line. Both commits come after Step 9's tests pass; on a test failure neither is made.
+Stage the files changed this cycle by lint --fix, auto-fixes and user-approved fixes — not the fixes applied on recommendation — and commit with a conventional commit message summarizing the cycle. Fixes applied on recommendation (Step 8b) get a **second commit** right after it, so one `git revert` undoes them: this works when they touch files no other fix this cycle touched (no interactive `git add -p` here), and subject it `fix(review): cycle <N> — applied on recommendation` (same scope rule as below). When they share a file with another fix, make one commit, say so in its message, and use the report's combined-commit line. When the recommendation fixes are the cycle's only changes, skip the empty first commit: the recommendation commit is the cycle's only commit. Both commits come after Step 9's tests pass; on a test failure neither is made.
 
 ```bash
 git add <changed-files>
