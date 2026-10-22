@@ -18,9 +18,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-from pathlib import Path
-
 import tomllib
+from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
 REGISTRY = HERE / "registry.toml"
@@ -692,8 +691,15 @@ def main() -> int:
     rawdir.mkdir(parents=True, exist_ok=True)
     for old in rawdir.glob("*"):
         old.unlink()
+    # An earlier run's result must not be readable as this run's.
+    for stale in ("summary.json", "report.md"):
+        (outdir / stale).unlink(missing_ok=True)
 
-    env = tool_env()
+    try:
+        env = tool_env()
+    except (RuntimeError, OSError) as e:
+        print(f"code-analysis: cannot set up tool caches: {e}", file=sys.stderr)
+        return 0 if args.exit_zero else 2
     results = []
     with concurrent.futures.ThreadPoolExecutor(max_workers=args.jobs) as ex:
         futs = {ex.submit(run_tool, n, reg[n], root, all_files, scoped, args.fix,
@@ -719,8 +725,10 @@ def summarize(results: list[dict], scope: str, root: Path) -> dict:
         "target": str(root),
         "total_findings": total,
         # clean means every selected tool completed a scan and found nothing. An
-        # errored tool never contributes to it, whatever it printed.
-        "clean": total == 0 and not errored,
+        # errored tool never contributes to it, whatever it printed. At least one
+        # tool must have run: all-skipped is "nothing scanned", not "nothing found".
+        # A run where every selected tool was skipped scanned nothing, so it is not clean.
+        "clean": total == 0 and not errored and any(r["status"] == "ran" for r in results),
         "tools_run": sorted(r["tool"] for r in results if r["status"] == "ran"),
         "tools_skipped": sorted(r["tool"] for r in results if r["status"] == "skipped"),
         "tools_errored": errored,
@@ -829,6 +837,10 @@ def selftest() -> int:
               "report.md flags errored tools as not a pass")
         check(summarize([clean], "whole-repo", tdp)["clean"] is True,
               "all tools ran with 0 findings -> clean")
+        skipped = {"tool": "skipped", "status": "skipped"}
+        check(summarize([skipped], "whole-repo", tdp)["clean"] is False
+              and summarize([], "whole-repo", tdp)["clean"] is False,
+              "every selected tool skipped -> not clean")
 
         # cache env: filled in under $TMPDIR, created, and caller values respected
         base = {"TMPDIR": td, "HOME": os.environ.get("HOME", td), "PATH": os.environ["PATH"],
@@ -855,6 +867,48 @@ def selftest() -> int:
               "a cache var the caller set is left alone")
         check(tool_env({**base, "NPM_CONFIG_CACHE": "/x"}).get("npm_config_cache") is None,
               "npm cache set in either case is respected")
+
+        # semgrep settings file: redirected only when ~/.semgrep/settings.yml is absent
+        home = tdp / "home"
+        home.mkdir()
+        sbase = {"TMPDIR": td, "HOME": str(home), "PATH": os.environ["PATH"]}
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(home)
+        try:
+            e1 = tool_env(sbase)
+            check(e1.get("SEMGREP_SETTINGS_FILE", "").startswith(str(croot)),
+                  "SEMGREP_SETTINGS_FILE is redirected under the cache root when ~/.semgrep/settings.yml is absent")
+            (home / ".semgrep").mkdir()
+            (home / ".semgrep" / "settings.yml").write_text("")
+            check("SEMGREP_SETTINGS_FILE" not in tool_env(sbase),
+                  "SEMGREP_SETTINGS_FILE is left unset when ~/.semgrep/settings.yml exists")
+            check(tool_env({**sbase, "SEMGREP_SETTINGS_FILE": "/mine"})["SEMGREP_SETTINGS_FILE"] == "/mine",
+                  "a SEMGREP_SETTINGS_FILE the caller set is kept")
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+        # main() must turn an unusable cache root into exit 2, not a traceback
+        repo = tdp / "repo"
+        (repo / ".code-analysis").mkdir(parents=True)
+        (repo / "a.py").write_text("x = 1\n")
+        (repo / ".code-analysis" / "summary.json").write_text('{"clean": true}')
+        old = (sys.argv, os.environ.get("TMPDIR"))
+        sys.argv = ["code-analysis", str(repo)]
+        os.environ["TMPDIR"] = str(tdp / "no-such-dir")
+        try:
+            rc = main()
+        finally:
+            sys.argv = old[0]
+            if old[1] is None:
+                os.environ.pop("TMPDIR", None)
+            else:
+                os.environ["TMPDIR"] = old[1]
+        check(rc == 2, "an unusable cache root makes main() return 2")
+        check(not (repo / ".code-analysis" / "summary.json").exists(),
+              "a stale summary.json is removed before the run")
 
         seen = go("env", fake(
             "import os; print(os.environ.get('UV_CACHE_DIR', 'UNSET'))", ok_exit=[0]), env)
