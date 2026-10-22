@@ -6,7 +6,7 @@
 # Reads ANSI text (file or stdin), converts it to HTML (ansi2html.py), then
 # rasterises to PNG. Prints the PNG path on stdout.
 #
-#   -o   output PNG path (default: alongside input, or $TMPDIR/ascii-shot-<pid>.png for stdin)
+#   -o   output PNG path (default: alongside input, or ${TMPDIR:-/tmp}/ascii-shot-<pid>.png for stdin)
 #   -s   max image dimension in px (default 1400)
 #
 # Rasteriser preference: macOS Quick Look (qlmanage, zero-install) → wkhtmltoimage
