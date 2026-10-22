@@ -105,8 +105,9 @@ beneath the loop is a legitimate call; making that call *silently look like a re
 | 1, 2 | no decision: a usage error, an unreadable store, a run id that is not plain | empty; stderr says why |
 
 A non-zero exit never pushes, so a command chained on it with `&&` runs only on an allowed push.
-Until v0.2.10 a refusal exited 0, and the friction log records a `push-check … && git push` chain
-pushing on `push:false` twice, the `false` hidden behind a `tail`. Chaining is safe now, but read
+Until v0.2.10 a refusal exited 0, so a plain `push-check … && git push` would push on
+`push:false`. The two incidents the friction log records piped push-check through `tail`, whose
+exit status hid it, and no exit code fixes that. Chaining is safe now without a pipe, but read
 the JSON either way: the exit status does not carry `reason` (what a refusal needs, or that an
 allowed push needs `-u origin <branch>`) or `disclose`, and `record-reviewed.sh` (section 2
 above) comes between this decision and the push.

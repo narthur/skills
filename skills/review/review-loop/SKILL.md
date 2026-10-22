@@ -541,7 +541,7 @@ Do the edits with `looper learn` — you judge match/novelty/section; the comman
 
 `add` stamps the date itself. One ISO date opening the text (with the colon or spaces after it) is dropped so it is not written twice, but pass the text without one anyway; a date later in the text is kept as text.
 
-A non-zero exit means nothing was written: show its stderr and never report the learning as recorded. A usage error exits 2; the three refusals you will meet exit 1: `bump` matched no entry (`add` it instead), `add --section dismissed` refused a reason that cites precedent (reword it with a measurable reason, or drop it), and `add` refused text under 10 characters once trimmed (a learning that short is a probe or an empty argument, not an entry).
+A non-zero exit means nothing was written: show its stderr and never report the learning as recorded. A usage error exits 2; the refusals you will meet exit 1: `bump` matched no entry (`add` it instead), `bump` was given an empty match, which every entry contains, `add --section dismissed` refused a reason that cites precedent (reword it with a measurable reason, or drop it), and `add` refused text under 10 characters once trimmed (a learning that short is a probe or an empty argument, not an entry).
 
 **Never probe `looper learn add` with dummy text** to see what it does: a text of 10 characters or more is written to the real learnings file as an entry, which is how a stray `x` once became one. Read `~/.local/bin/looper learn -h`, or point it at a file under the run dir.
 
@@ -676,8 +676,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
    **Its exit status is the decision**: 0 means push allowed, 3 means refused (the JSON with
    `reason` is still printed), and 1 or 2 means it could not decide (stdout empty, stderr says why).
    A non-zero exit never pushes, so chaining a command on it with `&&` is safe: before v0.2.10 a
-   refusal exited 0, and a `push-check … && git push` chain pushed on `push:false` twice. The exit
-   status is not the whole answer, though, so run it on its own and read the JSON it printed either
+   refusal exited 0, so a plain `push-check … && git push` would push on `push:false`. The two
+   logged incidents piped push-check through `tail`, which hides any exit status. So run it on its own and read the JSON it printed either
    way: `reason` says what to do on a refusal, and on an allowed push whether the branch has no
    upstream yet (then the push is `git push -u origin <branch>`); `disclose` is the line the PR
    summary owes. And step 3's stamp comes between this and the push, so a bare `&& git push` skips

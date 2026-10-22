@@ -123,10 +123,9 @@ jobs:
           # which Step 0c flushes every branch's deferred report through and the preflight probes
           # for now; push-check's exit 3 for a refusal and its branch defaults; and `record
           # finish`'s refusals of a malformed escalation and a contradictory or second finish.
-          # 889f06e is the tip of looper's friction-2026-10-21 branch, whose changes ship as v0.2.10.
-          # Until that release is tagged and pushed this ref may not be fetchable and the trust job
-          # fails; once it is, confirm the tag's commit is this one, or re-pin to it.
-          ref: 889f06e74ddcbd7ca5d2f6fff0f49a592cddbb73 # v0.2.10 (the commit, not the annotated tag object)
+          # 37dc374 is v0.2.10's commit: the merge of looper PR #40, whose tree is the reviewed tip
+          # 9e27818.
+          ref: 37dc374ea1304c611503289c4fc88b041bfac408 # v0.2.10 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

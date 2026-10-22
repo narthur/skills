@@ -150,7 +150,7 @@ if real_looper=$(command -v looper); then
 		&& ok "looper push-check refuses a run whose report has not landed" || bad "looper push-check refuses a run whose report has not landed: $pc"
 	# SKILL.md Step 14 says a refusal exits 3 with its JSON still on stdout, so a command
 	# chained on push-check with && runs only on an allowed push. Before v0.2.10 a refusal
-	# exited 0 and such a chain pushed on push:false.
+	# exited 0, so such a chain would push on push:false.
 	[ "$pcrc" -eq 3 ] && grep -q '"reason"' <<<"$pc" \
 		&& ok "looper push-check exits 3 on a refusal and still prints its reason" \
 		|| bad "looper push-check exits 3 on a refusal and still prints its reason (exit $pcrc: $pc)"
