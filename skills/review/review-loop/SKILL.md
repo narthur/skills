@@ -271,7 +271,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
        - 50-79 + low-risk                 → auto-fix (no ask)
        - 50-79 + high-risk                → ask-user
        - <50                              → skip
-    e. If the auto-fix AND ask-user buckets are both empty AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → record the cycle (step j2, `--applied 0`, no `--analysis-changed`) and EXIT LOOP (clean). That zero-fix row IS the proof of convergence; skipping it because the loop is ending makes the run indistinguishable from one that ran out of budget.
+    e. Make Step 8b's decisions on the ask-user bucket (apply / skip / ask) without acting on them yet. If the auto-fix bucket is empty, Step 8b would apply nothing and ask nothing (every ask-user finding is a recommended skip, or there are none), AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → record the cycle (step j2, `--applied 0`, no `--analysis-changed`) and EXIT LOOP (clean). That zero-fix row IS the proof of convergence; skipping it because the loop is ending makes the run indistinguishable from one that ran out of budget.
     f. Apply auto-fix bucket via Edit (Step 7).
     g. If ask-user bucket is non-empty, Step 8b: act on each finding you hold a clear recommendation for (apply or skip it, unasked), and batch only the rest into one AskUserQuestion. Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
@@ -492,7 +492,7 @@ For each ask-bucket finding, form your recommendation first: apply the fix, skip
 - List both in the Step 14 narrative under "Decided on recommendation" (`references/report-format.md`), one line each: the finding, what you did, why it was borderline.
 - Write **no** learnings entry for them (Step 11): learnings record the user's verdicts, and these have none. A later run may raise a recommended skip again and will decide it again; that repeat is accepted, since writing it as a dismissal would record a verdict nobody gave. If the user reverses one — in this session or a later one that reads the report — write their verdict to learnings then.
 
-**Agents #7 and #9.** Their "never auto-applied" means the *score* never applies them. Step 8b may settle either on a clear recommendation; a #9 finding that is a real question about intent has no clear recommendation and is asked.
+**Agents #7 and #9.** Their "never auto-applied" means the *score* never applies them. Step 8b may settle either on a clear recommendation. For #9 that means the intent statement or the code itself decides the answer: an UNHANDLED failure path with an obvious guard, or a requirement the intent states outright. A #9 finding whose answer turns on what the author meant is asked.
 
 For each question that remains, start the `question` field with 🔀 (it is a decision that is the user's to make) and offer:
 
@@ -515,7 +515,7 @@ Run the detected test command. Stream output. If exit code is non-zero:
 
 ## Step 10: Commit the Cycle
 
-Stage all files changed this cycle (lint --fix changes + auto-fixes + user-approved fixes) and commit with a conventional commit message summarizing the cycle. Fixes applied on recommendation (Step 8b) get a **second commit** right after it, so one `git revert` undoes them: stage them by file, or by hunk with `git add -p` where they share a file with an auto-fix, and subject it `fix(review): cycle <N> — applied on recommendation` (same scope rule as below). If the two cannot be separated cleanly, make one commit and say so in its message and in the report. Both commits come after Step 9's tests pass; on a test failure neither is made.
+Stage the files changed this cycle by lint --fix, auto-fixes and user-approved fixes — not the fixes applied on recommendation — and commit with a conventional commit message summarizing the cycle. Fixes applied on recommendation (Step 8b) get a **second commit** right after it, so one `git revert` undoes them: this works when they touch files no other fix this cycle touched (no interactive `git add -p` here), and subject it `fix(review): cycle <N> — applied on recommendation` (same scope rule as below). When they share a file with another fix, make one commit, say so in its message, and use the report's combined-commit line. Both commits come after Step 9's tests pass; on a test failure neither is made.
 
 ```bash
 git add <changed-files>
