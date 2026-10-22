@@ -266,14 +266,14 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
        Record the current HEAD sha at the end of each cycle (Step 10) so the next cycle can diff against it.
     c. For each finding, spawn a Haiku scorer subagent (Step 6). Score 0-100.
     d. Bucket by score AND risk profile (Step 8a):
-       - structural (Agent #7) or intent-reconciliation (Agent #9), ≥40 → ask-user; <40 → report-only (never auto-apply either way)
+       - structural (Agent #7) or intent-reconciliation (Agent #9), ≥40 → ask-user; <40 → report-only (never applied by score; Step 8b may settle one on recommendation)
        - ≥80                              → auto-fix
        - 50-79 + low-risk                 → auto-fix (no ask)
        - 50-79 + high-risk                → ask-user
        - <50                              → skip
-    e. If auto-fix bucket is empty AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → record the cycle (step j2, `--applied 0`, no `--analysis-changed`) and EXIT LOOP (clean). That zero-fix row IS the proof of convergence; skipping it because the loop is ending makes the run indistinguishable from one that ran out of budget.
+    e. Make Step 8b's decisions on the ask-user bucket (apply / skip / ask) without acting on them yet. If the auto-fix bucket is empty, Step 8b would apply nothing and ask nothing (every ask-user finding is a recommended skip, or there are none), AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → record the cycle (step j2, `--applied 0`, no `--analysis-changed`) and EXIT LOOP (clean). That zero-fix row IS the proof of convergence; skipping it because the loop is ending makes the run indistinguishable from one that ran out of budget.
     f. Apply auto-fix bucket via Edit (Step 7).
-    g. If ask-user bucket is non-empty, batch them into one AskUserQuestion (Step 8b). Apply approved fixes.
+    g. If ask-user bucket is non-empty, Step 8b: act on each finding you hold a clear recommendation for (apply or skip it, unasked), and batch only the rest into one AskUserQuestion. Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
     j. Append captured learnings to <git-common-dir>/info/review-loop-learnings.md (Step 11), deduping against existing entries.
@@ -399,9 +399,9 @@ Two stages, and the fan-out is on *verification*, not discovery:
 
 Evaluate each gate every run; the gate is here, the focus/scoring/routing is in the reference. When a gate fires, **Read `references/conditional-agents.md`** for that agent's full instructions before spawning it.
 
-- **#7 Structural simplification** `[sonnet]` — spawn on **substantial diffs**; skip when ALL hold: diff < ~150 changed lines, no file past ~800 lines, and pure bugfix/config/dependency bump. Reads beyond the diff. Scored on value-vs-risk, **never auto-applied** (asked at ≥40, report-only below).
+- **#7 Structural simplification** `[sonnet]` — spawn on **substantial diffs**; skip when ALL hold: diff < ~150 changed lines, no file past ~800 lines, and pure bugfix/config/dependency bump. Reads beyond the diff. Scored on value-vs-risk, **never applied by score** (Step 8b at ≥40, report-only below).
 - **#8 Observability & cost coverage** `[sonnet]` — spawn when the diff is substantial/risky (#7's threshold) **AND** either the repo has an observability convention (logger/metrics/error reporter) **or** the diff touches a metered resource (paid API, LLM call, CI workflow, cron schedule, queue, cache, storage). Skip the observability half if the project logs nothing. Normal Step 6 rubric; fixes usually additive/auto-applied.
-- **#9 Intent reconciliation** `[sonnet]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Never auto-applied** (asked at ≥40, report-only below); highest false-positive rate — lean on the Dismissed list.
+- **#9 Intent reconciliation** `[sonnet]` — spawn **only in cycle 1** when Step 4b established a reviewable intent. Two stages in separate contexts (spec from intent only → reconcile against code). **Never applied by score** (Step 8b at ≥40, report-only below); highest false-positive rate — lean on the Dismissed list.
 - **#11 Spec conformance** `[sonnet]` — spawn **only in cycle 1**, and only when Step 4b captured a **written spec artifact**. Checks the diff against that text on three axes: requirements missing/partial, behaviour present that the spec never asked for (scope creep), and requirements implemented but implemented wrong. Every finding quotes the spec line. **Bypasses Step 6 scoring entirely and is always ask-routed**; reported in its own section so a spec miss can never be outranked by a style nit. Distinct from #9 — #9 *derives* expected behaviour and hunts omissions; #11 *checks against text someone wrote*.
 - **#10 Prior review feedback** `[sonnet]` — spawn **only in cycle 1**, and only when `gh` is authenticated and the repo has a GitHub remote. Mines review comments on past merged PRs that touched the same files and checks whether any apply again here. **You fetch the comments, not the agent:** an agent's `gh` runs inside the sandbox, where its TLS fails (`x509: OSStatus -26276`), and it returns an empty skip. Fetch them with lone `gh` commands into `<run dir>/prior-comments.txt`, check that file is non-empty, and hand #10 the file; the reference has the commands. Skip on a repo with no PR history for the changed files. Normal Step 6 rubric; findings carry a citation to the prior comment.
 
@@ -431,7 +431,7 @@ Give each scorer:
 - The learnings file contents
 - This rubric (verbatim), instructing it to **return one integer per finding, keyed by finding**, scoring each independently of the others in the batch:
 
-**Read `references/scoring-and-routing.md`** for the rubric to pass verbatim (the 0-100 anchors, the Dismissed/Accepted adjustments) and for the two agents that score on a different basis — #7 structural on value-vs-risk, #9 intent on plausibility × impact-if-true. Neither is ever auto-applied; they are asked at ≥40 and report-only below.
+**Read `references/scoring-and-routing.md`** for the rubric to pass verbatim (the 0-100 anchors, the Dismissed/Accepted adjustments) and for the two agents that score on a different basis — #7 structural on value-vs-risk, #9 intent on plausibility × impact-if-true. Neither is ever applied by score; at ≥40 they go to Step 8b, and below that they are report-only.
 
 ## Step 7: Apply Auto-Fixes (≥80)
 
@@ -469,9 +469,33 @@ When auto-applying a 50-79 finding without asking, note it in the cycle commit m
 
 If after Step 8a the ask-user bucket is empty, skip Step 8b entirely.
 
-## Step 8b: Batched approval for the remaining (high-risk) 50-79 findings
+## Step 8b: Decide on recommendation, ask only what's left
 
-After auto-fixes are applied, present the remaining 50-79 findings as one AskUserQuestion (or sequential if there are more than 4 — AskUserQuestion caps at 4 options per call, so use multiple calls if needed). For each:
+For each ask-bucket finding, form your recommendation first: apply the fix, skip it, or which of several fixes. Then either act on it or ask.
+
+**Why act unasked at all.** A transcript check on 2026-10-22 found about 45 Step 8b questions since late September that carried a "(Recommended)" option. Every one was answered as recommended; one of them was unclear, and the user asked for a clarification before taking the recommendation. The only overrides were on two questions that were not findings: a `/pilot` card proposing to skip a review, and a stuck CI runner. Questions with no recommendation were where the user actually chose. A question whose answer is always "as recommended" spends the user's attention and adds nothing.
+
+**Still ask** — one batched AskUserQuestion, as below — when any of these holds:
+
+- **No clear recommendation.** You would not pick the same option again on a re-read, or the choice turns on the user's intent or taste (which of several structural deletions to take, whether behaviour X was intended).
+- **The suggested fix is unclear or conflicts with the current state** (Step 7, item 3).
+- **A behavioral finding with no `observed_failure`** (`bucket.py` routes these to ask). It leaves this list only once you construct the failing case, watch it fail, and can state that failure as its `observed_failure` (Step 8a); then it is decided like any other finding.
+- **A `CLAUDE.md` file or learnings entry says "always ask the user about X"** and the finding is about X. The user's own instruction outranks the acceptance rate above.
+- **An authorization finding (`5-security-authz`).** A wrong authz fix looks exactly like a right one until real users are locked out.
+- **A spec-conformance finding (Agent #11).** The spec is the user's; whether the code or the spec moves is theirs to say.
+- **Skipping any security, secret or SAST finding.** Applying one on recommendation is fine; dropping one is the user's call, and their skip is what writes the threat model's `Not an issue here` entry (Step 11).
+- **Deferring a finding** (Step 2a's deferred list), or anything that would skip or clear a gate the run plan marked `run`.
+
+**Otherwise act on the recommendation:**
+
+- **Apply** → apply it as in Step 7 and record it for Step 10, which commits it separately from the cycle's other fixes so one `git revert` undoes it.
+- **Skip** → leave it unapplied.
+- List both in the Step 14 narrative under "Decided on recommendation" (`references/report-format.md`), one line each: the finding, what you did, why it was borderline.
+- Write **no** learnings entry for them (Step 11): learnings record the user's verdicts, and these have none. A later run may raise a recommended skip again and will decide it again; that repeat is accepted, since writing it as a dismissal would record a verdict nobody gave. If the user reverses one — in this session or a later one that reads the report — write their verdict to learnings then.
+
+**Agents #7 and #9.** Their "never auto-applied" means the *score* never applies them. Step 8b may settle either on a clear recommendation. For #9 that means the intent statement or the code itself decides the answer: an UNHANDLED failure path with an obvious guard, or a requirement the intent states outright. A #9 finding whose answer turns on what the author meant is asked.
+
+For each question that remains, start the `question` field with 🔀 (it is a decision that is the user's to make) and offer:
 
 - Option "Apply fix" — apply the suggested fix
 - Option "Skip" — record as a dismissal in learnings
@@ -492,7 +516,7 @@ Run the detected test command. Stream output. If exit code is non-zero:
 
 ## Step 10: Commit the Cycle
 
-Stage all files changed this cycle (lint --fix changes + auto-fixes + user-approved fixes) and commit with a conventional commit message summarizing the cycle:
+Stage the files changed this cycle by lint --fix, auto-fixes and user-approved fixes — not the fixes applied on recommendation — and commit with a conventional commit message summarizing the cycle. Fixes applied on recommendation (Step 8b) get a **second commit** right after it, so one `git revert` undoes them: this works when they touch files no other fix this cycle touched (no interactive `git add -p` here), and subject it `fix(review): cycle <N> — applied on recommendation` (same scope rule as below). When they share a file with another fix, make one commit, say so in its message, and use the report's combined-commit line. When the recommendation fixes are the cycle's only changes, skip the empty first commit: the recommendation commit is the cycle's only commit. Both commits come after Step 9's tests pass; on a test failure neither is made.
 
 ```bash
 git add <changed-files>
@@ -503,19 +527,21 @@ git commit -m "fix(review): cycle <N> — <short summary of categories addressed
 
 Summary should mention the agent categories whose findings drove the cycle (e.g. "security + bug scan + CLAUDE.md").
 
-After committing, record this commit's sha (`git rev-parse HEAD`) as the previous-cycle marker so the next cycle's review scope (Step 4 loop, step b) diffs against it. If the cycle made no commit (nothing to fix), the marker stays where it was.
+After committing, record `git rev-parse HEAD` — after the recommendation commit, when there is one — as the previous-cycle marker so the next cycle's review scope (Step 4 loop, step b) diffs against it. If the cycle made no commit (nothing to fix), the marker stays where it was.
 
 **Then record the cycle in the run record — every cycle, including the one that applied nothing:**
 
 ```bash
 ~/.local/bin/looper record cycle --run-id <run_id> --n <N> \
-  --applied <fixes applied> --asked <ask-bucket items> \
+  --applied <fixes applied> --asked <questions put to the user> \
   --defect-findings <n> --comment-findings <n> \
   --agents <agents spawned this cycle> --width-reason "<field>=<value>" \
   [--tokens <observed subagent tokens>] [--analysis-changed]
 ```
 
 `--width-reason` is the measurement that settled this cycle's fan-out width — `semantic_lines=129, 3 batches, no near_duplicates`. `looper record cycle` does not require it and an empty string is accepted, so nothing stops you omitting it; a cycle row with `width_reason: null` is a width nobody can account for later, which is the state Step 3b's rule exists to remove. Keep to the `<field>=<value>` shape: the reason goes through the same banned-reason funnel as every other free-text field, and prose phrasings like "same pattern as the first file" or "mirrors the existing" hard-exit there because they read as precedent arguments.
+
+`--applied` counts every fix that landed this cycle: auto-fixes, user-approved fixes and fixes applied on recommendation. `--asked` counts only the questions actually put to the user (or, headless, left open for them). A recommended skip counts in neither, so a cycle that settled everything on recommendation and applied nothing records `--applied 0 --asked 0`.
 
 This is the only thing that answers "was the review finished, or did we stop?" — Step 14's push
 checker derives convergence from these rows rather than being told, and **a run with no cycle rows
@@ -529,7 +555,7 @@ against real spend later.
 
 ## Step 11: Capture Learnings
 
-On Step 8b outcomes, record learnings in `<git-common-dir>/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
+On the user's Step 8b answers (not findings Step 8b settled on recommendation), record learnings in `<git-common-dir>/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
 
 **Also record every Agent #10 finding that survived** — including ones auto-fixed at Step 7, which never reach Step 8b. #10 is the only agent whose findings come from outside the repo (`gh` review history), and it runs at most once per branch, so an unrecorded #10 finding costs the same API calls to rediscover next time. Write it to **Accepted patterns** with its citation intact ("PR #1042, @jakecoble: don't call this from the request path"). This is how a repo's most-repeated human review feedback migrates from GitHub into the local learnings file, where Agents #1–#4 and #6 see it for free on every subsequent run.
 
@@ -599,7 +625,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
      --executed '{"<gate>":{"status":"done|skipped|failed|n/a","reason":"..."}}' \
      --escalations '[{"gate":"...","reason":"..."}]' \
      --agents '[{"id":"2-bugs","model":"sonnet","status":"ok","findings":3}]' \
-     --findings '{"auto_fix":N,"asked":N,"skipped":N}' --asks <unresolved ask-bucket items>
+     --findings '{"auto_fix":N,"asked":N,"recommended_applied":N,"recommended_skipped":N,"skipped":N}' --asks <questions still owed to the user>
    ```
 
    **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
@@ -628,10 +654,19 @@ honesty rule, and the full "when NOT to auto-push" spec.
    claim, and it has to, because nothing downstream enforces it: the push gate never reads the tier
    and the PR label is keyed on `convergence`. The tier reaches the PR comment body and
    `looper stats`, so a laundered `full` is wrong exactly where a human would read it.
-   Non-interactive session with a non-empty ask bucket (`AskUserQuestion` aborts in headless and AO
-   worker runs): leave those findings unapplied, list them in the PR as open questions, and pass the
-   count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody
-   is there to ask.
+   The counts are disjoint: `auto_fix` is Step 7/8a auto-fixes, `asked` is questions put to the
+   user, `recommended_applied` and `recommended_skipped` are findings Step 8b settled on
+   recommendation (listed in the report), and `skipped` is the <50 bucket. `--asks` is only the
+   questions still owed to the user; a recommended skip is settled, not owed. The two
+   `recommended_*` counts are the denominators for checking whether acting on recommendations draws
+   reversals: a reverted applied one shows up as a `Revert` of a commit found by
+   `git log --grep='applied on recommendation'`, and a reversed skip as the user asking for it in a
+   later turn.
+   Non-interactive session (`AskUserQuestion` aborts in headless and AO worker runs): Step 8b
+   applies unchanged, since acting on a recommendation never needed anyone present, and the report
+   is where an absent user reverses it. Leave the findings Step 8b says to ask unapplied, list them
+   in the PR as open questions, and pass that count to `--asks`; inside AO also `ao report
+   --needs-input`. Never act on one of those because nobody is there to ask.
 
 1. **Reconcile the PR description — clean exit only. Post the report on every terminal exit.**
    The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
@@ -759,12 +794,12 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
 | Bucket | Score | Risk profile (Step 8a) | Action |
 | --- | --- | --- | --- |
-| Ask user | ≥40 | structural finding from Agent #7 | Surface as proposal; never auto-apply |
+| Ask user | ≥40 | structural finding from Agent #7 | Never auto-applied by score; Step 8b acts on a clear recommendation, else surfaced as a proposal |
 | Auto-fix / Ask | by score | baseline smell from Agent #1 (name / duplication) | Routes on confidence like anything else — `always_ask: false`. Was always-ask until 2026-10-07; see `agent-roster.md` for why it changed and what still asks |
 | Report-only | <40 | any always-ask finding (#7, #9, `always_ask`) | Listed in the report (#7 nits / #9 questions), not asked; never auto-applied |
 | Auto-fix | ≥80 | (any) | Apply silently |
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
-| Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |
+| Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Step 8b: act on a clear recommendation and report it; batch the rest via AskUserQuestion |
 | Skip | <50 | (any) | Reported in final summary count only |
 | Ask user | ≥80 | authorization finding (`5-security-authz`) | Never auto-apply — a wrong authz fix locks out real users |
 | Auto-fix / Ask | ≥80 | security, non-authz | Stage-2 filter confidence ×10; normal risk profile |

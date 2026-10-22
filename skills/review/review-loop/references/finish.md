@@ -26,7 +26,7 @@ Give one `executed` entry per gate the plan marked `run`, each with `status` (`d
 
 **Escalations** record where you ran *more* than the plan's floor, with why. You may escalate; you may never descend. The accumulated escalations are the signal that a threshold is set too loosely.
 
-**Non-interactive sessions** (headless, AO worker) can't run `AskUserQuestion`. Leave ask-bucket findings unapplied, list them in the PR as open questions, and pass the count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody is there to ask.
+**Non-interactive sessions** (headless, AO worker) can't run `AskUserQuestion`. Step 8b applies unchanged: acting on a recommendation never needed anyone present, and the report is where an absent user reverses it. Leave the findings Step 8b says to ask unapplied, list them in the PR as open questions, and pass that count to `--asks`; inside AO also `ao report --needs-input`. Never act on one of those because nobody is there to ask.
 
 ## 1. Reconcile the PR description, then post the summary comment
 
@@ -161,7 +161,7 @@ the error verbatim in the final report and continue — do not retry, do not for
   `N cycle(s) · M agent(s)` line into every body; until a PR comment or the pending-report file
   carries both, the push is refused — on every terminal exit, converged included. Run
   `~/.local/bin/looper pr-report --run-id <run_id> --post </dev/null` first.
-- **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** That is
+- **The user explicitly skipped a 50-79 finding without "remember as dismissal pattern".** A skip Step 8b made on recommendation is not one; it does not set `--unresolved-skip`. That is
   an unresolved ambiguity they may still want to think about; let them push when ready.
 - **The current or default branch name is unknown** — neither passed nor readable from git (a
   detached HEAD, an unset origin/HEAD). Fail closed rather than skip the default-branch guard.

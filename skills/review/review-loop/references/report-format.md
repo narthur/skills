@@ -64,12 +64,18 @@ Cycle 1: <summary>
 Cycle 2: <summary>
 ...
 
-Structural proposals (Agent #7 — not applied, your call):
+Decided on recommendation (Step 8b — not asked; reply to reverse any of them):
+- Applied (cycle <N>, commit <sha>; `git revert <sha>` undoes every recommendation in that commit — reply to undo just this one): <finding> — <why it was borderline>
+- Applied (cycle <N>, combined with that cycle's other fixes in <sha>; undo by hand): <finding> — <why it was borderline>
+- Skipped (cycle <N>; reply to have it applied): <finding> — <why it was borderline>
+(Omit entirely if Step 8b settled nothing on recommendation. A finding listed here is not repeated in the #7 or #9 sections below.)
+
+Structural proposals (Agent #7 — not applied, your call; any Step 8b settled are listed above instead):
 - Blockers: <high-value simplifications that delete a layer/branch, or file-size breaches — the things worth doing before this merges>
 - Nits: <smaller tidy-ups, listed briefly — including every proposal below the always-ask floor (<40), which was never asked>
 (Omit this section entirely if Agent #7 didn't run or found nothing.)
 
-Intent questions (Agent #9 — reconciled against PR intent, not applied, your call):
+Intent questions (Agent #9 — reconciled against PR intent, not applied, your call; any Step 8b settled are listed above instead):
 - <each as a question: "intent says X; the code does Y / doesn't do Z — intended?" — ordered by plausibility × impact; mark the ones below the always-ask floor (<40) as "not asked">
 (Omit entirely if Agent #9 didn't run — skipped when the change had no reviewable intent (Step 4b) — or found nothing.)
 
