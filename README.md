@@ -2,7 +2,7 @@
 
 Agent skills for [Claude Code](https://claude.com/claude-code), written by Nathan Arthur and split out of a dotfiles repo so they can be read, borrowed and forked.
 
-26 skills in five groups. Everything here is original work. Skills that are merely *used* — vendor packs, other people's published skills — stay in the dotfiles repo they came from.
+27 skills in five groups. Everything here is original work. Skills that are merely *used* — vendor packs, other people's published skills — stay in the dotfiles repo they came from.
 
 ## Install
 
@@ -64,6 +64,7 @@ before deleting (`--prune=yes` to skip the prompt in CI).
 
 | Skill | What it does | Requires |
 |---|---|---|
+| [`architecture`](skills/dev/architecture/) | Baseline architecture tenets — deep modules, framework convention, monorepos, a services layer around external dependencies, raw SQL over optional ORMs, functional style, no premature abstraction | — |
 | [`cleanup-worktrees`](skills/dev/cleanup-worktrees/) | Clean up stale git worktrees in the current repo — any tool (Claude, Zenflow, Vibe Kanban, PR triage, etc.) — by checking which branches are merged, then prompting the user to delete them | — |
 | [`local-llm`](skills/dev/local-llm/) | Leverage local Ollama models (qwen2.5-coder) for the current task | `llm-local` on PATH, a running Ollama |
 | [`name-it`](skills/dev/name-it/) | Brainstorm and evaluate names for a product, company, or library against Daniel Reeves' nominology criteria, then check domain availability across many TLDs | — |
