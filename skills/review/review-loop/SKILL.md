@@ -290,7 +290,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
 If the loop exits with work still outstanding:
     Say so, and list the remaining findings. `convergence` is derived from the
     cycle rows, not from this report: spending the budget derives `capped`,
-    stopping for any other reason (an interrupt, a test failure) derives
+    stopping for any other reason (an interrupt, a test failure, asks left open) derives
     `halted`, and both push with a disclosure rather than stalling. That holds
     when this session goes on to finish the run; a session that died before
     Step 14 is abandoned instead (references/finish.md) and the tip gets a fresh run.
@@ -627,6 +627,13 @@ honesty rule, and the full "when NOT to auto-push" spec.
      --agents '[{"id":"2-bugs","model":"sonnet","status":"ok","findings":3}]' \
      --findings '{"auto_fix":N,"asked":N,"recommended_applied":N,"recommended_skipped":N,"skipped":N}' --asks <questions still owed to the user>
    ```
+
+   **Pick the outcome by what stopped the run, broken tree first.** A Step 9 failure is
+   `test-failure` and a blocked gate is `blocked`, even with asks still open: pass the open count as
+   `--asks` anyway, and never let `asks-open` stand in for a broken tree, since `asks-open` pushes and
+   gets stamped. With the tree sound, any question still owed to the user (interactive or not) is
+   `asks-open`; a spent agent budget with nothing owed is `cycle-limit`; nothing left at all is
+   `clean`.
 
    **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
    `--escalations` that is not a list of `{"gate":"…","reason":"…"}` objects with both strings

@@ -44,7 +44,7 @@ The format it produces is documented below so you know what it covers and what y
 narrative needs to add. Do not hand-render it: `looper` is required (SKILL.md Step 0), and a
 report assembled from memory is the failure this command exists to prevent.
 
-What `--post` does with it: when a PR exists for the branch, it posts the report as a PR comment, on any terminal exit (clean, cycle-limit or test-failure), and that includes fast-path and fast-path re-entry runs (Step 3b). It also keeps a local copy.
+What `--post` does with it: when a PR exists for the branch, it posts the report as a PR comment, on any terminal exit (clean, cycle-limit, asks-open or test-failure), and that includes fast-path and fast-path re-entry runs (Step 3b). It also keeps a local copy.
 
 **No PR yet: defer, don't skip.** A fresh branch is pushed *after* the loop runs (the gate forces that order), so "no PR" is the normal first-branch case. `looper pr-report --post` then writes the pending file itself, at `<git-common-dir>/info/review-loop-pending-report.<run_id>.md`. Never write that file by hand: push-check reads it as proof that the report landed. Two things flush it, and both run Step 0c's procedure (post the report, run the evidence gate, reconcile the description):
 

@@ -20,7 +20,7 @@ Give one `executed` entry per gate the plan marked `run`, each with `status` (`d
 
 **Three statuses, and the third matters.** `done` ran. `skipped` means you chose not to run it, and that makes the run `partial`. `n/a` means there was nothing for the gate to act on — no PR exists to post a report to, the repo has no telemetry to verify — and does NOT make the run partial, because a gate that cannot apply is not a gate that was dropped. All three need a reason; for `n/a` the reason is what was absent.
 
-**`record_reviewed` on a run that did not converge is `n/a`, not `skipped`.** It is the one gate whose applicability depends on the run's own outcome: the plan marks it `run` with the reason "on clean exit", because at plan time nobody knows whether the loop will converge. When it doesn't, there is no completed review to stamp — the precondition is absent, exactly like the missing PR above — so it is `n/a` with the reason naming the outcome, and the run's `convergence` (`capped`/`halted`/`unknown`) is what carries "not finished" to the push gate. Recording `skipped` instead says you declined a gate you could have run, which forces `partial` on a run that actually executed the whole process, and three such runs raise the Step 0 alarm about a gate that was working correctly every time. That is not hypothetical: it is where five of the alarm's reported misses came from, none of them real.
+**`record_reviewed` on a run that did not converge is `n/a`, not `skipped`.** It is the one gate whose applicability depends on the run's own outcome: the plan marks it `run` with the reason "on clean exit", because at plan time nobody knows whether the loop will converge. When it doesn't, the stamp has still not happened at finish time: it follows the finish, on push-check's `push: true`, whatever the convergence (§2), and a capped, halted or `asks-open` run is stamped then like a converged one. So it is `n/a` with the reason that it follows the push decision, and the run's `convergence` (`capped`/`halted`/`unknown`) is what carries "not finished" to the push gate. Only a refused push (§3) leaves the tip unstamped. Recording `skipped` instead says you declined a gate you could have run, which forces `partial` on a run that actually executed the whole process, and three such runs raise the Step 0 alarm about a gate that was working correctly every time. That is not hypothetical: it is where five of the alarm's reported misses came from, none of them real.
 
 **Tier:** `partial` whenever any planned agent failed or any planned gate was skipped. `looper record finish` derives it rather than taking your word for it, because nothing downstream enforces it: the push gate never reads the tier, and the PR label is keyed on `convergence`. What the tier reaches is the PR comment body and `looper stats`, so calling a partial run `full` launders it in the only places a human would notice — and nothing else will catch that.
 
@@ -32,8 +32,10 @@ Give one `executed` entry per gate the plan marked `run`, each with `status` (`d
 
 A run that finished `asks-open` is closed; a finish is final, so the answers do not go into its record. The user's answer to each open ask lands wherever the conversation is: the main session, or in planner-builder, the planner. Per answer:
 
-- **Fix** → commit the fix, then run review-loop again. The tip of the `asks-open` run was stamped (§2), so the new run's delta is only the fix: the Step 3b re-entry path when it qualifies, a full run otherwise.
-- **Skip** → write a learnings Dismissed entry with the user's reason (`references/learnings-format.md`), so the next run does not raise it again. Nothing changed in the tree, so no new review is owed: the stamped tip already passes the pre-push gate.
+- **Fix** → commit the fix, then run review-loop again. When the `asks-open` run's push-check said `push: true`, its tip was stamped (§2), so the new run's delta is only the fix: the Step 3b re-entry path when it qualifies, a full run otherwise (reviewing a large delta on its own scope is looper #42).
+- **Skip** → write a learnings Dismissed entry with the user's reason (`references/learnings-format.md`), so the next run does not raise it again. Nothing changed in the tree, so no new review is owed when that tip was stamped: it already passes the pre-push gate.
+
+When push-check refused the `asks-open` run (a reason in §3 other than its outcome), its tip is unstamped: resolve that refusal first, and expect the next run to measure from the last stamp, or from the base branch when there is none.
 - **Defer** → append a DEFERRED entry to the deferred ledger (SKILL.md Step 2a), with its grounding.
 
 The PR keeps the `asks-open` run's `review:halted` label and disclosure. Re-deriving them from the answers is looper #37; until then the answers live in the learnings, the ledger, or the follow-up run's report.
@@ -45,7 +47,7 @@ now-final reviewed change — this is the counterpart to Step 4b, which delibera
 *during* review, because describing code you are still reviewing launders a bug into intent. Then
 post the report block as a PR comment.
 
-Skip the reconcile on a cycle-limit exit or a test-failure short-circuit — that tree is not a
+Skip the reconcile on a cycle-limit or `asks-open` exit or a test-failure short-circuit — that tree is not a
 converged state and its description should not claim otherwise.
 
 On **any terminal exit** with **no PR yet** the comment is **deferred**, and so is the reconcile
