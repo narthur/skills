@@ -289,9 +289,9 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
 
 If the loop exits with work still outstanding:
     Say so, and list the remaining findings. `convergence` is derived from the
-    cycle rows, not from this report: spending the budget derives `capped`,
-    stopping for any other reason (an interrupt, a test failure, asks left open) derives
-    `halted`, and both push with a disclosure rather than stalling. That holds
+    cycle rows, not from this report: spending the budget with no asks owed derives
+    `capped`; stopping for any other reason (an interrupt, a test failure), or finishing
+    with asks left open even when the budget is also spent, derives `halted`, and both push with a disclosure rather than stalling. That holds
     when this session goes on to finish the run; a session that died before
     Step 14 is abandoned instead (references/finish.md) and the tip gets a fresh run.
     The last cycle's row (outstanding work: applied > 0, asked > 0, or the analysis pass
@@ -634,7 +634,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    `asks-open` pushes and gets stamped. (A blocked evidence or measurement gate is not an outcome; it
    goes to push-check as `--gate-state blocked`.) With the tree sound, any question still owed to the
    user (interactive or not) is `asks-open`, even when the agent budget is also spent, and it derives
-   `halted`, not `capped`; a spent budget with nothing owed is `cycle-limit`; nothing left at all is
+   `halted`, not `capped` (`unknown` if the run wrote no cycle rows); a spent budget with nothing owed is `cycle-limit`; nothing left at all is
    `clean`.
 
    **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
