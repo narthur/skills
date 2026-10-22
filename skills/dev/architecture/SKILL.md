@@ -39,7 +39,7 @@ Every external dependency gets one module at `src/services/<service>/index.ts`. 
 - A large service splits into internal files re-exported from the index:
 
   ```
-  src/services/db/index.ts      // export * from './invoices', './users'
+  src/services/db/index.ts      // export * from './invoices'; export * from './users'
   src/services/db/client.ts     // connection
   src/services/db/invoices.ts   // getInvoice, markPaid
   ```
