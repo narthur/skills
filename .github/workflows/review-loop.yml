@@ -127,19 +127,20 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.10 is the release SKILL.md installs, carrying the push-check and pr-report
+          # v0.2.11 is the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
           # runlog.py's command line, `stats`, which replaced review-stats.py, `threat-model`
           # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
           # which replaced plan.py, and `context`, which replaced context.sh and is what Step 0's
           # preflight probed for until v0.2.9. v0.2.9 adds `learn`, which replaced learn.py and
           # is what the preflight probed for until v0.2.10. v0.2.10 adds `record pending --all`,
-          # which Step 0c flushes every branch's deferred report through and the preflight probes
-          # for now; push-check's exit 3 for a refusal and its branch defaults; and `record
+          # which Step 0c flushes every branch's deferred report through and the preflight probed
+          # for until v0.2.11; push-check's exit 3 for a refusal and its branch defaults; and `record
           # finish`'s refusals of a malformed escalation and a contradictory or second finish.
-          # 37dc374 is v0.2.10's commit: the merge of looper PR #40, whose tree is the reviewed tip
-          # 9e27818.
-          ref: 37dc374ea1304c611503289c4fc88b041bfac408 # v0.2.10 (the commit, not the annotated tag object)
+          # v0.2.11 adds the `asks-open` outcome, which `record finish -h` lists and the preflight
+          # probes for now. 99749b6 is v0.2.11's commit: the merge of looper PR #43, whose tree is
+          # the reviewed tip 6ec8616.
+          ref: 99749b6edbd992ef37c8dcf3618dbecf4e4c6092 # v0.2.11 (the commit, not the annotated tag object)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
