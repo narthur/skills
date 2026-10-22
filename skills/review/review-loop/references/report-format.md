@@ -180,6 +180,6 @@ label it, delete it, and say in this run's report that those gates were not run 
 
    Colours: high `d93f0b`, medium `fbca04`, low `0e8a16`.
 2. This branch's file only: run the Step 13 evidence gate and the Step 13.5 measurement gate now (the branch is pushed and testable) and reconcile the PR description (Step 14), which the no-PR exit couldn't do.
-3. Delete the pending file, but only once the post and every label command in step 1 succeeded. If any failed, keep it: the next Step 0c retries, and the landed marker then skips the repost.
+3. Delete the pending file, but only once the post (or, for a file whose marker had already landed, nothing) and every label command in step 1 succeeded. If any failed, keep it: the next Step 0c retries, and the landed marker then skips the repost.
 4. This branch's file only: if HEAD still equals the reviewed sha the deferral was recorded at (nothing changed since), this backfill **was** the reason to run — report what you posted and exit without re-reviewing. Otherwise continue into the loop normally to review the new commits.
 
