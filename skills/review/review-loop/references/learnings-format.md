@@ -43,6 +43,6 @@ It never evicts a PATTERN entry — one containing `PATTERN:` or `PATTERN —` �
 - "Skip and remember as a dismissal pattern" → Dismissed entry: `- <date>: PATTERN: <user-worded pattern>`
 - "Apply fix" → Accepted entry: `- <date>: <finding description> (accepted)`
 
-Auto-applied low-risk 50-79 findings (from Step 8a) do NOT write to learnings — they're tactical and would just be noise.
+Auto-applied low-risk 50-79 findings (from Step 8a) do NOT write to learnings — they're tactical and would just be noise. Neither do findings Step 8b settled on recommendation without asking: no user verdict exists yet. If the user later reverses one, write the reversal as a Dismissed or Accepted entry then.
 
 When in doubt about whether an entry is worth writing, err on the side of NOT writing. The file's value is in being scannable, not exhaustive.

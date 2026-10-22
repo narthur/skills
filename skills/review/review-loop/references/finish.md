@@ -26,7 +26,7 @@ Give one `executed` entry per gate the plan marked `run`, each with `status` (`d
 
 **Escalations** record where you ran *more* than the plan's floor, with why. You may escalate; you may never descend. The accumulated escalations are the signal that a threshold is set too loosely.
 
-**Non-interactive sessions** (headless, AO worker) can't run `AskUserQuestion`. Leave ask-bucket findings unapplied, list them in the PR as open questions, and pass the count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody is there to ask.
+**Non-interactive sessions** (headless, AO worker) can't run `AskUserQuestion`. Step 8b's decide-on-recommendation rule applies unchanged. Leave the findings that would still be asked unapplied, list them in the PR as open questions, and pass that count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply past Step 8b because nobody is there to ask.
 
 ## 1. Reconcile the PR description, then post the summary comment
 

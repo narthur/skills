@@ -64,6 +64,11 @@ Cycle 1: <summary>
 Cycle 2: <summary>
 ...
 
+Decided on recommendation (Step 8b — not asked; say so to reverse):
+- Applied (commit <sha>): <finding> — <why it was borderline>
+- Skipped: <finding> — <why it was borderline>
+(Omit entirely if Step 8b settled nothing on recommendation.)
+
 Structural proposals (Agent #7 — not applied, your call):
 - Blockers: <high-value simplifications that delete a layer/branch, or file-size breaches — the things worth doing before this merges>
 - Nits: <smaller tidy-ups, listed briefly — including every proposal below the always-ask floor (<40), which was never asked>

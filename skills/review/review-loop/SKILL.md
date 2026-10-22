@@ -273,7 +273,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
        - <50                              → skip
     e. If auto-fix bucket is empty AND the code-analysis pass made no changes and surfaced no unresolved security/secret/SAST findings → record the cycle (step j2, `--applied 0`, no `--analysis-changed`) and EXIT LOOP (clean). That zero-fix row IS the proof of convergence; skipping it because the loop is ending makes the run indistinguishable from one that ran out of budget.
     f. Apply auto-fix bucket via Edit (Step 7).
-    g. If ask-user bucket is non-empty, batch them into one AskUserQuestion (Step 8b). Apply approved fixes.
+    g. If ask-user bucket is non-empty, Step 8b: act on each finding you hold a clear recommendation for (apply or skip it, unasked), and batch only the rest into one AskUserQuestion. Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
     j. Append captured learnings to <git-common-dir>/info/review-loop-learnings.md (Step 11), deduping against existing entries.
@@ -469,9 +469,27 @@ When auto-applying a 50-79 finding without asking, note it in the cycle commit m
 
 If after Step 8a the ask-user bucket is empty, skip Step 8b entirely.
 
-## Step 8b: Batched approval for the remaining (high-risk) 50-79 findings
+## Step 8b: Decide on recommendation, ask only what's left
 
-After auto-fixes are applied, present the remaining 50-79 findings as one AskUserQuestion (or sequential if there are more than 4 — AskUserQuestion caps at 4 options per call, so use multiple calls if needed). For each:
+For each ask-bucket finding, form your recommendation first: apply the fix, skip it, or which of several fixes. Then:
+
+**Act on a clear recommendation without asking.** A transcript check on 2026-10-22 found about 45 ask-bucket questions that carried a "(Recommended)" option, and the user took the recommendation on every one; the few overrides were all on questions that were not findings (skipping a review, a stuck CI runner). A question whose answer is always "as recommended" spends the user's attention and adds nothing. So:
+
+- **Recommend apply** → apply it as in Step 7, but in **its own commit** (`fix(review): cycle <N> — applied on recommendation`), separate from the cycle's auto-fixes, so one `git revert` undoes all of it.
+- **Recommend skip** → leave it unapplied.
+- List both in the Step 14 narrative under "Decided on recommendation", one line each: the finding, what you did, and why it was borderline. The user reverses anything there by saying so.
+- Write **no** learnings entry for them (Step 11): learnings record the user's verdicts, and these have none yet. If the user reverses one, record that reversal then.
+
+**Still ask** — one batched AskUserQuestion, as below — when any of these holds:
+
+- **No clear recommendation.** The options are a real trade-off that turns on the user's intent or taste, such as which of several structural deletions to take. These are the questions where the user's answers actually differed from what the model would have picked.
+- **An authorization finding (`5-security-authz`).** A wrong authz fix looks exactly like a right one until real users are locked out.
+- **A spec-conformance finding (Agent #11).** The spec is the user's; whether the code or the spec moves is theirs to say.
+- **Anything that would skip, defer or clear a review gate.** That is never a recommendation to act on alone.
+
+If you would mark an option "(Recommended)" on a finding outside those four, that is the signal not to ask it.
+
+For each question that remains:
 
 - Option "Apply fix" — apply the suggested fix
 - Option "Skip" — record as a dismissal in learnings
@@ -492,7 +510,7 @@ Run the detected test command. Stream output. If exit code is non-zero:
 
 ## Step 10: Commit the Cycle
 
-Stage all files changed this cycle (lint --fix changes + auto-fixes + user-approved fixes) and commit with a conventional commit message summarizing the cycle:
+Stage all files changed this cycle (lint --fix changes + auto-fixes + user-approved fixes) and commit — except fixes applied on recommendation (Step 8b), which go in their own commit so they can be reverted as one — with a conventional commit message summarizing the cycle:
 
 ```bash
 git add <changed-files>
@@ -599,7 +617,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
      --executed '{"<gate>":{"status":"done|skipped|failed|n/a","reason":"..."}}' \
      --escalations '[{"gate":"...","reason":"..."}]' \
      --agents '[{"id":"2-bugs","model":"sonnet","status":"ok","findings":3}]' \
-     --findings '{"auto_fix":N,"asked":N,"skipped":N}' --asks <unresolved ask-bucket items>
+     --findings '{"auto_fix":N,"asked":N,"recommended":N,"skipped":N}' --asks <unresolved ask-bucket items>
    ```
 
    **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
@@ -628,10 +646,14 @@ honesty rule, and the full "when NOT to auto-push" spec.
    claim, and it has to, because nothing downstream enforces it: the push gate never reads the tier
    and the PR label is keyed on `convergence`. The tier reaches the PR comment body and
    `looper stats`, so a laundered `full` is wrong exactly where a human would read it.
-   Non-interactive session with a non-empty ask bucket (`AskUserQuestion` aborts in headless and AO
-   worker runs): leave those findings unapplied, list them in the PR as open questions, and pass the
-   count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply because nobody
-   is there to ask.
+   `recommended` counts the ask-bucket findings Step 8b settled on recommendation without asking;
+   `asked` counts only questions actually put to the user. Keep them apart: `recommended` is how a
+   later review tells whether acting on recommendations is drawing reversals.
+   Non-interactive session (`AskUserQuestion` aborts in headless and AO worker runs): Step 8b's
+   decide-on-recommendation rule applies unchanged, since it never needed anyone present. Leave only
+   the findings that would still be asked unapplied, list them in the PR as open questions, and pass
+   that count to `--asks`; inside AO also `ao report --needs-input`. Never widen auto-apply past Step
+   8b because nobody is there to ask.
 
 1. **Reconcile the PR description — clean exit only. Post the report on every terminal exit.**
    The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
@@ -759,12 +781,12 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
 | Bucket | Score | Risk profile (Step 8a) | Action |
 | --- | --- | --- | --- |
-| Ask user | ≥40 | structural finding from Agent #7 | Surface as proposal; never auto-apply |
+| Ask user | ≥40 | structural finding from Agent #7 | Never auto-applied by score; Step 8b acts on a clear recommendation, else surfaced as a proposal |
 | Auto-fix / Ask | by score | baseline smell from Agent #1 (name / duplication) | Routes on confidence like anything else — `always_ask: false`. Was always-ask until 2026-10-07; see `agent-roster.md` for why it changed and what still asks |
 | Report-only | <40 | any always-ask finding (#7, #9, `always_ask`) | Listed in the report (#7 nits / #9 questions), not asked; never auto-applied |
 | Auto-fix | ≥80 | (any) | Apply silently |
 | Auto-fix | 50-79 | all three dimensions low-risk | Apply silently; note in commit message |
-| Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Batch via AskUserQuestion |
+| Ask user | 50-79 | any dimension high-risk OR fix unclear OR `always ask` rule applies | Step 8b: act on a clear recommendation and report it; batch the rest via AskUserQuestion |
 | Skip | <50 | (any) | Reported in final summary count only |
 | Ask user | ≥80 | authorization finding (`5-security-authz`) | Never auto-apply — a wrong authz fix locks out real users |
 | Auto-fix / Ask | ≥80 | security, non-authz | Stage-2 filter confidence ×10; normal risk profile |
