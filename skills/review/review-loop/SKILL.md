@@ -16,12 +16,12 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — the run record's writer and Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-~/.local/bin/looper record pending --all -h >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.10 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.10" >&2; false; }
+~/.local/bin/looper record finish -h 2>&1 | grep -q asks-open || { echo "review-loop needs ~/.local/bin/looper v0.2.11 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.11" >&2; false; }
 ```
 
-`record pending --all -h` prints usage and exits 0 from v0.2.10 on. v0.2.9 and earlier exit 2 on it (`flag provided but not defined: -all`), and a looper with no `record` at all exits 2 on the unknown command. `-h` writes nothing and reads no store. The probe is a flag rather than `looper version` because a looper built from a checkout prints `(devel)` or a pseudo-version there, which no string comparison can order.
+`record finish -h` lists the outcome choices from v0.2.11 on, and `asks-open` is the outcome v0.2.11 added; v0.2.10 and earlier print no choices, and a looper with no `record` at all prints only an error. `-h` writes nothing and reads no store. The probe is a flag rather than `looper version` because a looper built from a checkout prints `(devel)` or a pseudo-version there, which no string comparison can order.
 
-If it fails, whether looper is missing or older than v0.2.10, stop and give the user that command. v0.2.10 is the first release with `record pending --all` (Step 0c), push-check's exit 3 for a refusal and its branch defaults (Step 14), and `record finish`'s refusals of a malformed escalation, a contradictory or second finish, and a row it cannot read back (Step 14). Which release replaced which script is in this file's git history. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.11, stop and give the user that command. v0.2.11 adds the `asks-open` outcome (Step 14). v0.2.10 was the first release with `record pending --all` (Step 0c), push-check's exit 3 for a refusal and its branch defaults (Step 14), and `record finish`'s refusals of a malformed escalation, a contradictory or second finish, and a row it cannot read back (Step 14). Which release replaced which script is in this file's git history. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then make this run's **run dir** and run the context gatherer once into it:
 
@@ -620,7 +620,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
 
    ```bash
    ~/.local/bin/looper record finish --run-id <from Step 0b> \
-     --outcome clean|cycle-limit|test-failure|blocked \
+     --outcome clean|cycle-limit|asks-open|test-failure|blocked \
      --tier fast|full|partial \
      --executed '{"<gate>":{"status":"done|skipped|failed|n/a","reason":"..."}}' \
      --escalations '[{"gate":"...","reason":"..."}]' \
@@ -631,7 +631,7 @@ honesty rule, and the full "when NOT to auto-push" spec.
    **A finish is final.** `looper record finish` refuses, writes nothing and exits 1 on any of: an
    `--escalations` that is not a list of `{"gate":"…","reason":"…"}` objects with both strings
    non-blank (a non-empty object such as `{"security":"why"}` is refused; with nothing to escalate, pass `[]` or leave the flag out); `--outcome clean` with `--asks`
-   above zero (unresolved asks are a halted run, not a clean one: record the outcome it ended with);
+   above zero (unresolved asks are a halted run, not a clean one: record `asks-open`); `--outcome asks-open` with no `--asks` above zero;
    a second finish for the same run id (a wrong finish is fixed by starting a new run, never by
    finishing again); and a row its own readers could not decode, which it checks before appending,
    so a refused finish leaves the run open rather than poisoned. Show its stderr and fix the input.
@@ -665,8 +665,12 @@ honesty rule, and the full "when NOT to auto-push" spec.
    Non-interactive session (`AskUserQuestion` aborts in headless and AO worker runs): Step 8b
    applies unchanged, since acting on a recommendation never needed anyone present, and the report
    is where an absent user reverses it. Leave the findings Step 8b says to ask unapplied, list them
-   in the PR as open questions, and pass that count to `--asks`; inside AO also `ao report
-   --needs-input`. Never act on one of those because nobody is there to ask.
+   in the PR as open questions, and record `--outcome asks-open` with that count as `--asks`;
+   inside AO also `ao report --needs-input`. Never act on one of those because nobody is there to
+   ask. **`asks-open`, never `blocked`, is the outcome for a run that ended on open asks**: `blocked`
+   means a broken tree, so push-check refuses it, and a refused run's tip is never stamped. The
+   next run then measures its delta from the base branch and re-reviews everything (looper #41).
+   When the user answers later, follow `references/finish.md` *Answers after the run*.
 
 1. **Reconcile the PR description — clean exit only. Post the report on every terminal exit.**
    The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
@@ -745,7 +749,8 @@ honesty rule, and the full "when NOT to auto-push" spec.
    push into a silent one, which is worse than the stall it replaced.
 
    **A recorded `test-failure`, `blocked` or `abandoned` outcome does block**, and outranks a
-   converged review: that is "the tree is broken", not "we stopped looking". Removing
+   converged review: that is "the tree is broken", not "we stopped looking". `asks-open` is not
+   one of them: it derives `halted` and pushes with the disclosure. Removing
    `--clean-exit` deleted the only channel by which a Step 9 test failure reached this decision, so
    for a while a known-broken tree pushed with the reason "converged, evidence gate ok".
 
@@ -754,7 +759,11 @@ honesty rule, and the full "when NOT to auto-push" spec.
    the report with `Next step: <reason>; push when ready.` If the push itself fails, surface the
    error verbatim and continue — don't retry, don't force.
 
-3. **Record the reviewed commit** — only once step 2 has said `push: true`:
+3. **Record the reviewed commit** — only once step 2 has said `push: true`, **whether or not this
+   session pushes**. A session told not to push (a planner-builder builder) still runs steps 2 and
+   3 and leaves the push to its caller. The stamp follows push-check's verdict, not the push, and it
+   is the baseline the next run's delta is measured from: unstamped, the run after the user's fixes
+   re-reviews the whole branch.
 
    ```bash
    ~/.claude/skills/review-loop/record-reviewed.sh

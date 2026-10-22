@@ -57,7 +57,7 @@ warn() {
 # By absolute path, never PATH (SKILL.md Step 0 says why). The store is non-empty, so a run
 # may well be open, and without looper nothing here can say whether one is.
 LOOPER="$HOME/.local/bin/looper"
-[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.10"
+[ -x "$LOOPER" ] || warn "$LOOPER is missing, so unfinished review-loop runs are not being checked. Install it (SKILL.md Step 0): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.11"
 
 sid=$("$py" -I -c 'import json,sys; print(json.load(sys.stdin).get("session_id") or "")' <<<"$input" 2>/dev/null)
 errf=$(mktemp "${TMPDIR:-/tmp}/review-loop-stop.XXXXXX") || warn "could not create a temp file to run the unfinished-run check"
@@ -78,7 +78,7 @@ gates=$("$py" -I -c 'import json,sys; print(", ".join(json.load(sys.stdin).get("
 reason="review-loop run ${run_id} was planned but never finished. Planned gates: ${gates}.
 
 Either complete the remaining steps and record the result:
-  ~/.local/bin/looper record finish --run-id ${run_id} --outcome <clean|cycle-limit|test-failure|blocked> --tier <fast|full|partial> --executed '{\"<gate>\":{\"status\":\"done|skipped|failed\",\"reason\":\"...\"}}' --asks <n>
+  ~/.local/bin/looper record finish --run-id ${run_id} --outcome <clean|cycle-limit|asks-open|test-failure|blocked> --tier <fast|full|partial> --executed '{\"<gate>\":{\"status\":\"done|skipped|failed\",\"reason\":\"...\"}}' --asks <n>
 
 or, if the run is still in flight, carry on — this prompt fires once per run and will not interrupt you again. If you are stopping for good without finishing, say which gates you are not running and why, and record it:
   ~/.local/bin/looper record abandon --run-id ${run_id} --missing '<gates you are not running>' 
