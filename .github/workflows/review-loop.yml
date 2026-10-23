@@ -127,7 +127,7 @@ jobs:
           # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
           # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
           # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.11 is the release SKILL.md installs, carrying the push-check and pr-report
+          # v0.2.12 is the release SKILL.md installs, carrying the push-check and pr-report
           # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
           # runlog.py's command line, `stats`, which replaced review-stats.py, `threat-model`
           # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
@@ -138,9 +138,11 @@ jobs:
           # for until v0.2.11; push-check's exit 3 for a refusal and its branch defaults; and `record
           # finish`'s refusals of a malformed escalation and a contradictory or second finish.
           # v0.2.11 adds the `asks-open` outcome, which `record finish -h` lists and the preflight
-          # probes for now. 99749b6 is v0.2.11's commit: the merge of looper PR #43, whose tree is
-          # the reviewed tip 6ec8616.
-          ref: 99749b6edbd992ef37c8dcf3618dbecf4e4c6092 # v0.2.11 (the commit, not the annotated tag object)
+          # probed for until v0.2.12. v0.2.12 adds `home` and moves the ledgers into the repo's
+          # store and the pending reports into the run dir, outside `.git`; `home` is what the
+          # preflight probes for now. 5b1ece4 is the reviewed tip of looper PR #44, which
+          # v0.2.12 is released from; re-pin to v0.2.12's own commit once it is tagged.
+          ref: 5b1ece466da1a5caff2cf7a34570df7acedcf614 # v0.2.12 (PR #44's head, pending the tag)
           path: .looper
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:

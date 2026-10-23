@@ -18,9 +18,10 @@ It is **not** an OWASP threat model. No data-flow diagrams, no asset-ID tables, 
 cross-reference matrices. That ceremony exists for human review boards. This file exists to prime
 one LLM.
 
-Location: `<git-common-dir>/info/review-loop-threat-model.md`. Resolve with
-`git rev-parse --git-common-dir`, **never `--git-dir`** — in a worktree the latter returns
-`.git/worktrees/<name>/`, which has no `info/`, and the file silently reads as empty.
+Location: `<store>/threat-model.md`, where `<store>` is the repo's store that
+`~/.local/bin/looper home` prints (SKILL.md Step 0). One file serves every branch and worktree of
+the repo; a copy left at the old place, `<git-common-dir>/info/review-loop-threat-model.md`, is
+moved in the first time looper looks for it.
 
 ## Format
 
@@ -145,9 +146,9 @@ entries shaped `{line, malformed}`, which are pin-shaped text that does not pars
 space, an upper-case or six-character sha, a range written `1-`), quoted as written.
 
 Pass the agent the absolute path of the run dir (SKILL.md Step 0) and the safety rules from
-`references/agent-roster.md`'s *Scratch files* section. In a worktree-isolated session its edit to
-the threat model may be refused: it writes the full updated file to `<run dir>/ledger-threat-model.md`
-instead and says so, and the orchestrator reports it for the main session to apply.
+`references/agent-roster.md`'s *Scratch files* section. The agent edits the affected sections and
+claims in place, never rewriting the whole file: every worktree of the repo shares it, so a
+whole-file write from one session can erase another's concurrent edit.
 
 1. **Re-verify the stale claims.** Each entry in `stale[]` has a cited file that changed since its
    pin. Read the current code. Then either re-pin at `HEAD` (still true), rewrite (changed), or
