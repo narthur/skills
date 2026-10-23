@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"runtime/debug"
 
 	"github.com/narthur/skills/packages/looper/internal/docs"
@@ -25,7 +26,7 @@ import (
 )
 
 const usage = `usage: looper version
-       looper mutate [-catalog dir] [-root dir] [-check]
+       looper mutate [-catalog dir] [-root dir] [-check] [-jobs n]
        looper docs <dir>
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
@@ -170,6 +171,8 @@ func runMutate(args []string, out, errOut io.Writer) error {
 	root := fs.String("root", ".", "repo root the mutations apply to")
 	check := fs.Bool("check", false,
 		"parse the catalog, check every target and anchor, then stop — seconds, not the full run")
+	jobs := fs.Int("jobs", max(1, runtime.NumCPU()/2),
+		"parallel workers, each in a scratch git worktree of HEAD; 1 mutates the tree in place")
 	if err := fs.Parse(args); err != nil {
 		// `-h` is a request that was SERVED, not a failure — same handling the two
 		// sibling subcommands have had. It mattered less when this command had no flag
@@ -219,7 +222,7 @@ func runMutate(args []string, out, errOut io.Writer) error {
 
 	fmt.Fprintf(out, "%d mutation(s) from %s against %s\n\n", len(muts), *catalog, *root)
 
-	r := &mutate.Runner{Root: *root, Log: out}
+	r := &mutate.Runner{Root: *root, Log: out, Jobs: *jobs}
 	results, runErr := r.Run(muts)
 
 	// Report whatever came back even when the run aborted. Discarding the partial

@@ -62,6 +62,11 @@ const verifyTimeout = 5 * time.Minute
 type Runner struct {
 	Root string    // repo root; targets and commands resolve against it
 	Log  io.Writer // progress, one line per mutation
+	// Jobs above 1 runs that many workers, each in a scratch git worktree of HEAD
+	// (parallel.go); 0 or 1 mutates Root in place, one entry at a time.
+	Jobs int
+
+	scratch bool // a worker's throwaway worktree: no restore-on-signal of its own
 }
 
 // Run works through muts in order, restoring the target after each.
@@ -85,6 +90,9 @@ func (r *Runner) Run(muts []Mutation) ([]Result, error) {
 		return nil, err
 	}
 
+	if r.Jobs > 1 {
+		return r.runParallel(muts, alreadyBad, r.Jobs)
+	}
 	results := make([]Result, 0, len(muts))
 	for _, m := range muts {
 		if why := firstBad(m, alreadyBad); why != "" {
@@ -159,14 +167,16 @@ func (r *Runner) one(m Mutation) (res Result, err error) {
 		stamp(modTime)
 		return nil
 	}
-	stop := onSignal(func() {
-		if rerr := restore(); rerr != nil {
-			fmt.Fprintf(os.Stderr, "\nlooper: could not restore %s: %v\n"+
-				"THE WORKING TREE IS NOT CLEAN — %s still holds the mutation.\n", target, rerr, m.Target)
-		}
-		os.Exit(130)
-	})
-	defer stop()
+	if !r.scratch {
+		stop := onSignal(func() {
+			if rerr := restore(); rerr != nil {
+				fmt.Fprintf(os.Stderr, "\nlooper: could not restore %s: %v\n"+
+					"THE WORKING TREE IS NOT CLEAN — %s still holds the mutation.\n", target, rerr, m.Target)
+			}
+			os.Exit(130)
+		})
+		defer stop()
+	}
 
 	// Registered BEFORE the write, not after it. os.WriteFile truncates and then writes,
 	// so a write that failed partway used to return here with the target holding neither
