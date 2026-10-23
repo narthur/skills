@@ -21,8 +21,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/pinepeakdigital/looper/internal/py"
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/py"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // ponytail: ASCII digits where re's \d is Unicode Nd. A date in another script's digits is

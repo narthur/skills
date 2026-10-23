@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/golden"
 )
 
 // The parity gate: every scenario ran through context.sh (narthur/skills 865f93d) and runs

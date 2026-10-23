@@ -17,9 +17,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/evidence"
-	"github.com/pinepeakdigital/looper/internal/record"
-	"github.com/pinepeakdigital/looper/internal/run"
+	"github.com/narthur/skills/packages/looper/internal/evidence"
+	"github.com/narthur/skills/packages/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/run"
 )
 
 // BrokenOutcomes are the recorded outcomes that mean the tree is the problem, not the

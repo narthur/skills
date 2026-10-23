@@ -15,7 +15,7 @@ import (
 	"sort"
 	"unicode/utf8"
 
-	"github.com/pinepeakdigital/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/home"
 )
 
 // citation is pins.CITATION — [path:line @ sha], [path:start-end @ sha] or [path @ sha] — with

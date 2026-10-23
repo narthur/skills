@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/golden"
 )
 
 // The parity gate. Until runlog.py is retired, the two implementations must not be able to

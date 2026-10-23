@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/push"
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/push"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // shimGh puts a scripted `gh` first on PATH and returns the path of the file it logs its

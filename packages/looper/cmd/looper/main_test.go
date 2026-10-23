@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/evidence"
+	"github.com/narthur/skills/packages/looper/internal/evidence"
 )
 
 // fixture builds a committed throwaway repo with a catalog, and returns its path.

@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // ok is the three git facts that permit a push, in the order State names them. The Python's

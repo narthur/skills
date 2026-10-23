@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
-	"github.com/pinepeakdigital/looper/internal/record"
-	"github.com/pinepeakdigital/looper/internal/report"
+	"github.com/narthur/skills/packages/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/report"
 )
 
 // Where plan.py crashed, answered falsely, or is spelled differently on purpose, looper decides

@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
-	"github.com/pinepeakdigital/looper/internal/home"
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // The parity gate: every scenario ran through plan.py (narthur/skills 791c4d1), and runs

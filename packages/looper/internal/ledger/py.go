@@ -1,8 +1,8 @@
 package ledger
 
 import (
-	"github.com/pinepeakdigital/looper/internal/py"
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/py"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // The Python text model, as far as these two ledgers reach it. Parity is byte for byte, so

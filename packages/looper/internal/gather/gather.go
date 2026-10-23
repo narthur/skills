@@ -18,9 +18,9 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/pinepeakdigital/looper/internal/home"
-	"github.com/pinepeakdigital/looper/internal/py"
-	"github.com/pinepeakdigital/looper/internal/run"
+	"github.com/narthur/skills/packages/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/py"
+	"github.com/narthur/skills/packages/looper/internal/run"
 )
 
 type obj = py.Obj

@@ -13,8 +13,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/evidence"
-	"github.com/pinepeakdigital/looper/internal/run"
+	"github.com/narthur/skills/packages/looper/internal/evidence"
+	"github.com/narthur/skills/packages/looper/internal/run"
 )
 
 // shBudget bounds every subprocess this package starts.

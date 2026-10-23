@@ -26,7 +26,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // AlarmThreshold and AlarmWindow are review-stats.py's ALARM_THRESHOLD and ALARM_WINDOW: a

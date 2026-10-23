@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/golden"
 )
 
 // Where context.sh crashed or answered by accident, looper decides instead. Each case keeps

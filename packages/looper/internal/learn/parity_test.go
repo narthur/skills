@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/golden"
 )
 
 // The parity gate: each scenario ran through learn.py and runs through Command on the same

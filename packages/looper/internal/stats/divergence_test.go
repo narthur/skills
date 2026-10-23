@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/golden"
 )
 
 // The enumerated divergences. Each one reads what review-stats.py did from its frozen golden,

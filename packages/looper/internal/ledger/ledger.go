@@ -11,7 +11,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/pinepeakdigital/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/home"
 )
 
 // The two ledgers' file names in the repo's store.

@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pinepeakdigital/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/home"
 )
 
 // `looper home` is what the skill's `$(looper home)/<ledger>.md` snippets expand: the repo's

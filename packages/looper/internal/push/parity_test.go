@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // The parity gate for the push decision. Each case compares the whole JSON verdict against

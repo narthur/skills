@@ -333,7 +333,7 @@ jobs:
       - name: the module installs the way the skill installs it
         env:
           GOPROXY: direct
-          GONOSUMDB: github.com/pinepeakdigital/looper
+          GONOSUMDB: github.com/narthur/skills/packages/looper
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           # Automatic maintenance off. A branch commit (not a tag, not main) makes go shallow-fetch
           # it, fetch every head and tag, then `fetch --unshallow`; under the runner's git 2.55 the
@@ -346,7 +346,7 @@ jobs:
           GIT_CONFIG_VALUE_0: "false"
           GIT_CONFIG_KEY_1: gc.auto
           GIT_CONFIG_VALUE_1: "0"
-        run: go install "github.com/pinepeakdigital/looper/cmd/looper@$SHA"
+        run: go install "github.com/narthur/skills/packages/looper/cmd/looper@$SHA"
 
       - name: go test (everything else)
         # mapfile, not a bare $(...): the packages above are excluded because they run

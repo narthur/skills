@@ -9,7 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // Decode is how Python's text mode reads bytes: UTF-8, then universal newlines (\r\n and a

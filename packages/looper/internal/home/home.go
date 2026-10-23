@@ -19,7 +19,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/run"
+	"github.com/narthur/skills/packages/looper/internal/run"
 )
 
 // Ledger file names in a repo's store, and the name each had under <git-common-dir>/info.

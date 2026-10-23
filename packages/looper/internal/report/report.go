@@ -23,8 +23,8 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/pinepeakdigital/looper/internal/evidence"
-	"github.com/pinepeakdigital/looper/internal/record"
+	"github.com/narthur/skills/packages/looper/internal/evidence"
+	"github.com/narthur/skills/packages/looper/internal/record"
 )
 
 // Label is one at-a-glance signal on the PR, so a reader need not open a comment. Two

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/golden"
 )
 
 // The write half's parity gate: every scenario ran through runlog.py, and runs through Command,

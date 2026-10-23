@@ -12,8 +12,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pinepeakdigital/looper/internal/golden"
-	"github.com/pinepeakdigital/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/golden"
+	"github.com/narthur/skills/packages/looper/internal/home"
 )
 
 // The parity gate: every scenario ran through threat-model.py or deferred.py, and runs through

@@ -19,7 +19,7 @@ import (
 	"regexp"
 	"sort"
 
-	"github.com/pinepeakdigital/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/home"
 )
 
 // A run id is interpolated raw into a path segment and into a public PR comment, so `../`

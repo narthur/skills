@@ -25,9 +25,9 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/pinepeakdigital/looper/internal/evidence"
-	"github.com/pinepeakdigital/looper/internal/home"
-	"github.com/pinepeakdigital/looper/internal/run"
+	"github.com/narthur/skills/packages/looper/internal/evidence"
+	"github.com/narthur/skills/packages/looper/internal/home"
+	"github.com/narthur/skills/packages/looper/internal/run"
 )
 
 // DefaultAgentCap is runlog.DEFAULT_AGENT_CAP: a ceiling, not a target. review-stats derives

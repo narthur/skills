@@ -22,11 +22,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pinepeakdigital/looper/internal/ledger"
-	"github.com/pinepeakdigital/looper/internal/py"
-	"github.com/pinepeakdigital/looper/internal/record"
-	runner "github.com/pinepeakdigital/looper/internal/run"
-	"github.com/pinepeakdigital/looper/internal/stats"
+	"github.com/narthur/skills/packages/looper/internal/ledger"
+	"github.com/narthur/skills/packages/looper/internal/py"
+	"github.com/narthur/skills/packages/looper/internal/record"
+	runner "github.com/narthur/skills/packages/looper/internal/run"
+	"github.com/narthur/skills/packages/looper/internal/stats"
 )
 
 const (
