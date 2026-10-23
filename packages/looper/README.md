@@ -49,7 +49,7 @@ Exits non-zero on any survivor, stale or broken entry, so CI can gate on it.
 `-jobs n` (default half the CPUs) runs n workers, each in a scratch `git worktree` of HEAD,
 so with more than one the real tree is never mutated; `-jobs 1` mutates it in place, one
 entry at a time. On macOS, most of an entry's cost is XProtect scanning the test binary
-`go test` just linked, about 0.7s on its first exec, and 5 workers measured no faster than 1; adding
+`go test` just linked, about 0.7s on its first exec, and 5 workers measured 2.2x faster than 1 (12.5 vs 27 minutes for 476 entries), the scans being the likely ceiling; adding
 the terminal under System Settings → Privacy & Security → Developer Tools exempts it.
 
 Before mutating anything, each distinct verify command is run once against the unmodified
