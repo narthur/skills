@@ -1,9 +1,13 @@
-name: ci
+name: looper
 
+# Only looper's own source and this file. The skill's suites that drive looper run in
+# review-loop.yml, which builds looper from the same checkout.
 on:
   push:
     branches: [main]
+    paths: ['packages/looper/**', '.github/workflows/looper.yml']
   pull_request:
+    paths: ['packages/looper/**', '.github/workflows/looper.yml']
 
 # Read-only by default. The jobs below only need the source; a workflow with write
 # permissions is one compromised action away from pushing to the repo it builds.
@@ -21,6 +25,9 @@ jobs:
     # where the real figure is 760. A typical run is a couple of minutes — measured at 95s
     # on main at a floor of 111 — so this fails fast and cheap instead.
     timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: packages/looper
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -28,7 +35,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: go.mod
+          go-version-file: packages/looper/go.mod
           # No dependencies, so there is no go.sum to key a cache on and `cache: true`
           # only produces a failed restore on every run.
           cache: false
@@ -42,8 +49,10 @@ jobs:
       # against the thing being replaced. Without the script it calls t.Skip, and `go test`
       # reports a skip as SUCCESS — so this job was green with all its parity subtests inert,
       # which is the whole point of the gate going unmeasured in the one environment that
-      # runs it automatically. The skills repo is public, so no token is involved. Pinned to
-      # a commit, not a branch: a mutable ref would let the oracle change under the gate.
+      # runs it automatically. runlog.py is gone from this repo's tip, so the oracle is this
+      # repo at a commit that still had it. Pinned to a commit, not a branch: a mutable ref
+      # would let the oracle change under the gate. Checked out inside packages/looper, whose
+      # .gitignore ignores it, so the mutation step's clean-tree guard does not count it.
       # The read-half tests import runlog.py as a library; the write half's gate
       # (TestWriteMatchesThePython) reads frozen output under testdata/oracle instead,
       # because runlog.py's command line is gone, and needs no oracle. So does
@@ -54,7 +63,7 @@ jobs:
         with:
           repository: narthur/skills
           ref: 6993999796b2c782893e470ba27ce9f25fd0fad3 # narthur/skills main, 2026-10-11
-          path: .parity-oracle
+          path: packages/looper/.parity-oracle
           persist-credentials: false
 
       # internal/record runs here, verbosely and ONCE, because the next assertion needs
@@ -63,7 +72,7 @@ jobs:
       # push, so the rest of the tree is tested separately below.
       - name: go test (record, with the oracle)
         env:
-          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/packages/looper/.parity-oracle/skills/review/review-loop/runlog.py
         run: |
           go test -count=1 -v ./internal/record/ > record.log 2>&1 || { cat record.log; exit 1; }
           tail -5 record.log
@@ -325,29 +334,6 @@ jobs:
             grep -q -- "--- PASS: $d" learn.log || { echo "divergence $d did not pass"; cat learn.log; exit 1; }
           done
 
-      # The skill installs looper with `go install ...@<version>`, which builds a module zip, and a
-      # module zip refuses file names that git, the filesystem and `go test` all accept. v0.2.0
-      # shipped three golden directories named after subtests containing an apostrophe and could
-      # not be installed at all, with every step above green, because nothing here built a zip.
-      # This installs this exact commit the way the skill will, straight from GitHub.
-      - name: the module installs the way the skill installs it
-        env:
-          GOPROXY: direct
-          GONOSUMDB: github.com/narthur/skills/packages/looper
-          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          # Automatic maintenance off. A branch commit (not a tag, not main) makes go shallow-fetch
-          # it, fetch every head and tag, then `fetch --unshallow`; under the runner's git 2.55 the
-          # full fetch starts detached auto-maintenance that rewrites .git/shallow under the
-          # unshallow, which dies with "shallow file has changed since we read it". Measured in a
-          # container on git 2.56: failed 2/2 as before, installed 3/3 with both keys, failed with
-          # either alone. Nothing here wants that maintenance; the module cache is thrown away.
-          GIT_CONFIG_COUNT: "2"
-          GIT_CONFIG_KEY_0: maintenance.auto
-          GIT_CONFIG_VALUE_0: "false"
-          GIT_CONFIG_KEY_1: gc.auto
-          GIT_CONFIG_VALUE_1: "0"
-        run: go install "github.com/narthur/skills/packages/looper/cmd/looper@$SHA"
-
       - name: go test (everything else)
         # mapfile, not a bare $(...): the packages above are excluded because they run
         # verbosely for their floors, and the word splitting that reassembles the rest is the mechanism, not an
@@ -391,7 +377,7 @@ jobs:
       # A deleted catalog entry is silently accepted: the score is computed against
       # however many .mut files are present, so dropping one gives n-1/n-1 and a green
       # build with one fewer defect guarded. `mutate` only errors on an EMPTY catalog.
-      # (The same gap was found and closed in the skills repo's workflow first.)
+      # (The same gap was found and closed in review-loop.yml first.)
       # Raise the floor deliberately when adding entries; that edit is the review trail — and
       # LOWER it just as deliberately. It went 181 -> 180 when the empty-record block landed:
       # push-missing-run-note-only-on-refusals guarded the note's wording on a GRANTED push,
@@ -431,5 +417,5 @@ jobs:
       # one level down — in the catalog rather than in a test step.
       - name: mutation score
         env:
-          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/packages/looper/.parity-oracle/skills/review/review-loop/runlog.py
         run: go run ./cmd/looper mutate

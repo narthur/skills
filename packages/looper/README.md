@@ -2,7 +2,18 @@
 
 Tooling for the `review-loop` skill — a multi-cycle, multi-agent code review loop.
 
-## Why this repo exists
+Built from this checkout, never installed by version, so the skill in
+`skills/review/review-loop` and the binary it drives come from the same commit:
+
+```bash
+cd packages/looper && GOBIN=~/.local/bin go install ./cmd/looper
+```
+
+review-loop's Step 0 (`looper-check.sh`) refuses a binary whose `packages/looper` tree differs
+from HEAD's. looper was a separate repo, PinePeakDigital/looper, until v0.2.12; its history is
+kept here, so commit shas and `#NN` PR numbers in this package before the move refer to that repo.
+
+## Why this package exists
 
 The skill grew to the point where its correctness rested on test suites nobody had
 checked. Reviewing it turned up twelve assertions that could not fail: greps
@@ -851,11 +862,8 @@ The store is keyed by the repo's path, so moving or re-cloning a repo starts an 
 
 ## `looper version`
 
-Prints the module version `go install …@vX.Y.Z` stamped into the binary. A build from a
-checkout depends on how it was built: `go build` prints a pseudo-version
-(`v0.2.2-0.<date>-<hash>`, `+dirty` if modified); `go run` and `-buildvcs=false` print
-`(devel)`. review-loop's Step 0 keys on the exit
-status alone, not the string: a looper too old to have `version` (v0.2.1 and earlier, which
-includes every one without `push-check` and `pr-report`) answers "unknown command" with
-exit 2. That makes it a floor of v0.2.2, not a capability check — when Step 14 comes to need a
-newer subcommand, Step 0 needs a real version comparison, or a probe for that subcommand.
+Prints the module version stamped into the binary. A build from a checkout, which is how
+review-loop installs it, depends on how it was built: `go build` and `go install ./cmd/looper`
+print a pseudo-version (`v0.0.0-<date>-<hash>`, `+dirty` if modified); `go run` and
+`-buildvcs=false` print `(devel)`. review-loop's Step 0 reads none of this: it compares the
+commit go stamps as `vcs.revision` (`go version -m`); see `looper-check.sh`.
