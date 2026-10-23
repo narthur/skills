@@ -30,7 +30,7 @@ Reintroduces a known defect into the code, runs the suites that should notice, a
 reports whether they did.
 
 ```text
-looper mutate [-catalog mutations] [-root .] [-check] [-jobs n]
+looper mutate [-catalog mutations] [-root .] [-check] [-jobs n] [-since ref]
 ```
 
 - **caught** — a verify command failed, and failed the way the mutation said it would.
@@ -51,6 +51,11 @@ so with more than one the real tree is never mutated; `-jobs 1` mutates it in pl
 entry at a time. On macOS, most of an entry's cost is XProtect scanning the test binary
 `go test` just linked, about 0.7s on its first exec, and 5 workers measured 2.2x faster than 1 (12.5 vs 27 minutes for 476 entries), the scans being the likely ceiling; adding
 the terminal under System Settings → Privacy & Security → Developer Tools exempts it.
+
+`-since ref` runs only the entries the branch's changes since `ref` could touch: a changed
+file is the entry's target, its `.mut`, or under a path its verify names (`./internal/x/`,
+`./t.sh`). A change to a package the target only imports selects nothing, so this is for
+the local loop; CI runs the whole catalog.
 
 Before mutating anything, each distinct verify command is run once against the unmodified
 code and has to pass. A command already failing — a flaky test, a broken environment,

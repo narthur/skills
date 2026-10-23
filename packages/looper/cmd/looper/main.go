@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"strings"
 
 	"github.com/narthur/skills/packages/looper/internal/docs"
 	"github.com/narthur/skills/packages/looper/internal/evidence"
@@ -26,7 +28,7 @@ import (
 )
 
 const usage = `usage: looper version
-       looper mutate [-catalog dir] [-root dir] [-check] [-jobs n]
+       looper mutate [-catalog dir] [-root dir] [-check] [-jobs n] [-since ref]
        looper docs <dir>
        looper push-check -run-id <id> [-gate-state passed|skipped|blocked]
                          [-unresolved-skip] [-branch b] [-default-branch b]
@@ -173,6 +175,8 @@ func runMutate(args []string, out, errOut io.Writer) error {
 		"parse the catalog, check every target and anchor, then stop — seconds, not the full run")
 	jobs := fs.Int("jobs", max(1, runtime.NumCPU()/2),
 		"parallel workers, each in a scratch git worktree of HEAD; 1 mutates the tree in place")
+	since := fs.String("since", "",
+		"run only the entries a change since this ref could touch (its target, its .mut, or a path its verify names)")
 	if err := fs.Parse(args); err != nil {
 		// `-h` is a request that was SERVED, not a failure — same handling the two
 		// sibling subcommands have had. It mattered less when this command had no flag
@@ -220,6 +224,19 @@ func runMutate(args []string, out, errOut io.Writer) error {
 		return nil
 	}
 
+	if *since != "" {
+		changed, err := changedSince(*root, *since)
+		if err != nil {
+			return err
+		}
+		all := len(muts)
+		muts = mutate.Affected(muts, *root, changed)
+		fmt.Fprintf(out, "%d of %d entries could be touched by the %d file(s) changed since %s\n",
+			len(muts), all, len(changed), *since)
+		if len(muts) == 0 {
+			return nil
+		}
+	}
 	fmt.Fprintf(out, "%d mutation(s) from %s against %s\n\n", len(muts), *catalog, *root)
 
 	r := &mutate.Runner{Root: *root, Log: out, Jobs: *jobs}
@@ -239,6 +256,26 @@ func runMutate(args []string, out, errOut io.Writer) error {
 		return mutate.ErrHoles
 	}
 	return nil
+}
+
+// changedSince lists, as absolute paths, the files that differ between ref's merge base
+// with HEAD and HEAD: what this branch changed, not what the base did since.
+func changedSince(root, ref string) ([]string, error) {
+	top, err := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel").Output()
+	if err != nil {
+		return nil, fmt.Errorf("-since: %s is not in a git repo: %w", root, err)
+	}
+	out, err := exec.Command("git", "-C", root, "diff", "--name-only", ref+"...HEAD").Output()
+	if err != nil {
+		return nil, fmt.Errorf("-since %s: git diff failed: %w", ref, err)
+	}
+	var changed []string
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l != "" {
+			changed = append(changed, filepath.Join(strings.TrimSpace(string(top)), l))
+		}
+	}
+	return changed, nil
 }
 
 // printScore prints the score and names every result that is not a catch. A score alone
