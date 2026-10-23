@@ -1,0 +1,8 @@
+target: internal/report/post.go
+verify: go test ./internal/report/ -count=1 -run 'TestTheBranchesNothingReached/(a_clean_exit|an_undrained_comment)'
+expect: --- FAIL:
+why:    run's drain bound fires even when the budget never expired, so without this arm a child that exited CLEANLY inside its budget reads as a failure whenever any descendant still holds the inherited output pipe. `!rr.Expired` keeps a call whose own deadline passed from reading as a success. Measured under the production 20s budget with a shim that prints "7", exits 0 and leaves `sleep 5 &` behind: Code=1 before this arm existed.
+--- old
+	case !rr.Expired && !rr.Drained:
+--- new
+	case false && !rr.Expired && !rr.Drained:

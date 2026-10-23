@@ -1,0 +1,23 @@
+exit=0
+--- stdout ---
+{
+  "path": "<store>/deferred.md",
+  "exists": true,
+  "entries": 1,
+  "stale": [],
+  "unpinned": [
+    {
+      "line": 1,
+      "text": "- DEFERRED \"q\" \\ \u007f \u03c0 \ud83d\ude00:\tx"
+    }
+  ],
+  "broken_pins": [],
+  "unguarded": [
+    {
+      "line": 1,
+      "text": "- DEFERRED \"q\" \\ \u007f \u03c0 \ud83d\ude00:\tx"
+    }
+  ],
+  "merged": null
+}
+--- stderr ---

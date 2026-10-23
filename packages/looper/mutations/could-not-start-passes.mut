@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestCommandThatCannotStartIsBroken'
+expect: --- FAIL:
+why:    a command that never started reports as having run, so nothing distinguishes it from a pass
+--- old
+		return check{detail: fmt.Sprintf("%s: could not start: %v", command, err)}
+--- new
+		return check{ran: true, detail: fmt.Sprintf("%s: could not start: %v", command, err)}

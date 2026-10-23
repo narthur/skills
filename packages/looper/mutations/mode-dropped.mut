@@ -1,0 +1,9 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestRestoreRecreatesWithTheOriginalMode'
+expect: --- FAIL:
+why:    a restore that has to recreate a deleted target brings it back without its executable bit
+--- old
+	perm := info.Mode().Perm()
+--- new
+	_ = info
+	perm := os.FileMode(0o644)

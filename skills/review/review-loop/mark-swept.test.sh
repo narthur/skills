@@ -15,13 +15,15 @@ trap 'rm -rf "$TMP"' EXIT
 g() { git -c core.hooksPath=/dev/null -c commit.gpgsign=false -c user.email=t@t -c user.name=t "$@"; }
 r="$TMP/r"
 g init -q "$r" && : > "$r/seed" && g -C "$r" add -A && g -C "$r" commit -qm seed
-lf="$r/.git/info/review-loop-learnings.md"
-mkdir -p "$r/.git/info"
+lf="$TMP/learnings.md"
 { printf '# Review-loop learnings\n\n'; for i in $(seq 1 38); do printf -- '- entry %s\n' "$i"; done; } > "$lf"
 python3 "$HERE/mark-swept.py" "$lf" >/dev/null || bad "mark-swept.py ran"
 grep -qx '<!-- swept: 38 -->' "$lf" && ok "mark-swept.py stamps the surviving count" || bad "mark-swept.py stamps the surviving count"
 
 if command -v looper >/dev/null 2>&1; then
+	# looper context reads the learnings from the repo's store, which `looper home` names.
+	store=$(cd "$r" && HOME="$TMP" looper home) && mkdir -p "$store" && cp "$lf" "$store/learnings.md" \
+		|| bad "the stamped file is in the repo's store (looper home: ${store:-failed})"
 	# No origin: the base is unresolved, which does not touch the learnings fields.
 	swept=$(cd "$r" && HOME="$TMP" looper context 2>/dev/null \
 		| python3 -c 'import json,sys; print(json.load(sys.stdin)["learnings_swept_entries"])')

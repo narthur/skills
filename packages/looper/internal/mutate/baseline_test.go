@@ -1,0 +1,244 @@
+package mutate
+
+import (
+	"bytes"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Two mutations naming the same verify command must baseline it once, not twice. Without
+// the dedup the baseline cost scales with the catalog rather than with the number of
+// distinct commands, which on a real catalog is the difference between one extra suite run
+// and thirty.
+func TestBaselineRunsEachCommandOnce(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py":     "x = 1\ny = 1\n",
+		"t.sh":       "#!/bin/sh\necho ran >> counter\ngrep -q 'x = 1' app.py && exit 0\necho '--- FAIL: TestX'\nexit 1\n",
+		".gitignore": "counter\n",
+	})
+	same := []string{"./t.sh"}
+	run(t, dir,
+		Mutation{Source: "a.mut", Target: "app.py", Verify: same, Why: "w", Old: "x = 1", New: "x = 2"},
+		Mutation{Source: "b.mut", Target: "app.py", Verify: same, Why: "w", Old: "y = 1", New: "y = 2"},
+	)
+	counter, err := os.ReadFile(filepath.Join(dir, "counter"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One baseline run, plus one per mutation.
+	if n := strings.Count(string(counter), "ran"); n != 3 {
+		t.Errorf("the command ran %d time(s), want 3 (one baseline + two mutations) — the "+
+			"baseline is not deduplicating", n)
+	}
+}
+
+func TestDistinctCommandsDedupesAndSorts(t *testing.T) {
+	got := distinctCommands([]Mutation{
+		{Verify: []string{"./zebra.sh", "./alpha.sh"}},
+		{Verify: []string{"./alpha.sh", "./middle.sh"}},
+	})
+	if strings.Join(got, ",") != "./alpha.sh,./middle.sh,./zebra.sh" {
+		t.Errorf("got %v, want the three sorted and deduplicated", got)
+	}
+}
+
+// A command that passes while running no tests can never fail either, so it cannot be
+// evidence of anything. `go test -run` exits 0 when its pattern matches nothing, which is
+// what a renamed test leaves behind.
+func TestCommandThatRunsNoTestsIsVacuous(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		// What `go test -run NoSuchTest` prints, on a command that exits 0.
+		"t.sh": "#!/bin/sh\necho 'testing: warning: no tests to run'\necho 'ok  \tpkg\t0.001s [no tests to run]'\nexit 0\n",
+	})
+	res := run(t, dir, Mutation{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2",
+	})
+	if res[0].Outcome != Broken {
+		t.Fatalf("outcome = %q, want broken — a command that runs nothing read as a hole "+
+			"in the suite (detail: %s)", res[0].Outcome, res[0].Detail)
+	}
+	if !strings.Contains(res[0].Detail, "without running any test") {
+		t.Errorf("detail does not say why: %q", res[0].Detail)
+	}
+}
+
+// A real `go test` invocation naming a test that does not exist must be caught the same
+// way. Built on its own tiny module rather than on this repo, so the test does not depend
+// on the live working tree being clean.
+func TestRealGoTestWithNoMatchIsVacuous(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"go.mod":     "module probe\n\ngo 1.24\n",
+		"p.go":       "package p\n\nfunc A() int { return 1 }\n",
+		"p_test.go":  "package p\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tif A() != 1 {\n\t\tt.Fatal(\"no\")\n\t}\n}\n",
+		".gitignore": "",
+	})
+	r := &Runner{Root: dir}
+
+	// The pattern that exists: sound.
+	bad, err := r.baseline([]Mutation{{
+		Source: "ok.mut", Target: "p.go", Verify: []string{"go test . -count=1 -run 'TestA'"},
+		Why: "w", Old: "return 1", New: "return 2",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) != 0 {
+		t.Fatalf("rejected a command that does run its test: %v", bad)
+	}
+
+	// The pattern that does not: `go test` exits 0, so only the output gives it away.
+	bad, err = r.baseline([]Mutation{{
+		Source: "x.mut", Target: "p.go", Verify: []string{"go test . -count=1 -run 'TestNoSuchNameAnywhere'"},
+		Why: "w", Old: "return 1", New: "return 2",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) != 1 {
+		t.Fatalf("a -run pattern matching no test was accepted as sound: %v", bad)
+	}
+	for _, why := range bad {
+		if !strings.Contains(why, "without running any test") {
+			t.Errorf("wrong reason: %q", why)
+		}
+	}
+}
+
+// The baseline names what it found, or an operator reading CI output cannot tell a
+// mutation that was never evaluated from one the suite genuinely missed.
+func TestBaselineLogsWhatItRejected(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		"t.sh":   "#!/bin/sh\necho '--- FAIL: TestUnrelated'\nexit 1\n",
+	})
+	var log bytes.Buffer
+	r := &Runner{Root: dir, Log: &log}
+	if _, err := r.Run([]Mutation{{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2", Expect: "--- FAIL:",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"baseline: 1 distinct", "ALREADY RED", "./t.sh"} {
+		if !strings.Contains(log.String(), want) {
+			t.Errorf("log does not mention %q:\n%s", want, log.String())
+		}
+	}
+}
+
+// A verify command that writes a TRACKED file during the baseline makes every later
+// "original" suspect, so the run stops rather than restoring post-baseline bytes.
+func TestBaselineRefusesIfACommandDirtiesTheTree(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py":      "x = 1\n",
+		"tracked.txt": "before\n",
+		"t.sh":        "#!/bin/sh\necho after > tracked.txt\nexit 0\n",
+	})
+	r := &Runner{Root: dir}
+	_, err := r.Run([]Mutation{{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2",
+	}})
+	if err == nil {
+		t.Fatal("ran on after a verify command changed a tracked file")
+	}
+	if !strings.Contains(err.Error(), "changed tracked file(s) during the baseline") {
+		t.Errorf("error does not name the cause: %v", err)
+	}
+	if !strings.Contains(err.Error(), "tracked.txt") {
+		t.Errorf("error does not name the file: %v", err)
+	}
+}
+
+// If git itself cannot be asked, that is not "clean". A verify command has just run
+// arbitrary shell, so git breaking is precisely the case the post-baseline check exists
+// for — and reporting no changes there would fail open on the one check that matters.
+func TestBaselineFailsClosedWhenGitCannotBeAsked(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		// Takes git away after passing, the way a destructive suite or a disk-full run can.
+		"t.sh": "#!/bin/sh\nrm -rf .git\nexit 0\n",
+	})
+	r := &Runner{Root: dir}
+	_, err := r.Run([]Mutation{{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2",
+	}})
+	if err == nil {
+		t.Fatal("a broken git read as a clean tree")
+	}
+	if !strings.Contains(err.Error(), "after the baseline run") {
+		t.Errorf("error does not say when it happened: %v", err)
+	}
+}
+
+// Untracked litter is not corruption. A verify command dropping a stray log or a coverage
+// artifact cannot affect the bytes any mutation reads as "original", because every target
+// is a tracked file, so refusing the whole run for it — with a message asserting the
+// original bytes were untrustworthy — claimed a risk that was not there.
+func TestBaselineToleratesUntrackedLitter(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"app.py": "x = 1\n",
+		"t.sh":   "#!/bin/sh\ntouch litter.tmp\ngrep -q 'x = 1' app.py && exit 0\necho '--- FAIL: TestX'\nexit 1\n",
+	})
+	res := run(t, dir, Mutation{
+		Source: "x.mut", Target: "app.py", Verify: []string{"./t.sh"},
+		Why: "w", Old: "x = 1", New: "x = 2", Expect: "--- FAIL:",
+	})
+	if res[0].Outcome != Caught {
+		t.Errorf("outcome = %q, want caught — untracked litter aborted the run (detail: %s)",
+			res[0].Outcome, res[0].Detail)
+	}
+}
+
+// "no tests to run" appearing SOMEWHERE in the output is not enough. `go test ./... -run X`
+// prints it for every package with no match and exits 0, while the package that does match
+// runs normally — so rejecting the command as vacuous turned real coverage into `broken`.
+func TestRanNothingNeedsEveryPackageToHaveRunNothing(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		output string
+		want   bool
+	}{
+		{"nothing matched anywhere", "testing: warning: no tests to run\nok  \tpkg\t0.001s [no tests to run]\n", true},
+		{"one package matched, another did not", "ok  \tpkg/a\t0.20s\nok  \tpkg/b\t0.001s [no tests to run]\n", false},
+		{"the matching package failed", "--- FAIL: TestA\nFAIL\tpkg/a\t0.20s\nok  \tpkg/b\t0.001s [no tests to run]\n", false},
+		{"a normal clean run", "ok  \tpkg\t0.20s\n", false},
+		{"a shell suite that says nothing of the kind", "all checks passed\n", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := ranNothing(tc.output); got != tc.want {
+				t.Errorf("ranNothing() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// And the real thing, on a two-package module: the named test runs in one package and
+// matches nothing in the other, which must still count as a sound command.
+func TestMultiPackageRunIsNotVacuous(t *testing.T) {
+	dir := repo(t, map[string]string{
+		"go.mod":      "module probe\n\ngo 1.24\n",
+		"a/p.go":      "package a\n\nfunc A() int { return 1 }\n",
+		"a/p_test.go": "package a\n\nimport \"testing\"\n\nfunc TestA(t *testing.T) {\n\tif A() != 1 {\n\t\tt.Fatal(\"no\")\n\t}\n}\n",
+		"b/q.go":      "package b\n\nfunc B() int { return 2 }\n",
+		"b/q_test.go": "package b\n\nimport \"testing\"\n\nfunc TestB(t *testing.T) {\n\tif B() != 2 {\n\t\tt.Fatal(\"no\")\n\t}\n}\n",
+	})
+	r := &Runner{Root: dir}
+	bad, err := r.baseline([]Mutation{{
+		Source: "x.mut", Target: "a/p.go",
+		Verify: []string{"go test ./... -count=1 -run 'TestA'"},
+		Why:    "w", Old: "return 1", New: "return 2",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(bad) != 0 {
+		t.Errorf("rejected a sound multi-package command because another package matched "+
+			"nothing: %v", bad)
+	}
+}

@@ -1,0 +1,8 @@
+target: internal/ledger/pins.go
+verify: go test ./internal/ledger/ -count=1 -run 'TestCitationsAreReadPerClaim'
+expect: --- FAIL:
+why:    the claim marker keys on OBSERVED without its colon, so prose that merely mentions the word opens a claim, inflating claims and uncited until the threat model's real gaps hide in the noise
+--- old
+		case contains(raw, marker):
+--- new
+		case contains(raw, marker[:len(marker)-1]):

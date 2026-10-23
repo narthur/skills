@@ -1,0 +1,19 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestConvergenceRules'
+expect: a_converged_last_cycle_wins_over_a_cap_it_also_reached
+why:    Converged is tested BEFORE Capped, and that is the only shape where both predicates are true at once, so it is the only case that fails if the two are swapped. The previous version of this entry moved the `spent :=` assignment instead of the capped CHECK, which stopped being a reordering the moment the sum became a pure call to AgentsSpent — it survived the whole suite. Re-anchored onto the check itself.
+--- old
+	if last.Applied != nil && *last.Applied == 0 &&
+		(last.Asked == nil || *last.Asked == 0) &&
+		(last.AnalysisChanged == nil || !*last.AnalysisChanged) {
+		return Converged, nil
+	}
+--- new
+	if r.Plan != nil && r.Plan.AgentCap != nil && *r.Plan.AgentCap != 0 && r.AgentsSpent() >= *r.Plan.AgentCap {
+		return Capped, nil
+	}
+	if last.Applied != nil && *last.Applied == 0 &&
+		(last.Asked == nil || *last.Asked == 0) &&
+		(last.AnalysisChanged == nil || !*last.AnalysisChanged) {
+		return Converged, nil
+	}

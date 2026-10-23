@@ -33,7 +33,7 @@ run "" >/dev/null 2>&1
 out=$(run "docs-only, 4 lines" 2>&1)
 [ $? -eq 1 ] && ok "no looper refuses the skip" || bad "no looper refuses the skip (got: $out)"
 [ ! -s "$STORE" ] && ok "and writes nothing to skipped-shas" || bad "and writes nothing to skipped-shas"
-grep -q "go install github.com/pinepeakdigital/looper/cmd/looper@" <<<"$out" \
+grep -q "go install ./cmd/looper" <<<"$out" \
 	&& ok "and names the install command" || bad "and names the install command (got: $out)"
 
 # The rest records through the real writer. CI's trust job runs this suite with looper on

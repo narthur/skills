@@ -29,12 +29,12 @@ Then fetch the latest from origin so the review compares against current remote 
 git fetch origin "$base_branch"
 ```
 
-The scope of the review is everything on the current branch that isn't on `origin/<base_branch>` — i.e. committed changes only. If the user has uncommitted work they want reviewed, tell them to commit it first before re-invoking.
+The scope of the review is everything on the current branch that isn't on `origin/<base_branch>` — i.e. committed changes only, because the push gate records a review against a commit (uncommitted work has none, and committing it later makes a commit nothing reviewed) and each cycle commits its own fixes, which would sweep uncommitted edits in the same files into the review's commit. If the user has uncommitted work they want reviewed, tell them to commit it first before re-invoking; a WIP commit is fine, since `post-rewrite` carries the review across an amend that leaves the patch unchanged.
 
 ## Step 2: Load Per-Repo Learnings
 
 ```bash
-learnings_file="$(git rev-parse --git-common-dir)/info/review-loop-learnings.md"
+store=$(~/.local/bin/looper home) || exit 1; learnings_file="$store/learnings.md"
 [ -f "$learnings_file" ] && cat "$learnings_file"
 ```
 

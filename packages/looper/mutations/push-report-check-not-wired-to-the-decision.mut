@@ -1,0 +1,11 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckReadsTheRecordRatherThanBeingTold'
+expect: did not reach the decision
+why:    the other half of the same unwiring. The report check can be correct in every detail and still never reach Decide, and the run then pushes with the reason "converged, evidence gate ok" while its summary exists nowhere.
+--- old
+	var unreported string
+	if landed, attributable, ghWhy := probeReport(p.RunID, r, p.Repo, branch); !landed {
+--- new
+	var unreported string
+	if _, attributable, ghWhy := probeReport(p.RunID, r, p.Repo, branch); false {
+		_ = attributable

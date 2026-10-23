@@ -47,10 +47,11 @@ jobs:
       # learn.test.sh went with learn.py (`looper learn`, pinned by looper's frozen goldens),
       # and runlog.test.sh with runlog.py, whose library checks had nothing left to test;
       # its Stop hook and looper read-back checks moved to stop-hook.test.sh.
+      # Raised from 5 to 6: looper-check.test.sh, for SKILL.md Step 0's build check.
       - name: no suite has gone missing
         run: |
           n=$(ls *.test.sh | wc -l | tr -d ' ')
-          [ "$n" -ge 5 ] || { echo "only $n suites, expected at least 5 — was one deleted or renamed?"; exit 1; }
+          [ "$n" -ge 6 ] || { echo "only $n suites, expected at least 6 — was one deleted or renamed?"; exit 1; }
           echo "$n suites present"
 
       # Every module with a --selftest, run. Five have one now (nine before push-check.py,
@@ -118,36 +119,14 @@ jobs:
           # Do not leave the token in .git/config for the test suites to find.
           persist-credentials: false
 
-      # looper lives in its own repo, checked out and built rather than `go install`ed:
-      # no module-proxy round trip, and the ref it is pinned to is visible right here.
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-        with:
-          persist-credentials: false
-          repository: PinePeakDigital/looper
-          # The commit, not the tag. Every `uses:` above is SHA-pinned for the same
-          # reason and a tag is the one mutable ref in this file: `git tag -f` moves it,
-          # so a pin to v0.1.2 is a pin to whatever v0.1.2 points at when CI next runs.
-          # v0.2.11 is the release SKILL.md installs, carrying the push-check and pr-report
-          # subcommands that replaced push-check.py and pr-report.py, `record`, which replaced
-          # runlog.py's command line, `stats`, which replaced review-stats.py, `threat-model`
-          # and `deferred`, which replaced threat-model.py, deferred.py and pins.py, and `plan`,
-          # which replaced plan.py, and `context`, which replaced context.sh and is what Step 0's
-          # preflight probed for until v0.2.9. v0.2.9 adds `learn`, which replaced learn.py and
-          # is what the preflight probed for until v0.2.10. v0.2.10 adds `record pending --all`,
-          # which Step 0c flushes every branch's deferred report through and the preflight probed
-          # for until v0.2.11; push-check's exit 3 for a refusal and its branch defaults; and `record
-          # finish`'s refusals of a malformed escalation and a contradictory or second finish.
-          # v0.2.11 adds the `asks-open` outcome, which `record finish -h` lists and the preflight
-          # probes for now. 99749b6 is v0.2.11's commit: the merge of looper PR #43, whose tree is
-          # the reviewed tip 6ec8616.
-          ref: 99749b6edbd992ef37c8dcf3618dbecf4e4c6092 # v0.2.11 (the commit, not the annotated tag object)
-          path: .looper
+      # looper is built from packages/looper in this same checkout, as SKILL.md Step 0
+      # requires of the installed binary, so the suites run against the looper they ship with.
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
-          go-version-file: .looper/go.mod
+          go-version-file: packages/looper/go.mod
           cache: false
       - name: build looper
-        working-directory: .looper
+        working-directory: packages/looper
         run: go build -o "$RUNNER_TEMP/looper" ./cmd/looper
 
       - name: git identity for fixture repos
@@ -157,7 +136,8 @@ jobs:
           git config --global init.defaultBranch main
           git config --global commit.gpgsign false
 
-      # The checks that drive looper skip where it is not on PATH, which is the suites job.
+      # The checks that drive looper skip where it is not on PATH, and looper-check.test.sh
+      # where go is not, which is the suites job.
       # This is where looper is built, so they run here: the Stop hook, record-skipped.sh and
       # carry-review.sh writing through `looper record`, and the rows they write read back by
       # the push gate, the report and the alarm.
@@ -173,7 +153,8 @@ jobs:
             "stop-hook.test.sh:ok  the alarm reads looper's finish rows" \
             "record-skipped.test.sh:ok  a refusal leaves the prior record intact" \
             "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp" \
-            "mark-swept.test.sh:ok  what mark-swept.py writes is what looper context reads"; do
+            "mark-swept.test.sh:ok  what mark-swept.py writes is what looper context reads" \
+            "looper-check.test.sh:ok  built from HEAD, in a clone"; do
             t=${pair%%:*}; marker=${pair#*:}
             echo "::group::$t"
             PATH="$RUNNER_TEMP:$PATH" ./"$t" | tee "$RUNNER_TEMP/$t.log" || failed="$failed $t"
@@ -191,8 +172,6 @@ jobs:
       # that actually shipped here — and requires the suites to notice every one. A survivor
       # means that defect can ship with CI green.
       #
-      # The looper checkout is removed first because the runner refuses a dirty tree —
-      # a restore is otherwise indistinguishable from reverting work in progress.
       # A deleted catalog entry is silently accepted: the score is computed against however
       # many .mut files are present, so dropping one gives 12/12 and a green build with one
       # fewer defect guarded. looper only errors on an EMPTY catalog. Raise the floor
@@ -205,9 +184,9 @@ jobs:
       # command, so the floor was 31. Lowered to 21 deliberately: the ten entries against
       # plan.py went with it. The defects they guarded are now guarded in looper, by
       # internal/plan's tests and mutations/plan-*.mut, and looper's own CI enforces them
-      # (complete as of PinePeakDigital/looper 24d2261, #21). This workflow does not run them:
-      # from its looper checkout above it builds the release binary and runs none of looper's
-      # tests, never internal/plan's or looper's own mutation catalog. Lowered
+      # (complete as of 24d2261, PinePeakDigital/looper#21, from before looper moved into
+      # packages/looper). This workflow does not run them: looper.yml runs looper's tests and
+      # its own mutation catalog. Lowered
       # to 9 deliberately: the twelve entries against context.sh went with it. Ten have a
       # looper counterpart in mutations/context-*.mut, guarded by internal/gather's tests:
       # eight under a context- name (three shortened: sweep-clamp-past-the-cap,
@@ -217,7 +196,7 @@ jobs:
       # suite's checks that no looper scenario pinned (the size verdict on semantic lines, a
       # dist/ path without the marker, the regrowth margin from both sides, a small follow-up
       # on a big reviewed branch) were frozen from context.sh into looper first
-      # (PinePeakDigital/looper 97360e2). Two (learnings-entries-double-fallback, changed-lines-double-fallback)
+      # (97360e2, in looper before it moved into packages/looper). Two (learnings-entries-double-fallback, changed-lines-double-fallback)
       # were shell-only: `grep -c` and `||` fallbacks that have no Go analogue.
       # sweep-marker-producer-drifts stays, now verified by mark-swept.test.sh against
       # `looper context`. Lowered to 6 deliberately: banned-reason-raw-match,
@@ -238,7 +217,6 @@ jobs:
       # hook's looper checks would otherwise meet a skip and score as survivors.
       - name: mutation score
         run: |
-          rm -rf .looper
           PATH="$RUNNER_TEMP:$PATH" "$RUNNER_TEMP/looper" mutate -root . -catalog skills/review/review-loop/mutations
 
       # Flags the prose attributes to a script that does not have them. SKILL.md
