@@ -1,0 +1,13 @@
+exit=0
+--- stdout ---
+{
+  "path": "<store>/deferred.md",
+  "exists": true,
+  "entries": 0,
+  "stale": [],
+  "unpinned": [],
+  "broken_pins": [],
+  "unguarded": [],
+  "merged": null
+}
+--- stderr ---

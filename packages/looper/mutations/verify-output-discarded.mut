@@ -1,0 +1,10 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestFailureWithoutTheExpectedMarkerIsBroken'
+expect: --- FAIL:
+why:    the command output is thrown away, so a build break and a failing assertion are indistinguishable
+--- old
+			return check{ran: true, failed: true, output: out.String(),
+				detail: fmt.Sprintf("%s: %v\n%s", command, err, tail(out.String()))}
+--- new
+			return check{ran: true, failed: true, output: out.String(),
+				detail: fmt.Sprintf("%s: %v", command, err)}

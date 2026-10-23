@@ -1,0 +1,8 @@
+target: internal/docs/docs.go
+verify: go test ./internal/docs/ -count=1 -run 'TestAStaleFlagIsStillCaughtBesideAnotherScript'
+expect: --- FAIL:
+why:    a flag is credited to the first script named on the line rather than the nearest one, so a stale flag is reported against whichever tool the sentence happened to mention first
+--- old
+				script := nearestKnown(line, named, flag[2], flag[3], flags)
+--- new
+				script := line[named[0][2]:named[0][3]]

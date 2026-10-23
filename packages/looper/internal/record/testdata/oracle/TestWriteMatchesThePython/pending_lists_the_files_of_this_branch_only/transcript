@@ -1,0 +1,9 @@
+pending
+  exit=0
+  out=<run>/mine/pending-report.md
+
+  err=runlog: no run record for <run>/ghost/pending-report.md — left in place
+
+--- store ---
+{"branch":"feat","phase":"plan","run_id":"mine"}
+{"branch":"main","phase":"plan","run_id":"theirs"}

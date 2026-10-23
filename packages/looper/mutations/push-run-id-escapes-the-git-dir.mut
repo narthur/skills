@@ -1,0 +1,9 @@
+target: internal/push/push.go
+verify: go test ./internal/push/ -count=1 -run 'TestCheckRefusesATraversingRunID'
+expect: was accepted
+why:    the run id is interpolated into a path segment of the pending-report filename, so a traversing one sends the report gate looking for its evidence outside the git dir. Check refuses it with an error naming the id, which is where a bad id can still be reported rather than only failed closed.
+--- old
+	if !evidence.ValidRunID(p.RunID) {
+		return Result{}, fmt.Errorf("run id %q is not a plain identifier", p.RunID)
+	}
+--- new

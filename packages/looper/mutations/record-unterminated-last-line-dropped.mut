@@ -1,0 +1,57 @@
+target: internal/record/record.go
+verify: go test ./internal/record/ -count=1 -run 'TestALastLineWithNoNewlineIsStillRead'
+expect: the unterminated last line was dropped
+why:    at EOF, ReadString returns the final partial line TOGETHER with io.EOF, so the append has to happen before the error is tested. Breaking on EOF first silently drops the last line of any store that does not end in a newline — and that line is usually the finish row, so losing it turns a finished run into an unfinished one without any error.
+--- old
+	var lines []string
+	br := bufio.NewReader(f)
+	for {
+		line, err := br.ReadString('\n')
+		if line != "" {
+			// Python's text mode ends a line at \n, \r\n AND a bare \r, so `{..}\r{..}` is two
+			// records to runlog.py. When only one reader split here, the two disagreed about
+			// one store: measured, finish found a run's plan and then derived its convergence
+			// as unknown from the same file.
+			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+			for _, l := range strings.Split(line, "\r") {
+				// And strip each the way str.strip() does: json.Unmarshal refuses a trailing
+				// \x1c or U+00A0 that Python drops, so a row the writer saw was invisible to
+				// the reader that did not strip.
+				lines = append(lines, pyStrip(l))
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, 0, err // a real I/O error still surfaces; only size does not
+		}
+	}
+--- new
+	var lines []string
+	br := bufio.NewReader(f)
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil && err == io.EOF {
+			break // the append now never sees the final unterminated line
+		}
+		if line != "" {
+			// Python's text mode ends a line at \n, \r\n AND a bare \r, so `{..}\r{..}` is two
+			// records to runlog.py. When only one reader split here, the two disagreed about
+			// one store: measured, finish found a run's plan and then derived its convergence
+			// as unknown from the same file.
+			line = strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r")
+			for _, l := range strings.Split(line, "\r") {
+				// And strip each the way str.strip() does: json.Unmarshal refuses a trailing
+				// \x1c or U+00A0 that Python drops, so a row the writer saw was invisible to
+				// the reader that did not strip.
+				lines = append(lines, pyStrip(l))
+			}
+		}
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return nil, 0, err // a real I/O error still surfaces; only size does not
+		}
+	}

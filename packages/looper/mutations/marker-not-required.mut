@@ -1,0 +1,8 @@
+target: internal/mutate/mutate.go
+verify: go test ./internal/mutate/ -count=1 -run 'TestFailureWithoutTheExpectedMarkerIsBroken'
+expect: --- FAIL:
+why:    any non-zero exit counts as a catch, so a mutation that merely fails to compile scores as caught
+--- old
+		case m.Expect != "" && !strings.Contains(c.output, m.Expect):
+--- new
+		case false && !strings.Contains(c.output, m.Expect):

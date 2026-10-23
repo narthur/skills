@@ -1,0 +1,435 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# Read-only by default. The jobs below only need the source; a workflow with write
+# permissions is one compromised action away from pushing to the repo it builds.
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    # The catalog is at least the floor below, so if something made every verify hang the
+    # worst case would be at least that many x the 5-minute per-command verify timeout,
+    # which already exceeds GitHub's 360-minute default by a wide margin and grows every
+    # time the floor rises. Deliberately stated as the relationship and not as a number:
+    # it read "400 minutes today" from when the floor was 80 through three raises to 152,
+    # where the real figure is 760. A typical run is a couple of minutes — measured at 95s
+    # on main at a floor of 111 — so this fails fast and cheap instead.
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          # Do not leave the token in .git/config for later steps to pick up.
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+        with:
+          go-version-file: go.mod
+          # No dependencies, so there is no go.sum to key a cache on and `cache: true`
+          # only produces a failed restore on every run.
+          cache: false
+
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+
+      - run: go vet ./...
+
+      # internal/record is a port of runlog.py's read half, and its parity gate compares
+      # against the thing being replaced. Without the script it calls t.Skip, and `go test`
+      # reports a skip as SUCCESS — so this job was green with all its parity subtests inert,
+      # which is the whole point of the gate going unmeasured in the one environment that
+      # runs it automatically. The skills repo is public, so no token is involved. Pinned to
+      # a commit, not a branch: a mutable ref would let the oracle change under the gate.
+      # The read-half tests import runlog.py as a library; the write half's gate
+      # (TestWriteMatchesThePython) reads frozen output under testdata/oracle instead,
+      # because runlog.py's command line is gone, and needs no oracle. So does
+      # TestDroppedGatesMatchesThePython, whose oracle was review-stats.py — retired by the
+      # skill once `looper stats` replaced it — so nothing here needs that script.
+      - name: fetch the parity oracle
+        uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          repository: narthur/skills
+          ref: 6993999796b2c782893e470ba27ce9f25fd0fad3 # narthur/skills main, 2026-10-11
+          path: .parity-oracle
+          persist-credentials: false
+
+      # internal/record runs here, verbosely and ONCE, because the next assertion needs
+      # its per-subtest output. Running it again to check that it ran would re-pay the
+      # whole parity cost — ~70 subtests, each spawning a python3 subprocess — on every
+      # push, so the rest of the tree is tested separately below.
+      - name: go test (record, with the oracle)
+        env:
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+        run: |
+          go test -count=1 -v ./internal/record/ > record.log 2>&1 || { cat record.log; exit 1; }
+          tail -5 record.log
+
+      # Prove the gate RAN, rather than trusting that it did. A skip is invisible in the
+      # step above: it passes identically whether every subtest compared against the Python
+      # or none did, because `go test` reports a skip as success. Fails on any SKIP and on
+      # a short count, so the gate cannot go inert again without CI saying so.
+      - name: the parity gate actually ran
+        run: |
+          # First, before anything reads it. -r not -f: an UNREADABLE log produced exactly
+          # the wrong-reason failure the awk-over-grep note below exists to avoid — awk's own
+          # "can't open file" and no message from this step at all.
+          [ -r record.log ] || { echo "record.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' record.log; then
+            echo "the parity gate SKIPPED — the oracle was not reachable:"; cat record.log; exit 1
+          fi
+          # awk, not `grep -c`: grep -c exits non-zero on a zero count, which under this
+          # step's `bash -e` would abort here and report the wrong reason for the failure.
+          # A floor PER TEST, not one total. A single aggregate is a product of fixtures and
+          # oracles, so growth in one dimension masks collapse in another: at 50 fixtures,
+          # losing the whole DroppedGates oracle would still count 100 and pass — which is
+          # exactly the regression that oracle was added to fix.
+          # Each oracle carries its OWN floor, because they are different widths: the three
+          # fixture tables run 28 subtests apiece, StorePath runs one per env shape. A shared
+          # floor of 25 cannot cover the fourth oracle, which runs 11. It was left out of this
+          # loop when it was added, and deleting it — or emptying storePathCases — then left
+          # every gate here green, measured. (Why it was left out is recorded nowhere, so this
+          # comment no longer guesses at it, and the agent count that was here belongs in a commit
+          # message, not in the tree.) The floor
+          # of 11 pins the table's WIDTH as well as the test's existence. DroppedGates compares
+          # against review-stats.py's frozen answers, one per fixture, so its floor is the full
+          # 28: a fixture with no golden fails rather than skipping, and a shrunk table is what
+          # only this floor can catch. Write is the write half's
+          # gate (looper record against runlog.py's frozen output): 37 scenarios, each a SEQUENCE of calls, so its
+          # floor pins the scenario table and not the number of calls. The per-case `expect:`
+          # strings in the catalog pin neither — only 4 of the 11 case names are pinned by any
+          # entry, because two of the five store-path entries share one `expect:` string.
+          for spec in Convergence:25 CycleCount:25 DroppedGates:28 StorePath:11 Write:37; do
+            t=${spec%:*}; min=${spec#*:}
+            # Exactly four spaces, which is how `go test -v` indents a depth-1 subtest.
+            # Two reasons written here before were wrong, and the third is deliberately
+            # narrow. A fixture NAME cannot carry the needle: go test replaces spaces with
+            # underscores. A fixture's TEXT reaches the log only inside a failing t.Errorf,
+            # and that is excluded by the `file.go:NN:` prefix on its first line, not by the
+            # indent — only continuation lines are indented eight, so the earlier claim
+            # about t.Errorf was false as a general statement. What is actually true, and
+            # all that is claimed: a green log contains no t.Errorf output at all, so
+            # nothing in one can match this but a subtest result. A deeper-nested parity
+            # table would be indented eight and UNDER-count, which fails the floor rather
+            # than passing it.
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: Test" t "MatchesThePython/" {n++} END{print n+0}' record.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t parity subtests passed, expected at least $min"; cat record.log; exit 1; }
+            echo "$c $t parity subtests compared against the Python"
+          done
+
+      # internal/push's parity gate compares the whole push decision, disclosure wording
+      # included, against what push-check.py printed before it was retired — frozen under
+      # internal/push/testdata/oracle, so no checkout is needed. A missing golden fails rather
+      # than skips; the floors below are what catch a table that SHRANK, which no golden can.
+      - name: go test (push)
+        run: |
+          go test -count=1 -v ./internal/push/ > push.log 2>&1 || { cat push.log; exit 1; }
+          tail -5 push.log
+
+      - name: the push parity gate actually ran
+        run: |
+          [ -r push.log ] || { echo "push.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' push.log; then
+            echo "the push parity gate SKIPPED:"; cat push.log; exit 1
+          fi
+          # The decision table and the enumerated divergences, counted separately. A
+          # divergence test is NOT a subtest of the table, and each is the only thing
+          # asserting which side owns which answer — so an aggregate count would let one
+          # vanish under a table that grew by one. Each is named individually for the same
+          # reason the record floors are per-oracle.
+          #
+          # The table floor is 17, not 18: `absent from the store` moved OUT of it when the
+          # empty-record block landed, because it stopped being an agreement case. A floor
+          # that stayed at 18 would have had to be met by some other case, which is how a
+          # count starts measuring the wrong thing.
+          c=$(awk '$0 ~ "^    --- PASS: TestParityWithPushCheck/" {n++} END{print n+0}' push.log)
+          [ "$c" -ge 17 ] || { echo "only $c push parity subtests passed, expected at least 17"; cat push.log; exit 1; }
+          for d in TestTheDisclosureWordingDivergence TestTheEmptyRecordDivergence TestTheUnfinishedRunDivergence; do
+            grep -q -- "--- PASS: $d" push.log || {
+              echo "enumerated divergence $d did not pass"; cat push.log; exit 1; }
+          done
+          echo "$c push parity subtests compared against the frozen oracle, plus 3 enumerated divergences"
+
+      # internal/report is the same: the whole report body against what pr-report.py
+      # rendered before it was retired, frozen under internal/report/testdata/oracle.
+      - name: go test (report)
+        run: |
+          go test -count=1 -v ./internal/report/ > report.log 2>&1 || { cat report.log; exit 1; }
+          tail -5 report.log
+
+      - name: the report parity gate actually ran
+        run: |
+          [ -r report.log ] || { echo "report.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          # No skip is expected. TestRealStoreParity, the one that used to skip here for want
+          # of a live store, went with the oracle: a store that grows every run cannot be frozen.
+          if grep -q -- '--- SKIP' report.log; then
+            echo "the report parity gate SKIPPED:"; cat report.log; exit 1
+          fi
+          # Per TABLE floors, for the reason the record floors are per-oracle: the agreement
+          # table and the narrative table are different widths and measure different halves,
+          # and one aggregate would let the narrative table vanish under a table that grew.
+          for spec in TestParityWithPrReport:89 TestParityOnTheNarrative:5 \
+                      TestTheEnumeratedRenderDivergences:5 \
+                      TestTheHardeningDivergence:7 \
+                      TestWrongTypedFieldsAreRefusedAtTheLoad:13 \
+                      TestThreeShapesCrashTheOracleAndAreRefusedHere:3; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' report.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat report.log; exit 1; }
+            echo "$c $t subtests compared against the frozen oracle"
+          done
+          # The divergences with no subtests of their own, one name each. Each is the only
+          # thing asserting which side owns which answer, so none can be left to an aggregate.
+          for d in TestTheDisclosureDivergenceReachesTheBody TestThePostDiagnosisDivergence \
+                   TestThePushGateFindsWhatThisPackageWrites; do
+            grep -q -- "--- PASS: $d" report.log || {
+              echo "enumerated divergence $d did not pass"; cat report.log; exit 1; }
+          done
+
+      # internal/stats is the same again: `looper stats` against what review-stats.py printed for
+      # each store, frozen under internal/stats/testdata/oracle before the skill switches to it.
+      - name: go test (stats)
+        run: |
+          go test -count=1 -v ./internal/stats/ > stats.log 2>&1 || { cat stats.log; exit 1; }
+          tail -5 stats.log
+
+      - name: the stats parity gate actually ran
+        run: |
+          [ -r stats.log ] || { echo "stats.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' stats.log; then
+            echo "the stats parity gate SKIPPED:"; cat stats.log; exit 1
+          fi
+          # Per table, for the reason the record floors are per-oracle: the scenario table and
+          # the enumerated divergences measure different things, and one aggregate would let a
+          # table vanish under another that grew.
+          for spec in TestStatsMatchesThePython:61 TestShapesThisBuildCannotReadAreNamed:34 \
+                      TestStatsUsageExitsLikeThePython:4 TestInvalidUTF8IsReadNotFatal:2 \
+                      TestAnUnreadableStoreIsAnError:2; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' stats.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat stats.log; exit 1; }
+            echo "$c $t subtests compared against the frozen oracle"
+          done
+          for d in TestTheAlarmNamesOnlyUnreadableRunsInItsWindow TestGatesFirstDroppedByOneRunTieByName \
+                   TestTheOverflowLinePointsAtLooper; do
+            grep -q -- "--- PASS: $d" stats.log || {
+              echo "enumerated divergence $d did not pass"; cat stats.log; exit 1; }
+          done
+
+      # internal/ledger is the same again: `looper threat-model` and `looper deferred` against what
+      # threat-model.py and deferred.py printed over the same fixture repos, frozen under
+      # internal/ledger/testdata/oracle. The fixture's shas are deterministic, so no oracle checkout.
+      - name: go test (ledger)
+        run: |
+          go test -count=1 -v ./internal/ledger/ > ledger.log 2>&1 || { cat ledger.log; exit 1; }
+          tail -5 ledger.log
+
+      - name: the ledger parity gate actually ran
+        run: |
+          [ -r ledger.log ] || { echo "ledger.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' ledger.log; then
+            echo "the ledger parity gate SKIPPED:"; cat ledger.log; exit 1
+          fi
+          # Per table, for the reason the record floors are per-oracle: each divergence is the only
+          # thing asserting which side owns that answer, so none is left to an aggregate.
+          for spec in TestLedgersMatchThePython:48 TestCitationsAreReadPerClaim:15 \
+                      TestClaimsAreBlocks:14 TestCitationsReadsEveryPin:13 \
+                      TestAnUnreadableLedgerIsAnError:2 \
+                      TestInvalidUTF8LedgerIsRead:2 TestSelftestIsRefused:2 \
+                      TestNonUTF8GitOutputIsRead:2 TestANULInAPinPathIsAnError:2 \
+                      TestInfoAsAFileIsNoLedger:2; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' ledger.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat ledger.log; exit 1; }
+            echo "$c $t subtests compared against the frozen oracle"
+          done
+
+      # internal/plan the same: `looper plan` against what plan.py printed, asked ao and recorded
+      # over the same fixture repo, stub gh and run store, frozen under internal/plan/testdata/oracle.
+      - name: go test (plan)
+        run: |
+          go test -count=1 -v ./internal/plan/ > plan.log 2>&1 || { cat plan.log; exit 1; }
+          tail -5 plan.log
+
+      - name: the plan parity gate actually ran
+        run: |
+          [ -r plan.log ] || { echo "plan.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' plan.log; then
+            echo "the plan parity gate SKIPPED:"; cat plan.log; exit 1
+          fi
+          for spec in TestPlanMatchesThePython:43 TestUsageAndInputErrorsExitAsThePythonDid:8 \
+                      TestAWrongContextIsAnError:6 \
+                      TestANameGitPrintsIsCounted:2 TestAReEntryIsSizedAgainstTheDelta:12 \
+                      TestAWrongReEntryFieldIsAnError:3; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' plan.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat plan.log; exit 1; }
+            echo "$c $t subtests compared against the frozen oracle"
+          done
+          for d in TestAnAbbreviatedFlagIsRefused TestAFailedRecordSaysSo TestAnUnmeasuredDiffPlansWide \
+                   TestATimedOutProbeStopsAtItsTimeout TestHelpGoesToStdout TestTheDeltaAnswerLeavesTheRiskAlone \
+                   TestAProbeWithALingeringGrandchildIsAnswered TestAGarbledDeltaAnswerIsAUsageError TestAFailedAuthProbeSaysWhatItSaw \
+                   TestEveryDocumentedDeltaAnswerIsRead; do
+            grep -q -- "--- PASS: $d" plan.log || { echo "divergence $d did not pass"; cat plan.log; exit 1; }
+          done
+
+      # internal/gather the same: `looper context` against what context.sh printed over the same
+      # fixture repos, stub gh and review store, frozen under internal/gather/testdata/oracle.
+      - name: go test (context)
+        run: |
+          go test -count=1 -v ./internal/gather/ > context.log 2>&1 || { cat context.log; exit 1; }
+          tail -5 context.log
+
+      - name: the context parity gate actually ran
+        run: |
+          [ -r context.log ] || { echo "context.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' context.log; then
+            echo "the context parity gate SKIPPED:"; cat context.log; exit 1
+          fi
+          for spec in TestContextMatchesTheShell:45 TestPackageScriptsAreAnObject:4 \
+                      TestCrashesAndSilencesAreDecided:6 TestAGoModuleIsDetected:5; do
+            t=${spec%:*}; min=${spec#*:}
+            c=$(awk -v t="$t" '$0 ~ "^    --- PASS: " t "/" {n++} END{print n+0}' context.log)
+            [ "$c" -ge "$min" ] || { echo "only $c $t subtests passed, expected at least $min"; cat context.log; exit 1; }
+            echo "$c $t subtests compared against the frozen oracle"
+          done
+          for d in TestArgumentsAreNotIgnored TestALatin1MakefileIsRead TestLatin1LearningsAreReplaced \
+                   TestAStalledProbeIsGivenUp; do
+            grep -q -- "--- PASS: $d" context.log || { echo "divergence $d did not pass"; cat context.log; exit 1; }
+          done
+
+      # internal/learn the same: `looper learn` against what learn.py did to the same file,
+      # frozen under internal/learn/testdata/oracle.
+      - name: go test (learn)
+        run: |
+          go test -count=1 -v ./internal/learn/ > learn.log 2>&1 || { cat learn.log; exit 1; }
+          tail -5 learn.log
+
+      - name: the learn parity gate actually ran
+        run: |
+          [ -r learn.log ] || { echo "learn.log is missing or unreadable — the test step above produced no usable log"; exit 1; }
+          if grep -q -- '--- SKIP' learn.log; then
+            echo "the learn parity gate SKIPPED:"; cat learn.log; exit 1
+          fi
+          c=$(awk '$0 ~ "^    --- PASS: TestLearnMatchesThePython/" {n++} END{print n+0}' learn.log)
+          # 46: bump_empty_matches_the_first left the oracle when bump began refusing an empty
+          # match (TestBumpRefusesAnEmptyMatch pins the new behaviour, named below).
+          [ "$c" -ge 46 ] || { echo "only $c TestLearnMatchesThePython subtests passed, expected at least 46"; cat learn.log; exit 1; }
+          echo "$c TestLearnMatchesThePython subtests compared against the frozen oracle"
+          for d in TestPruneKeepsAnEmDashPattern TestANonUTF8FileIsLeftAlone TestANonUTF8EntryIsRefused \
+                   TestAnUnreadableFileIsAnError TestAnEntryDateIsASCIIDigits TestALeadingDateIsNotWrittenTwice \
+                   TestAShortEntryIsRefused TestBumpRefusesAnEmptyMatch TestADateAloneIsTooShort; do
+            grep -q -- "--- PASS: $d" learn.log || { echo "divergence $d did not pass"; cat learn.log; exit 1; }
+          done
+
+      # The skill installs looper with `go install ...@<version>`, which builds a module zip, and a
+      # module zip refuses file names that git, the filesystem and `go test` all accept. v0.2.0
+      # shipped three golden directories named after subtests containing an apostrophe and could
+      # not be installed at all, with every step above green, because nothing here built a zip.
+      # This installs this exact commit the way the skill will, straight from GitHub.
+      - name: the module installs the way the skill installs it
+        env:
+          GOPROXY: direct
+          GONOSUMDB: github.com/pinepeakdigital/looper
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          # Automatic maintenance off. A branch commit (not a tag, not main) makes go shallow-fetch
+          # it, fetch every head and tag, then `fetch --unshallow`; under the runner's git 2.55 the
+          # full fetch starts detached auto-maintenance that rewrites .git/shallow under the
+          # unshallow, which dies with "shallow file has changed since we read it". Measured in a
+          # container on git 2.56: failed 2/2 as before, installed 3/3 with both keys, failed with
+          # either alone. Nothing here wants that maintenance; the module cache is thrown away.
+          GIT_CONFIG_COUNT: "2"
+          GIT_CONFIG_KEY_0: maintenance.auto
+          GIT_CONFIG_VALUE_0: "false"
+          GIT_CONFIG_KEY_1: gc.auto
+          GIT_CONFIG_VALUE_1: "0"
+        run: go install "github.com/pinepeakdigital/looper/cmd/looper@$SHA"
+
+      - name: go test (everything else)
+        # mapfile, not a bare $(...): the packages above are excluded because they run
+        # verbosely for their floors, and the word splitting that reassembles the rest is the mechanism, not an
+        # accident — so quoting the substitution would pass the whole list as ONE argument and
+        # silently test nothing. An array says that explicitly and clears the last actionlint
+        # finding on this file, so a real one is not lost in a standing warning.
+        run: |
+          mapfile -t pkgs < <(go list ./... | grep -v -e '/internal/record$' -e '/internal/push$' -e '/internal/report$' -e '/internal/stats$' -e '/internal/ledger$' -e '/internal/plan$' -e '/internal/gather$' -e '/internal/learn$')
+          go test -count=1 "${pkgs[@]}"
+
+      # Anchors and parsing before behaviour. The mutation score below takes about fifteen
+      # minutes, so an entry that would not RUN — a stale anchor after a rename, a `why:`
+      # wrapped onto a second line, a target git stopped tracking — costs a whole CI cycle to
+      # discover, and the catalog aborts as a WHOLE, so one bad entry takes every other
+      # entry's guard with it. This finds it in seconds.
+      #
+      # `mutate -check` and not a script, and that is the finding rather than a preference.
+      # This step used to run mutations/anchorcheck.py, a Python reimplementation of
+      # catalog.go's parser. Four consecutive review rounds found divergences in it, every
+      # time in the direction where the script passed and `looper mutate` then failed to load
+      # anything: it read only `target:` from the header; it took the first duplicate key
+      # where catalog.go takes the last; it never checked `old == new`; it globbed
+      # non-recursively; it skipped dot-paths; it read in Python text mode where Go reads raw
+      # bytes. The last round found three more in one pass — `os.walk` classifies with a
+      # symlink-FOLLOWING is_dir() where fs.DirEntry.IsDir() is lstat-based, os.walk's default
+      # onerror discards a mid-walk error WalkDir propagates, and WalkDir lstats its root so a
+      # symlinked mutations/ yields nothing — plus two preconditions it never modelled at all
+      # (requireTrackedTargets' symlink and untracked-target refusals, which abort a run just
+      # as fatally). A fifth patch buys a fifth round. Reusing ParseCatalog and Runner.Check
+      # makes the fast gate the same code as the slow one, so divergence is impossible by
+      # construction rather than by review.
+      #
+      # The step name is narrow on purpose. -check never executes a `verify:` command, so an
+      # entry whose verify is already failing or matches no test scores Broken in a full run
+      # and is invisible here — measured: a `-run` pattern naming a renamed test, the same
+      # rename the anchor half exists for, passes this gate and scores 0/2 in the run. What
+      # this proves is that the catalog LOADS and every target and anchor is usable.
+      - name: every catalog entry parses, and its target and anchor are usable
+        run: go run ./cmd/looper mutate -check
+
+      # A deleted catalog entry is silently accepted: the score is computed against
+      # however many .mut files are present, so dropping one gives n-1/n-1 and a green
+      # build with one fewer defect guarded. `mutate` only errors on an EMPTY catalog.
+      # (The same gap was found and closed in the skills repo's workflow first.)
+      # Raise the floor deliberately when adding entries; that edit is the review trail — and
+      # LOWER it just as deliberately. It went 181 -> 180 when the empty-record block landed:
+      # push-missing-run-note-only-on-refusals guarded the note's wording on a GRANTED push,
+      # and an empty record can no longer grant, so its defect is unreachable by construction
+      # rather than merely unguarded. A guard made obsolete by a fix is deleted and counted,
+      # not left to score `survived` forever. It went 475 -> 474 when ledgers moved out of
+      # .git/info (narthur/skills#16): ledger-common-dir-decoded and
+      # push-reportlanded-reads-a-relative-path guarded paths built from git's output, which
+      # no longer exist; push-reportlanded-no-store-counted-as-asked was added.
+      # Then 474 -> 476: home-git-ignores-timeout and home-git-ignores-held-pipe guard the two
+      # halves of home.git's "cannot answer" check.
+      - name: no catalog entry has gone missing
+        run: |
+          # A glob array, not `ls | wc -l`: wc counts LINES, so one filename containing a
+          # newline counts twice and the floor passes with an entry deleted — the single
+          # failure mode this step exists to prevent, and the only direction that fails
+          # quietly. nullglob also makes the empty case 0 rather than a literal glob.
+          shopt -s nullglob
+          f=(mutations/*.mut)
+          n=${#f[@]}
+          # Zero is a different failure from n-1: the directory or the glob is gone, not one
+          # file, and "was one deleted?" would name the wrong cause.
+          [ "$n" -gt 0 ] || { echo "mutations/ has no .mut files at all"; exit 1; }
+          [ "$n" -ge 476 ] || { echo "only $n mutations, expected at least 476 — was one deleted?"; ls mutations/; exit 1; }
+          echo "$n mutations present"
+
+      # The suite passing says nothing on its own. This reintroduces each defect in
+      # mutations/ and requires the suite to notice. A survivor is a hole: the
+      # defect could ship with CI green.
+      # The oracle path is exported HERE too, not just for the record parity step. A catalog
+      # entry whose `verify:` runs a parity test needs the oracle, and without it that test
+      # calls t.Skip — which `go test` reports as SUCCESS, so the mutation SURVIVES and the
+      # entry silently guards nothing. Measured the first time this step ever ran in CI (it
+      # could not start before push.log was gitignored): 177/178, with
+      # record-parity-trims-the-oracle-side-only the one survivor, caught locally and inert
+      # here. Same skip-is-success hazard the two "parity gate actually ran" steps exist for,
+      # one level down — in the catalog rather than in a test step.
+      - name: mutation score
+        env:
+          REVIEW_LOOP_RUNLOG: ${{ github.workspace }}/.parity-oracle/skills/review/review-loop/runlog.py
+        run: go run ./cmd/looper mutate
