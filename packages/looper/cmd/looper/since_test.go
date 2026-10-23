@@ -8,28 +8,30 @@ import (
 	"github.com/narthur/skills/packages/looper/internal/mutate"
 )
 
-// -since through a symlinked root still selects the entry whose target this branch
-// renamed away: both the old path and the merge-base semantics have to hold.
+// -since through a symlinked root, to the toplevel or to a subdirectory, still selects the
+// entry whose target this branch renamed away.
 func TestChangedSinceSelectsARenamedTargetThroughASymlink(t *testing.T) {
-	dir := fixture(t, map[string]string{"a.go": "package a\n", "b.go": "package a\n"})
+	dir := fixture(t, map[string]string{"sub/a.go": "package a\n", "sub/b.go": "package a\n"})
 	git(t, dir, "branch", "base")
-	git(t, dir, "mv", "a.go", "c.go")
+	git(t, dir, "mv", "sub/a.go", "sub/c.go")
 	git(t, dir, "commit", "-qm", "rename")
-	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(dir, link); err != nil {
-		t.Fatal(err)
-	}
-	changed, err := changedSince(link, "base")
-	if err != nil {
-		t.Fatal(err)
-	}
-	muts := []mutate.Mutation{
-		{Source: filepath.Join(link, "a.mut"), Target: "a.go"},
-		{Source: filepath.Join(link, "b.mut"), Target: "b.go"},
-	}
-	got := mutate.Affected(muts, link, changed)
-	if len(got) != 1 || got[0].Target != "a.go" {
-		t.Errorf("changed %v selected %v, want only the a.go entry", changed, got)
+	for _, c := range []struct{ to, target string }{{dir, "sub/a.go"}, {filepath.Join(dir, "sub"), "a.go"}} {
+		link := filepath.Join(t.TempDir(), "link")
+		if err := os.Symlink(c.to, link); err != nil {
+			t.Fatal(err)
+		}
+		changed, err := changedSince(link, "base")
+		if err != nil {
+			t.Fatal(err)
+		}
+		muts := []mutate.Mutation{
+			{Source: filepath.Join(link, "a.mut"), Target: c.target},
+			{Source: filepath.Join(link, "b.mut"), Target: filepath.Join(filepath.Dir(c.target), "b.go")},
+		}
+		got := mutate.Affected(muts, link, changed)
+		if len(got) != 1 || got[0].Target != c.target {
+			t.Errorf("link to %s: changed %v selected %v, want only the %s entry", c.to, changed, got, c.target)
+		}
 	}
 	if _, err := changedSince(dir, "no-such-ref"); err == nil {
 		t.Error("a bad ref returned no error, which reads as nothing to run")

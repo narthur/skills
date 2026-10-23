@@ -261,9 +261,11 @@ func runMutate(args []string, out, errOut io.Writer) error {
 // changedSince lists, as absolute paths, the files that differ between ref's merge base
 // with HEAD and HEAD: what this branch changed, not what the base did since.
 func changedSince(root, ref string) ([]string, error) {
-	// --show-cdup, not --show-toplevel: the toplevel comes back symlink-resolved (/private/tmp
-	// on macOS), so its paths never matched targets joined onto an unresolved -root.
-	cdup, err := exec.Command("git", "-C", root, "rev-parse", "--show-cdup").Output()
+	// Each path is respelled relative to root and joined onto root as given, the way Affected
+	// joins targets and verify paths. The toplevel comes back symlink-resolved (/private/tmp on
+	// macOS), and a ../ walk up from a symlinked -root lands beside the link, not in the repo;
+	// either way nothing matched and -since passed having run nothing.
+	prefix, err := exec.Command("git", "-C", root, "rev-parse", "--show-prefix").Output()
 	if err != nil {
 		return nil, fmt.Errorf("-since: %s is not in a git repo: %w", root, err)
 	}
@@ -277,12 +279,17 @@ func changedSince(root, ref string) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	top := filepath.Join(absRoot, strings.TrimSpace(string(cdup)))
+	base := filepath.Clean(strings.TrimSpace(string(prefix)))
 	var changed []string
 	for _, l := range strings.Split(string(out), "\x00") {
-		if l != "" {
-			changed = append(changed, filepath.Join(top, l))
+		if l == "" {
+			continue
 		}
+		rel, err := filepath.Rel(base, l)
+		if err != nil {
+			return nil, err
+		}
+		changed = append(changed, filepath.Join(absRoot, rel))
 	}
 	return changed, nil
 }

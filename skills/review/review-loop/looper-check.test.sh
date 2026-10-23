@@ -54,7 +54,7 @@ else
 		(cd "$tmp/c/packages/looper" && go build -o "$tmp/looper" ./cmd/looper) || exit 1
 		check "built at a commit this checkout lacks" 1 "does not have"
 	else
-		echo "skip  older/foreign builds: no history before $last here (shallow checkout)"
+		echo "skip  older/foreign builds: $last has no parent here (a shallow checkout, or the root commit)"
 	fi
 fi
 exit $((fails > 0))
