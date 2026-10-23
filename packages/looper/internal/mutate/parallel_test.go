@@ -20,6 +20,8 @@ func TestParallelMatchesSerialOutsideTheRealTree(t *testing.T) {
 			"python3 -c 'import app; assert app.f(1) and not app.f(0)'\n",
 		"pkg/hollow.sh": "#!/bin/sh\npython3 -c 'import app'\n",
 		"pkg/red.sh":    "#!/bin/sh\nexit 1\n",
+		// CI has no global gitignore, so the bytecode t.sh leaves would read as a dirty tree.
+		".gitignore": "__pycache__/\n",
 	})
 	root := filepath.Join(dir, "pkg")
 	muts := []Mutation{
