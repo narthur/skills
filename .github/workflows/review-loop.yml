@@ -154,7 +154,7 @@ jobs:
             "record-skipped.test.sh:ok  a refusal leaves the prior record intact" \
             "carry-review.test.sh:ok  an indentation-only rewrite does not carry a reviewed stamp" \
             "mark-swept.test.sh:ok  what mark-swept.py writes is what looper context reads" \
-            "looper-check.test.sh:ok  not a go binary"; do
+            "looper-check.test.sh:ok  built from HEAD, in a clone"; do
             t=${pair%%:*}; marker=${pair#*:}
             echo "::group::$t"
             PATH="$RUNNER_TEMP:$PATH" ./"$t" | tee "$RUNNER_TEMP/$t.log" || failed="$failed $t"

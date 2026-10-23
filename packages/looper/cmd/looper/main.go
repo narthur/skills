@@ -261,18 +261,27 @@ func runMutate(args []string, out, errOut io.Writer) error {
 // changedSince lists, as absolute paths, the files that differ between ref's merge base
 // with HEAD and HEAD: what this branch changed, not what the base did since.
 func changedSince(root, ref string) ([]string, error) {
-	top, err := exec.Command("git", "-C", root, "rev-parse", "--show-toplevel").Output()
+	// --show-cdup, not --show-toplevel: the toplevel comes back symlink-resolved (/private/tmp
+	// on macOS), so its paths never matched targets joined onto an unresolved -root.
+	cdup, err := exec.Command("git", "-C", root, "rev-parse", "--show-cdup").Output()
 	if err != nil {
 		return nil, fmt.Errorf("-since: %s is not in a git repo: %w", root, err)
 	}
-	out, err := exec.Command("git", "-C", root, "diff", "--name-only", ref+"...HEAD").Output()
+	// --no-renames: a rename lists only its new path otherwise, and an entry whose
+	// target was renamed away is the one entry that must not be skipped.
+	out, err := exec.Command("git", "-C", root, "diff", "--name-only", "--no-renames", "-z", ref+"...HEAD").Output()
 	if err != nil {
 		return nil, fmt.Errorf("-since %s: git diff failed: %w", ref, err)
 	}
+	absRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	top := filepath.Join(absRoot, strings.TrimSpace(string(cdup)))
 	var changed []string
-	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for _, l := range strings.Split(string(out), "\x00") {
 		if l != "" {
-			changed = append(changed, filepath.Join(strings.TrimSpace(string(top)), l))
+			changed = append(changed, filepath.Join(top, l))
 		}
 	}
 	return changed, nil

@@ -16,8 +16,8 @@ import (
 // tracked bytes the baseline ran on.
 //
 // Serial mode mutates the real tree in place, one entry after another, and took 27 minutes
-// for 476 entries on a 10-core Mac. Each entry is a recompile plus one test, so they are
-// independent and the cores were idle.
+// for 476 entries (2026-10-23). Each entry is a recompile plus one test, so they are
+// independent, and serial mode left the other cores idle.
 func (r *Runner) runParallel(muts []Mutation, alreadyBad map[string]string, jobs int) ([]Result, error) {
 	prefix, err := r.git("rev-parse", "--show-prefix")
 	if err != nil {
@@ -42,7 +42,7 @@ func (r *Runner) runParallel(muts []Mutation, alreadyBad map[string]string, jobs
 	defer stop()
 
 	log := &lockedWriter{w: r.Log}
-	workers := make([]*Runner, jobs)
+	workers := make([]*Runner, min(jobs, len(muts)))
 	for i := range workers {
 		d := filepath.Join(scratch, fmt.Sprint(i))
 		if _, err := r.git("worktree", "add", "--detach", "-q", d, "HEAD"); err != nil {

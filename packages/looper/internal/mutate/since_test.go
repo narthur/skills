@@ -38,7 +38,7 @@ func TestAffectedKeepsWhatAChangeCouldTouch(t *testing.T) {
 		{"internal/a/a_test.go", []string{"y.mut"}},     // only the verify's package
 		{"mutations/m.mut", []string{"m.mut"}},          // the entry itself
 		{"t.sh", []string{"m.mut", "z.mut"}},            // a script a verify names, quoted or not
-		{"README.md", nil},                              // `./...` and `.` select nothing
+		{"README.md", nil},                              // `./...` selects nothing
 	} {
 		got := names(Affected(muts, root, []string{filepath.Join(root, c.changed)}))
 		if len(got) != len(c.want) {

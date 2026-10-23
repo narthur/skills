@@ -13,9 +13,10 @@ Not built yet (designed in the looper Fieldnote). A declared policy for how heav
 _Avoid_: risk, stakes, heaviness
 
 **Tier floor**:
-The lightest review tier a run may use, set by `looper plan`. A review profile can lower it; the orchestrator never lowers it mid-run.
+The lightest review tier a run may use, set by `looper plan` from the diff's size and whether it changes program logic. The orchestrator never lowers it mid-run.
 
 ## Relationships
 
 - **Risk** belongs to a diff. A **review profile** belongs to paths in a repo.
-- A run's **tier floor** comes from its **risk** inputs, capped by the strictest **review profile** among the files it touches.
+- **Risk** and the **tier floor** are computed from the same diff but separately: risk labels the PR, the floor sizes the review.
+- As designed, the strictest **review profile** among the files a run touches would move its **tier floor**: up for `strict`, down only when every touched file is `light`.

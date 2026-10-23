@@ -19,6 +19,7 @@ func TestParallelMatchesSerialOutsideTheRealTree(t *testing.T) {
 		"pkg/t.sh": "#!/bin/sh\npwd -P >> '" + where + "'\n" +
 			"python3 -c 'import app; assert app.f(1) and not app.f(0)'\n",
 		"pkg/hollow.sh": "#!/bin/sh\npython3 -c 'import app'\n",
+		"pkg/red.sh":    "#!/bin/sh\nexit 1\n",
 	})
 	root := filepath.Join(dir, "pkg")
 	muts := []Mutation{
@@ -26,6 +27,7 @@ func TestParallelMatchesSerialOutsideTheRealTree(t *testing.T) {
 		{Source: "b.mut", Target: "app.py", Verify: []string{"./hollow.sh"}, Old: "x > 0", New: "x >= 0"},
 		{Source: "c.mut", Target: "app.py", Verify: []string{"./t.sh"}, Old: "no such anchor", New: "x"},
 		{Source: "d.mut", Target: "app.py", Verify: []string{"./t.sh"}, Old: "return x", New: "return not x"},
+		{Source: "e.mut", Target: "app.py", Verify: []string{"./red.sh"}, Old: "x > 0", New: "x != 0"},
 	}
 	serial, err := (&Runner{Root: root}).Run(muts)
 	if err != nil {
@@ -47,9 +49,10 @@ func TestParallelMatchesSerialOutsideTheRealTree(t *testing.T) {
 				par[i].Mutation.Source, par[i].Outcome, serial[i].Mutation.Source, serial[i].Outcome)
 		}
 	}
-	if serial[0].Outcome != Caught || serial[1].Outcome != Survived || serial[2].Outcome != Stale {
-		t.Errorf("fixture no longer covers caught, survived and stale: %v %v %v",
-			serial[0].Outcome, serial[1].Outcome, serial[2].Outcome)
+	if serial[0].Outcome != Caught || serial[1].Outcome != Survived || serial[2].Outcome != Stale ||
+		serial[4].Outcome != Broken {
+		t.Errorf("fixture no longer covers caught, survived, stale and broken: %v %v %v %v",
+			serial[0].Outcome, serial[1].Outcome, serial[2].Outcome, serial[4].Outcome)
 	}
 
 	// The baseline runs t.sh once in the real tree; every other line must be a worker's.

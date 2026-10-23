@@ -70,7 +70,9 @@ type Runner struct {
 	scratch bool // a worker's throwaway worktree: no restore-on-signal of its own
 }
 
-// Run works through muts in order, restoring the target after each.
+// Run works through muts in order, restoring the target after each. With Jobs > 1 it
+// hands them to runParallel after the same checks and baseline, and the real tree is
+// never mutated at all.
 //
 // It refuses to start on a dirty tree. That is not fastidiousness: restoring a
 // mutation by checking the file out of git silently reverts uncommitted work
@@ -113,7 +115,8 @@ func (r *Runner) Run(muts []Mutation) ([]Result, error) {
 }
 
 // one applies a single mutation, runs its verify commands, and restores the file
-// before returning — on every path, including a signal.
+// before returning — on every path, including a signal in the real tree. A scratch
+// worker installs no signal handler; runParallel's removes its whole worktree instead.
 func (r *Runner) one(m Mutation) (res Result, err error) {
 	target := filepath.Join(r.Root, m.Target)
 	original, err := os.ReadFile(target)
