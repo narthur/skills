@@ -15,7 +15,7 @@ Then it rewrites the file (same two-section structure) and returns a one-line su
 **Then record what the sweep left behind**, with the command rather than by hand:
 
 ```bash
-lf="$(git rev-parse --git-common-dir)/info/review-loop-learnings.md"
+lf="$(~/.local/bin/looper home)/learnings.md"
 python3 ~/.claude/skills/review-loop/mark-swept.py "$lf"
 ```
 

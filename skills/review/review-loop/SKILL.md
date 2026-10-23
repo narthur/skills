@@ -16,12 +16,12 @@ You are an expert code reviewer running a multi-cycle, multi-agent review-fix-co
 First, require the `looper` binary — the run record's writer and Step 14's report and push gate are subcommands of it, and there is no fallback:
 
 ```bash
-~/.local/bin/looper record finish -h 2>&1 | grep -q asks-open || { echo "review-loop needs ~/.local/bin/looper v0.2.11 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.11" >&2; false; }
+~/.local/bin/looper home >/dev/null 2>&1 || { echo "review-loop needs ~/.local/bin/looper v0.2.12 or later (a looper elsewhere on PATH is deliberately not used): GOBIN=~/.local/bin go install github.com/pinepeakdigital/looper/cmd/looper@v0.2.12" >&2; false; }
 ```
 
-`record finish -h` lists the outcome choices from v0.2.11 on, and `asks-open` is the outcome v0.2.11 added; v0.2.10 and earlier print no choices, and a looper with no `record` at all prints only an error. `-h` writes nothing and reads no store. The probe is a flag rather than `looper version` because a looper built from a checkout prints `(devel)` or a pseudo-version there, which no string comparison can order.
+`home` is the subcommand v0.2.12 added; older loopers exit 2 with "unknown command". `home` only prints a path: it writes nothing and moves nothing. The probe is a subcommand rather than `looper version` because a looper built from a checkout prints `(devel)` or a pseudo-version there, which no string comparison can order.
 
-If it fails, whether looper is missing or older than v0.2.11, stop and give the user that command. v0.2.11 adds the `asks-open` outcome (Step 14). v0.2.10 was the first release with `record pending --all` (Step 0c), push-check's exit 3 for a refusal and its branch defaults (Step 14), and `record finish`'s refusals of a malformed escalation, a contradictory or second finish, and a row it cannot read back (Step 14). Which release replaced which script is in this file's git history. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
+If it fails, whether looper is missing or older than v0.2.12, stop and give the user that command. v0.2.12 moves the ledgers into the repo's store (`looper home`) and the pending reports into the run dir, both outside `.git` (below). v0.2.11 added the `asks-open` outcome (Step 14). v0.2.10 was the first release with `record pending --all` (Step 0c), push-check's exit 3 for a refusal and its branch defaults (Step 14), and `record finish`'s refusals of a malformed escalation, a contradictory or second finish, and a row it cannot read back (Step 14). Which release replaced which script is in this file's git history. `GOBIN` is set because under asdf the default lands behind a shim that only resolves in directories pinning a Go version. Every looper command this skill tells you to run names `~/.local/bin/looper` by path, never a bare `looper`, and a bare `looper` in prose means that same binary: the binary decides whether the push goes ahead, so a different `looper` earlier on PATH (a dev build, a repo's `bin/`) must not be the one that decides it. This closes accidental shadowing, not a hostile repo: looper still runs `gh` and `git` from PATH and honours `REVIEW_LOOP_RUNS`, and an allowed `.envrc` is code running as you either way. (The test suites and CI take looper from PATH on purpose and link it into a fixture `HOME`: they are test harnesses, not the gate.) Do not substitute anything for Step 14: a review whose report and push decision were improvised is the failure the gate exists to prevent.
 
 Then make this run's **run dir** and run the context gatherer once into it:
 
@@ -36,16 +36,18 @@ cat <run dir>/context.json
 
 `<run dir>` is the absolute path `mktemp` printed; write it out in full in every later command, since shell state does not survive between calls. If `mktemp` failed or printed nothing, stop rather than improvise a path: a relative or empty one resolves against the working directory, which is the repo under review. Save the context rather than reading it straight off the terminal: Step 0b needs the same JSON as a file, and re-running `looper context` there would re-fetch and could resolve a different base. Once Step 0b prints the `run_id`, rename the dir to `~/.claude/review-loop/run/<run_id>` (`mv <run dir> ~/.claude/review-loop/run/<run_id>`) and use that path from then on, so the inputs on disk carry the id the record carries.
 
-**The run dir holds every per-run input** — the context JSON, the diffs, the briefs, the spec artifact, the prior PR comments, the findings narrative, any script you run looper through. It is `~/.claude/review-loop/run/<run_id>/` because:
+**The run dir holds every per-run input** — the context JSON, the diffs, the briefs, the spec artifact, the prior PR comments, the findings narrative (always `narrative.md`, the file `pr-report` reads when `--findings-file` is not given), a deferred PR report (`pending-report.md`, Step 14), any script you run looper through. It is `~/.claude/review-loop/run/<run_id>/` because:
 
 - **It is the same path inside and outside the sandbox.** `$TMPDIR` is not: it resolves to a different directory with the sandbox on vs. off, so a file written by an unsandboxed `gh` fetch could silently miss the copy the agents read (that is how Agent #11 once got an empty spec).
 - **It is outside `.git`.** Claude Code's worktree isolation refuses any command naming a path under `.git/`, so the old locations, `$(git rev-parse --git-dir)/review-loop-context.json` and `<git-common-dir>/info/review-loop-run/`, could not be written by a worktree-isolated builder at all.
 - **It is per run.** `<git-common-dir>` is shared by every worktree of the repo, and a fixed dir there was clobbered mid-fan-out by concurrent sessions in other worktrees, which then reviewed another session's diff. A run id belongs to one run.
 - **`~/.claude/review-loop/` is already where looper writes `runs.jsonl`**, so any session that can run the loop can write there.
 
-Delete a run dir once its run is closed (a finish or abandon row, which `~/.local/bin/looper record show --run-id <run_id>` lists) **and** nothing in it is still owed: a ledger update a worktree-isolated session could not apply (below) stays until the main session has applied it. A `new.*` dir with no run id was a Step 0 that never reached a plan, and may go once its session has ended.
+Delete a run dir once its run is closed (a finish or abandon row, which `~/.local/bin/looper record show --run-id <run_id>` lists) **and** nothing in it is still owed: a run dir whose `pending-report.md` has not been flushed (Step 0c) stays, since that file is the only copy of the run's report. A `new.*` dir with no run id was a Step 0 that never reached a plan, and may go once its session has ended.
 
-**In a worktree-isolated session**, two more things are refused that a main session can do. A write under `<git-common-dir>/info/` (the threat model, the learnings file, the deferred list, the pending reports) may be refused: write the update into the run dir instead, as `ledger-<name>.md` holding the exact text to add or the edit to make, and say in the report that it is waiting for the main session to apply. Never skip a ledger update silently; an unrecorded learning or deferral is one the next run cannot see. And a looper command carrying inline JSON (`--executed '{…}'`) may be refused as unverifiable: put the command in a script under the run dir and run that with `bash <run dir>/<name>.sh`.
+**The ledgers live in the repo's store**, `<store>`: the directory `~/.local/bin/looper home` prints (`~/.claude/review-loop/repos/<name>-<hash>/`, under `$REVIEW_LOOP_HOME` when that is set). It holds `<store>/threat-model.md`, `<store>/deferred.md` and `<store>/learnings.md`. There is one store per repo, shared by every branch and worktree of it, and it is outside `.git` for the same reason the run dir is, so a worktree-isolated session writes the ledgers like any other. Ledgers left at the old place, `<git-common-dir>/info/review-loop-<name>.md`, are moved in the first time looper looks for them. Write the printed path out in full in every later command, as with the run dir.
+
+**In a worktree-isolated session**, a looper command carrying inline JSON (`--executed '{…}'`) may be refused as unverifiable: put the command in a script under the run dir and run that with `bash <run dir>/<name>.sh`.
 
 `looper context` emits a single JSON blob and performs Steps 1–3 and the Step 3b *sizing* deterministically — workspace detection, base-branch resolution (with `git fetch`), learnings load, and test/lint/diff-size detection. Read its fields instead of re-running those steps by hand:
 
@@ -109,13 +111,13 @@ If `looper plan` prints an alarm on stderr, a gate has failed to complete three 
 
 ## Step 0c: Backfill a deferred PR report (triggered)
 
-The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` rather than dropping them; this step flushes that once a PR appears.
+The push-gate forces the order `loop → push → create PR` for a fresh branch, so the loop almost always finishes **before** a PR exists. Step 14 defers the summary comment and evidence to `~/.claude/review-loop/run/<run_id>/pending-report.md` rather than dropping them; this step flushes that once a PR appears.
 
 ```bash
 ~/.local/bin/looper record pending --all
 ```
 
-The pending files live under `<git-common-dir>`, which every branch and linked worktree shares. `pending --all` prints every one of them, one per line as `<path>\t<branch>`, where the branch is the one its run was planned on, whatever is checked out (a detached HEAD included). **Flush each against its own branch's PR, never against this one:** posting another branch's file here would put that branch's report and convergence label on the wrong PR. (Plain `record pending` lists only this branch's files; it is what left a report deferred on a branch you then left unflushed for good, which is why this step no longer uses it.) A file with no run record, or whose run recorded no branch or a detached `HEAD`, is named on stderr and stays in place: list it in the report rather than guess its branch.
+The pending files live in the run dirs, which every repo, branch and linked worktree shares; one left at the old place, `<git-common-dir>/info/review-loop-pending-report.<run_id>.md`, is moved into its run dir by `record pending`. `pending --all` prints every one of this repo's, one per line as `<path>\t<branch>`, where the branch is the one its run was planned on, whatever is checked out (a detached HEAD included). **Flush each against its own branch's PR, never against this one:** posting another branch's file here would put that branch's report and convergence label on the wrong PR. (Plain `record pending` lists only this branch's files; it is what left a report deferred on a branch you then left unflushed for good, which is why this step no longer uses it.) A file with no run record, or whose run recorded no branch or a detached `HEAD`, is named on stderr and stays in place: list it in the report rather than guess its branch.
 
 For each listed branch, ask GitHub for its newest PR in any state, as a **lone** command (a `gh` that is chained, piped or captured runs inside the sandbox, where its TLS fails):
 
@@ -127,8 +129,6 @@ A branch name can be reused, so confirm that PR is this run's before using it. I
 
 - **No PR for that branch** → leave the file in place and continue. A file whose branch never gets a PR (a run planned on `main`, say) stays, and is listed in every report under *Pending reports with no PR*, with its branch, until the user decides what to do with it. It is never deleted unposted: it is the only copy of that run's narrative.
 - **A PR exists** (open, merged or closed) → first drop the file if it already landed: a successful post keeps a local copy, so a file whose `<!-- review-loop:run=<id> -->` marker already appears in a comment on that PR is not posted again. The marker proves only the post: run only the file's owed label steps (step 1 of the *Backfilling* section, without the post), then step 3; steps 2 and 4 belong to the first flush, which already happened. Check with a lone `gh api 'repos/{owner}/{repo}/issues/<n>/comments' --paginate --jq '[.[] | select(.body | contains("<!-- review-loop:run=<id> -->"))] | length'`; any non-zero line means it landed. For the rest, **Read `references/report-format.md`** and follow its *Backfilling a deferred report* section.
-
-In a worktree-isolated session, a command naming the pending file's path under `.git/` may be refused; then leave the file and list it in the report for the main session, as Step 0's run-dir rule says for ledgers.
 
 ## Step 2a: Cheap record checks (always), then the learnings sweep (triggered)
 
@@ -167,10 +167,15 @@ when nobody remembers it exists.
 - **`unguarded[]` is the question never asked.** The `Guard:` line records what would now fail if the
   grounding broke, and "none, because …" is a valid answer; a missing line means nobody considered
   it. Add the line.
-- All four empty → continue; this costs one `git log` per entry.
+- **`merged[]` is fixed deferrals to delete.** Each entry carries a `RESOLVED @ <sha>` mark whose
+  sha is already on the default branch: delete the entry. An entry resolved only on an unmerged
+  branch is not listed, so dropping that branch does not lose the deferral. `null` means
+  `origin/HEAD` is unknown, not that none merged. A squash merge leaves the sha off the default
+  branch, so such an entry stays until it is deleted by hand.
+- All five empty → continue; this costs one `git log` per entry.
 
 **To defer a finding** (Step 8a routes it here; never auto-apply a finding you are deferring),
-append to `<git-common-dir>/info/review-loop-deferred.md`:
+append to `<store>/deferred.md`:
 
 ```
 - DEFERRED <date> (run <run_id>): <the finding, stated as the defect it is>
@@ -188,6 +193,17 @@ cheap, weigh how bad the defect would be against the cost of adding and maintain
 record the answer on the `Guard:` line either way — including "none, because …", so the next reader
 knows it was considered rather than forgotten.
 
+**To resolve a deferral** (a run fixed the deferred defect), do not delete the entry: the fix is
+on this branch only, and the store is shared with every other branch. Add a line under the entry
+naming the commit that fixed it, on its own line (a leading `- ` is allowed):
+
+```
+  RESOLVED @ <sha> (run <run_id>)
+```
+
+`looper deferred` lists the entry under `merged` once that sha is on the default branch, and it is
+deleted then.
+
 `references/security-review.md` vendors Anthropic's `/security-review` prompt, which is compiled into the Claude Code binary and so updates silently whenever Claude Code does. On `drift: true`, note it in the Step 14 report and offer once to diff (`--extract`) and reconcile — never block the run, and never auto-adopt: some departures are deliberate.
 
 ### Learnings staleness sweep — triggered, not every run
@@ -196,7 +212,7 @@ When Step 0 reports `learnings_compaction_due = true` (≥40 entries), run the r
 
 ## Step 2b: Threat model — bootstrap, staleness, update
 
-Runs **once per run, before the loop** (the artifact is repo-scoped, not cycle-scoped). Maintains `<git-common-dir>/info/review-loop-threat-model.md`, the only place repo-specific security context survives between runs. **Read `references/threat-model.md`** for the file format, the bootstrap brief, and the update brief.
+Runs **once per run, before the loop** (the artifact is repo-scoped, not cycle-scoped). Maintains `<store>/threat-model.md`, the only place repo-specific security context survives between runs. Every worktree of the repo shares it, so edit the affected sections and claims in place; never rewrite the whole file. **Read `references/threat-model.md`** for the file format, the bootstrap brief, and the update brief.
 
 ```bash
 ~/.local/bin/looper threat-model
@@ -276,7 +292,7 @@ while agents_spent + <planned fan-out width this cycle> <= agent_cap:
     g. If ask-user bucket is non-empty, Step 8b: act on each finding you hold a clear recommendation for (apply or skip it, unasked), and batch only the rest into one AskUserQuestion. Apply approved fixes.
     h. If test command detected, run tests (Step 9). On failure → STOP LOOP, report.
     i. Commit this cycle's changes (Step 10).
-    j. Append captured learnings to <git-common-dir>/info/review-loop-learnings.md (Step 11), deduping against existing entries.
+    j. Append captured learnings to <store>/learnings.md (Step 11), deduping against existing entries.
     j2. Record the cycle: `looper record cycle --run-id .. --n .. --applied .. --asked .. --agents .. --width-reason ".."`
         (Step 10). EVERY cycle, including a zero-fix one — convergence is derived from these rows,
         and a run with none of them reads as "did not converge" at Step 14. Pass `--asked`: a cycle
@@ -362,7 +378,7 @@ Each agent must also receive:
 
 - The *Scratch files* rules from `references/agent-roster.md`, verbatim, with the run dir's path filled in
 
-- The contents of `<git-common-dir>/info/review-loop-learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
+- The contents of `<store>/learnings.md` if it exists, with instructions: "If a finding matches anything in the Dismissed list, do not flag it."
 - The agent's specific focus (below)
 - The style default below (verbatim)
 - A required output shape: a JSON-like list of `{file, line_range, description, suggested_fix, reasoning}`
@@ -555,11 +571,11 @@ against real spend later.
 
 ## Step 11: Capture Learnings
 
-On the user's Step 8b answers (not findings Step 8b settled on recommendation), record learnings in `<git-common-dir>/info/review-loop-learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
+On the user's Step 8b answers (not findings Step 8b settled on recommendation), record learnings in `<store>/learnings.md` (two sections: **Dismissed**, **Accepted patterns**). It's re-shipped to every agent, so keep it a curated index, not a log.
 
 **Also record every Agent #10 finding that survived** — including ones auto-fixed at Step 7, which never reach Step 8b. #10 is the only agent whose findings come from outside the repo (`gh` review history), and it runs at most once per branch, so an unrecorded #10 finding costs the same API calls to rediscover next time. Write it to **Accepted patterns** with its citation intact ("PR #1042, @jakecoble: don't call this from the request path"). This is how a repo's most-repeated human review feedback migrates from GitHub into the local learnings file, where Agents #1–#4 and #6 see it for free on every subsequent run.
 
-**Security dismissals go to the threat model, not here.** When the user skips a *security* finding at Step 8b, write it under `## Not an issue here` in `<git-common-dir>/info/review-loop-threat-model.md` with today's date and a `[path @ sha]` pin. That file is the per-repo override channel for the vendored exclusion list, and it is the only section the security review reads for suppressions. A security dismissal in the learnings file is invisible to it.
+**Security dismissals go to the threat model, not here.** When the user skips a *security* finding at Step 8b, write it under `## Not an issue here` in `<store>/threat-model.md` with today's date and a `[path @ sha]` pin. That file is the per-repo override channel for the vendored exclusion list, and it is the only section the security review reads for suppressions. A security dismissal in the learnings file is invisible to it.
 
 Do the edits with `looper learn` — you judge match/novelty/section; the command does the dated surgery:
 
@@ -577,7 +593,7 @@ For the entry shape, the dedup/promote judgment, the per-Step-8b-outcome mapping
 
 ## Step 12: "Remember X" Requests During the Session
 
-If the user says "remember X", "always check Y here", "this repo cares about Z", or similar at any point during the session, immediately append to `<git-common-dir>/info/review-loop-learnings.md` under the appropriate section (Dismissed for "stop flagging…", Accepted for "always flag…"). Acknowledge with one sentence. Do not derail the loop.
+If the user says "remember X", "always check Y here", "this repo cares about Z", or similar at any point during the session, immediately append to `<store>/learnings.md` under the appropriate section (Dismissed for "stop flagging…", Accepted for "always flag…"). Acknowledge with one sentence. Do not derail the loop.
 
 If what the user wants remembered is a **security** concern anchored to a location ("keep an eye on this", "this spot is sensitive", "don't let anything widen that"), write it under `## Watch this spot` in the threat model instead, with a `[path:line @ sha]` pin. Those entries *override* the vendored exclusion list: a finding landing on a watched location is reported even when a generic precedent would drop it. This is the channel that keeps a repo-specific risk (e.g. a Sentry depth limit that is load-bearing PII containment) from being filtered away as routine.
 
@@ -589,7 +605,7 @@ Runs **only after everything else passes** — a clean loop exit (auto-fix bucke
 
 **Skip entirely** (say so in one line in the final report) when either:
 
-- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to attach evidence *yet*. This is **deferred, not dropped**: Step 14 records the deferral (`<git-common-dir>/info/review-loop-pending-report.<run_id>.md`) and Step 0c runs this gate once a PR appears. Only genuinely skip when the second condition also holds.
+- **No PR exists** for the branch (`gh pr view` fails) — there's nowhere to attach evidence *yet*. This is **deferred, not dropped**: Step 14 records the deferral (`~/.claude/review-loop/run/<run_id>/pending-report.md`) and Step 0c runs this gate once a PR appears. Only genuinely skip when the second condition also holds.
 - **The diff changes no runtime functionality** — docs, comments, config, dependency bumps, CI-only changes, or pure refactors already pinned by tests. The gate is about *changed behavior*, and when in doubt, run it.
 
 Otherwise the gate is active — **Read `references/evidence-gate.md`** and follow it: 13a (check the PR for sufficient existing evidence) → 13b (stand up the app and produce evidence yourself if missing — playwright for UI, real requests for API/CLI) → 13c (publish to the PR; or on a found issue, stop, fix, and restart the loop from cycle 1, capped at 2 restarts; or report "can't test" and don't push).
@@ -602,7 +618,7 @@ Runs **immediately after Step 13 passes**, on the same clean-exit precondition. 
 
 - **The diff changes no user-facing behavior** — same condition as Step 13, plus internal-only changes whose effect no user could experience. When in doubt, run it.
 - **The repo has no measurement capability at all** — no product-analytics events, no metrics client, no telemetry, no queryable usage data. Don't invent a stack to satisfy the gate; that's a project decision, not a review finding. (Mirrors Agent #8's "skip if the project logs nothing".)
-- **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `<git-common-dir>/info/review-loop-pending-report.<run_id>.md` and Step 0c runs it once a PR appears.
+- **No PR exists** for the branch — **deferred, not dropped**, exactly as Step 13: Step 14 records it in `~/.claude/review-loop/run/<run_id>/pending-report.md` and Step 0c runs it once a PR appears.
 
 Otherwise the gate is active — **Read `references/measurement-gate.md`** and follow it: 13.5a (turn the Step 4b hypothesis into a five-line plan: effect, metric, baseline, window+threshold, guardrail) → 13.5b (verify in the code that each metric is actually emitted on the changed path, segmentable, flag-symmetric, and baseline-readable now) → 13.5c (publish the plan to the PR, **put it in a commit message so it survives in git**, and **file a Taskwarrior follow-up due at the window's end carrying the exact query**; or on a gap, stop, instrument in this PR, and restart the loop from cycle 1 — sharing Step 13's 2-restart cap; or waive with a stated reason).
 
@@ -684,14 +700,15 @@ honesty rule, and the full "when NOT to auto-push" spec.
    The two halves have different conditions and used to share one. *Reconciling* is clean-exit-only
    for a real reason: describing an unconverged tree as if it were final launders unfinished work
    into intent. *Posting* is the opposite — the less converged the run, the more the comment is
-   load-bearing. With **no PR yet** both defer to `<git-common-dir>/info/review-loop-pending-report.<run_id>.md`, and
+   load-bearing. With **no PR yet** both defer to `~/.claude/review-loop/run/<run_id>/pending-report.md`, and
    Step 0c flushes them. The fast path and fast-path re-entry are included: a one-reviewer run
    still posts (or defers) its summary, labelled as a fast-path cycle.
 
    Publish it **from the record, not from memory**:
 
-   Write the narrative to `<run dir>/narrative.md` (the Write tool is simplest) and pass the file.
-   Without `--findings-file` the narrative is dropped; `--findings-file -` reads it from stdin
+   Always write the narrative to `<run dir>/narrative.md` (the Write tool is simplest) and pass the file.
+   Without `--findings-file`, `pr-report` reads that same `<run dir>/narrative.md`, so a narrative
+   written anywhere else is dropped; `--findings-file -` reads it from stdin
    instead, and stdin is read only when asked for, so an idle inherited pipe cannot hang the call.
 
    ```bash

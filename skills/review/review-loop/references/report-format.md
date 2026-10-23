@@ -46,7 +46,7 @@ report assembled from memory is the failure this command exists to prevent.
 
 What `--post` does with it: when a PR exists for the branch, it posts the report as a PR comment, on any terminal exit (clean, cycle-limit, asks-open or test-failure), and that includes fast-path and fast-path re-entry runs (Step 3b). It also keeps a local copy.
 
-**No PR yet: defer, don't skip.** A fresh branch is pushed *after* the loop runs (the gate forces that order), so "no PR" is the normal first-branch case. `looper pr-report --post` then writes the pending file itself, at `<git-common-dir>/info/review-loop-pending-report.<run_id>.md`. Never write that file by hand: push-check reads it as proof that the report landed. Two things flush it, and both run Step 0c's procedure (post the report, run the evidence gate, reconcile the description):
+**No PR yet: defer, don't skip.** A fresh branch is pushed *after* the loop runs (the gate forces that order), so "no PR" is the normal first-branch case. `looper pr-report --post` then writes the pending file itself, at `~/.claude/review-loop/run/<run_id>/pending-report.md`. Never write that file by hand: push-check reads it as proof that the report landed. Two things flush it, and both run Step 0c's procedure (post the report, run the evidence gate, reconcile the description):
 
 (a) If you create the PR **later in this same session**, flush it immediately.
 
@@ -101,7 +101,6 @@ Upstream security prompt (Step 2a): <in sync at claude-code X.Y.Z | DRIFT — ve
 Static-analysis (Step 4a): autofixed <count>; security/secret/SAST findings <resolved/surfaced>; quality residue by tool: <tool=N, …>; skipped tools: <list or none>; errored tools, NOT scanned: <tool (exit/reason), … | none>.
 
 Pending reports with no PR (Step 0c): <path — branch, … | none>. Left in place, not deleted; also any file `record pending --all` named on stderr as unroutable.
-Ledger updates owed to the main session: <run-dir file — ledger, … | none>. (Worktree-isolated runs only; see SKILL.md Step 0.)
 
 Learnings sweep (Step 2a): <ran — dropped N (D dead-path, S stale), promoted P, now E entries | not triggered — <E> entries>.
 
@@ -119,7 +118,7 @@ The deferred file ends with an HTML comment naming the `review:<convergence>` la
 no PR there was nothing to label, so on a fresh branch — the common case, since the push gate forces
 loop-then-push-then-PR — the deferring run never applied it. Post the file **as it is**, because it
 carries the narrative and a re-render would not (`looper pr-report` re-renders the record but reads
-the narrative only from `--findings-file`, which a later session no longer has). Then apply the label by hand,
+the narrative only from `--findings-file` or the run dir's `narrative.md`, which a later session cannot vouch for). Then apply the label by hand,
 as the note says: from looper v0.2.4 it names `gh pr edit <n> --add-label review:<convergence>`.
 Notes written by looper v0.2.3 or earlier suggest `looper pr-report --run-id <id> --label` instead,
 which does not do this: `--label` takes effect only with `--post`, and `--post` would add a second

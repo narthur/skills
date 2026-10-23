@@ -34,7 +34,7 @@ The scope of the review is everything on the current branch that isn't on `origi
 ## Step 2: Load Per-Repo Learnings
 
 ```bash
-learnings_file="$(git rev-parse --git-common-dir)/info/review-loop-learnings.md"
+learnings_file="$(~/.local/bin/looper home)/learnings.md"
 [ -f "$learnings_file" ] && cat "$learnings_file"
 ```
 
