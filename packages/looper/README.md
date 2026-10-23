@@ -48,9 +48,10 @@ Exits non-zero on any survivor, stale or broken entry, so CI can gate on it.
 
 `-jobs n` (default half the CPUs) runs n workers, each in a scratch `git worktree` of HEAD,
 so with more than one the real tree is never mutated; `-jobs 1` mutates it in place, one
-entry at a time. On macOS, most of an entry's cost is XProtect scanning the test binary
-`go test` just linked, about 0.7s on its first exec, and 5 workers measured 2.2x faster than 1 (12.5 vs 27 minutes for 476 entries), the scans being the likely ceiling; adding
-the terminal under System Settings → Privacy & Security → Developer Tools exempts it.
+entry at a time. 5 workers measured 2.2x faster than 1 (12.5 vs 27 minutes for 476
+entries on macOS). Adding the terminal under System Settings → Privacy & Security →
+Developer Tools, which skips XProtect's scan of each freshly linked test binary, measured
+no change (751s both ways), so that scan is not the ceiling. For a local check, use `-since`.
 
 `-since ref` runs only the entries the branch's changes since `ref` could touch: a changed
 file is the entry's target, its `.mut`, or under a path its verify names (`./internal/x/`,
