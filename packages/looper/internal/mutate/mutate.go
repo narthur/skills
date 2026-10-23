@@ -58,7 +58,8 @@ type Result struct {
 // caught: the suite did notice, just not politely.
 const verifyTimeout = 5 * time.Minute
 
-// Runner applies mutations one at a time and reports what the suites noticed.
+// Runner applies mutations, in place one at a time or in scratch worktrees with Jobs > 1,
+// and reports what the suites noticed.
 type Runner struct {
 	Root string    // repo root; targets and commands resolve against it
 	Log  io.Writer // progress, one line per mutation

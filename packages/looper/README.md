@@ -30,7 +30,7 @@ Reintroduces a known defect into the code, runs the suites that should notice, a
 reports whether they did.
 
 ```text
-looper mutate [-catalog mutations] [-root .] [-check]
+looper mutate [-catalog mutations] [-root .] [-check] [-jobs n]
 ```
 
 - **caught** — a verify command failed, and failed the way the mutation said it would.
@@ -45,6 +45,12 @@ looper mutate [-catalog mutations] [-root .] [-check]
   compiling. Also scored as a failure: that entry tested nothing while reading like a catch.
 
 Exits non-zero on any survivor, stale or broken entry, so CI can gate on it.
+
+`-jobs n` (default half the CPUs) runs n workers, each in a scratch `git worktree` of HEAD,
+so with more than one the real tree is never mutated; `-jobs 1` mutates it in place, one
+entry at a time. On macOS, most of an entry's cost is XProtect scanning the test binary
+`go test` just linked, about 0.7s on its first exec, and 5 workers measured no faster than 1; adding
+the terminal under System Settings → Privacy & Security → Developer Tools exempts it.
 
 Before mutating anything, each distinct verify command is run once against the unmodified
 code and has to pass. A command already failing — a flaky test, a broken environment,
