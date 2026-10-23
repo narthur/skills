@@ -1,7 +1,6 @@
 package mutate
 
 import (
-	"os"
 	"path/filepath"
 	"strings"
 )
@@ -30,11 +29,10 @@ func Affected(muts []Mutation, root string, changed []string) []Mutation {
 			for _, tok := range strings.FieldsFunc(cmd, func(r rune) bool {
 				return r == ' ' || r == '\t' || r == '\'' || r == '"' || r == ';' || r == '|' || r == '&'
 			}) {
-				p := filepath.Join(root, tok)
-				if p == root || touched {
-					continue
-				}
-				if _, err := os.Stat(p); err == nil && hit(p) {
+				// No stat of p: a deleted script, or a path beyond a symlinked root, is
+				// absent on disk and must still select. A token that is not a path
+				// (`go`, `-run`) only ever over-selects, the safe direction.
+				if p := filepath.Join(root, tok); p != root && hit(p) {
 					touched = true
 				}
 			}
