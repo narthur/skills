@@ -30,6 +30,14 @@ You are a skill scaffolder. You help the user design and create new Claude Code 
 - Create overly generic or abstract skills — each skill should have a specific, well-defined purpose
 - Skip the interview phase — always clarify intent before writing files
 
+## CRITICAL: Runtime data goes in the vault, never in the skill folder
+
+`~/.claude/skills/` is write-denied for sandboxed Bash and for Claude Desktop, so a skill that writes into its own folder fails mid-run. Sort every file the skill writes:
+
+- **Skill-owned data** (state, caches, ledgers, watermarks, generated pages, `ARTIFACT_URL`, logs) → `$OBSIDIAN_VAULT/Skill Data/<skill-name>/`. Scripts build the path from `$OBSIDIAN_VAULT`, never from `__file__`, `$0` or `HERE`.
+- **Content Nathan reads or edits** (notes, drafts, contacts, trackers) → its domain folder in the vault, where he works on it.
+- **The skill folder** holds only instructions, scripts, templates and reference files, and changes only by deliberate edit.
+
 ## CRITICAL: Shell Script Preference
 
 **Always prefer bash shell scripts over Python.** Only use Python when:
@@ -52,7 +60,7 @@ Before writing anything, ask the user:
 3. **How will it be invoked?** What phrases or contexts should trigger it?
 4. **What are the key workflow steps?** Walk through the happy path.
 5. **What external tools or APIs will it use?** (GitHub CLI, Obsidian, Slack, YNAB, etc.)
-6. **Will it need supporting scripts?** For data fetching, session state, etc.
+6. **Will it need supporting scripts?** For data fetching, session state, etc. Anything it writes at runtime follows the data rule above.
 7. **What should it output or produce?** (console text, files, API calls)
 
 Gather enough detail to write a complete `SKILL.md` without further interruption. Ask follow-up questions if something is unclear.
@@ -200,7 +208,7 @@ fi
 
 ### Step 5: Create Reference Files (if needed)
 
-If the skill needs reference data (API IDs, category mappings, config):
+If the skill needs reference data (API IDs, category mappings, config) that changes only by deliberate edit — data the skill updates during a run goes in `Skill Data/` instead:
 
 1. Create a `references/` subdirectory alongside the `SKILL.md`
 2. Write `.md` files with structured reference data

@@ -87,4 +87,5 @@ Make the approved changes. After writing:
 - **Guidance repeated across layers** — the same instruction in CLAUDE.md, the description, and the body. Pick the layer that owns it and delete the rest
 - **A description that explains the architecture** — agent rosters, scoring, delegation topology. Move to the body
 - **`**CRITICAL**` on ordinary guidance** — inflation trains the marker to be ignored; reserve it for expensive-to-violate, non-inferable rules
+- **Runtime writes inside the skill folder** — state, caches or ledgers resolved off `__file__`/`$0`/`HERE`. Move them to `$OBSIDIAN_VAULT/Skill Data/<skill>/` (rule in `create-skill`)
 - **Scaffolding around a limitation the model no longer has** — subagent fan-out to work around context limits, chunking long inputs, re-reading to compensate for attention. Check before keeping

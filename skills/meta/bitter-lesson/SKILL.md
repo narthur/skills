@@ -88,6 +88,8 @@ last-modified date; all configured hooks; and a settings summary. Use `skill_md_
 `last_modified` as first-pass signals (large + old = prime suspect), but read the actual
 SKILL.md before assigning any non-KEEP verdict.
 
+Also flag any skill that writes inside its own folder: grep its scripts for writes resolved off `__file__`, `$0`, `dirname` or `HERE`, and its `.gitignore` for state files. Each is a FIX item: move the data to `$OBSIDIAN_VAULT/Skill Data/<skill>/` (rule in `create-skill`).
+
 ### Step 3: Gather friction signal
 
 Scaffolding that annoys or misfires is a strong audit lead. Pull from:
