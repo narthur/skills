@@ -94,7 +94,7 @@ Also flag any skill that writes inside its own folder: grep its scripts for writ
 
 Scaffolding that annoys or misfires is a strong audit lead. Pull from:
 
-- **`~/.claude/friction.md`** — one line per skill misfire, written for this audit to drain. For
+- **`$OBSIDIAN_VAULT/Skill Data/bitter-lesson/friction.md`** — one line per skill misfire, written for this audit to drain. For
   each entry since the last audit, grep the named file to check whether the fix actually landed;
   unapplied entries are FIX items.
 - **Auto-memory feedback** — read `~/.claude/projects/-Users-narthur/memory/MEMORY.md` and any

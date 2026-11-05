@@ -90,7 +90,7 @@ _First full audit run 2026-06-19 on v2.1.183 (same version as baseline). Changel
 - **Built-in "Concise" output style** (v2.1.237) — leads with results, skips preamble/narration. Partial
   overlap with `caveman` — which Nathan chose to DELETE on 2026-09-02 on that basis.
 - **`SendFeedback` tool** (v2.1.247) — Claude drafts a feedback report for `/feedback`. Adjacent to, but not
-  a replacement for, the private `~/.claude/friction.md` log (that one feeds _this_ audit, not Anthropic).
+  a replacement for, the private `$OBSIDIAN_VAULT/Skill Data/bitter-lesson/friction.md` log (that one feeds _this_ audit, not Anthropic).
 - **Cross-session messaging** (v2.1.224): `SendMessage` / `ListAgents` between sessions on the same machine,
   plus `notify_when_idle` (v2.1.236, one-shot idle notice, no polling). → obsoletes bespoke session-coordination
   and polling scaffolding.
