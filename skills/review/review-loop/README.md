@@ -41,7 +41,7 @@ A diff under about 30 lines that touches no program logic gets a fast path in pl
 
 Confidence and risk are separate questions. The scorer says how likely a finding is to be real. Whether a human needs to see it depends on what happens if the fix is wrong.
 
-Each finding scoring 50-79 is checked against three questions, taken from [Hills to Die On](https://nathanarthur.com/writing/hills-to-die-on):
+Each finding scoring 50-79 is checked against three questions, which [Hills to Die On](https://nathanarthur.com/writing/hills-to-die-on) describes in more depth:
 
 - **Reversibility.** Would the fix be hard to undo? A new test or a small edit in one file is easy. Deleting behaviour, changing a public export, touching more than two files, or editing a migration is not.
 - **Blast radius.** How much does it affect? A change inside one file, or only to comments or tests, is small. A changed exported signature, or anything imported by three or more files, is large.
