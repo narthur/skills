@@ -31,11 +31,11 @@ Every review agent runs on Sonnet.
 | Prior feedback | Review comments on past merged PRs that touched the same files, checked for whether they apply again | Cycle 1, when `gh` can reach the repo and those files have PR history |
 | Spec conformance | Requirements from a written spec (issue, agent brief, spec file) that are missing, wrong, or never asked for. Each finding quotes the spec line, skips scoring, and always goes to the human | Cycle 1, when a written spec exists |
 
-Standards, Bugs and Comments get whole files, batched to about 1,500 lines per agent. The other agents get the diff. After cycle 1, every agent sees only the previous cycle's fixes.
+Standards, Bugs and Comments get whole files, batched to about 1,500 lines per agent. The other agents get the diff. After cycle 1, the review covers only the previous cycle's fixes, though agents can still read the code around them.
 
 Two more kinds of subagent support the reviewers. A Haiku scorer, one per reviewer that returned findings, gives each finding a confidence score. A Sonnet agent writes the threat model on the first run in a repo and updates it on later runs (see below).
 
-A diff under about 30 lines that touches no program logic gets a fast path in place of the agents above: one combined reviewer covering standards, bugs, comments and security, and one scorer.
+A diff under about 30 lines that touches no program logic gets a fast path in place of the agents above: one combined reviewer covering standards, bugs, comments and security, and one scorer. Security findings there skip the per-finding false-positive filter. If a fast-path fix changes program logic, the run restarts as a full loop.
 
 ## How it assesses risk
 
@@ -51,7 +51,7 @@ If all three answers are low, the fix is applied without asking and noted in the
 
 Some rules override the three questions:
 
-- Structural refactors, authorization fixes, and findings against a written spec are never applied on score alone.
+- Structural refactors, intent findings, authorization fixes, and findings against a written spec are never applied on score alone.
 - A repo's `CLAUDE.md` or learnings can mark a topic "always ask."
 - A cost paid on every use, rather than once, is never skipped for a low score: a diff can't show how often a code path runs.
 - A finding that claims the code misbehaves needs a failure that was observed before the fix existed. Without one, it isn't auto-applied, because a check that never saw the failure can't tell a fix from a no-op.
