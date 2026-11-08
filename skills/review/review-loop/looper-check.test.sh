@@ -34,6 +34,7 @@ fi
 # A file go cannot read build info from.
 printf '#!/bin/sh\n' >"$tmp/looper"; chmod +x "$tmp/looper"
 check "not a go binary" 1 "could not read"
+rm -f "$tmp/looper" # go build -o refuses to overwrite a file that isn't a Go binary
 
 # A build of HEAD, then the two refusals of a build from elsewhere, each built in a clone
 # outside this checkout so go stamps the clone's commit; a clone is never nested, so the pass
