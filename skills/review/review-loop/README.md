@@ -21,21 +21,21 @@ Every review agent runs on Sonnet.
 |---|---|---|
 | Standards | Breaks of the repo's `CLAUDE.md` rules, plus a baseline set of code smells | Every cycle |
 | Bugs | Code that does the wrong thing, and omissions: state that should reset and doesn't, an error path that logs instead of failing, a flag set before the action it guards | Every cycle |
-| Git history | Changes that revert an earlier deliberate fix, or drop a condition a past commit added on purpose, found with `git log -L` and `git blame` on the changed regions | Every cycle |
+| Git history | Changes that revert an earlier deliberate fix, or drop a condition a past commit added on purpose. Runs `git log -L` and `git blame` on the changed regions | Every cycle |
 | Comments | Changes that break guidance written in comments ("must stay alphabetized", "do not call from the main thread"), and comments that claim more than the code does | Every cycle |
-| Security | Anthropic's `/security-review` prompt, given the repo's threat model. One finder, then one false-positive filter per finding | Cycle 1. Later cycles only if the previous cycle applied a security fix |
+| Security | Anthropic's `/security-review` prompt, given the repo's threat model. One finder, then one false-positive filter per finding | Cycle 1, and later cycles only if the previous cycle applied a security fix |
 | Tests | Non-trivial logic changes with no test covering them, in repos that have a test suite | Every cycle |
-| Structural | Simplifications that delete a layer, branch or abstraction. Never applied on score alone | Substantial diffs: about 150 lines or more, or a file past about 800 lines, and not a pure bugfix, config change or dependency bump |
+| Structural | Simplifications that delete a layer, branch or abstraction. Never applied on score alone | Substantial diffs. Skipped only when the diff is under about 150 lines, touches no file past about 800 lines, and is a pure bugfix, config change or dependency bump |
 | Observability and cost | Missing logging, metrics or error reporting, and unbounded use of paid or metered resources (LLM calls, CI, cron, queues, storage) | Substantial diffs, when the repo has an observability convention or the diff touches a metered resource |
 | Intent | Gaps between what the change is meant to do and what the code does. Writes the expected behaviour from the stated goal alone, then compares it to the code | Cycle 1, when the change's purpose can be stated as behaviour |
 | Prior feedback | Review comments on past merged PRs that touched the same files, checked for whether they apply again | Cycle 1, when `gh` can reach the repo and those files have PR history |
 | Spec conformance | Requirements from a written spec (issue, agent brief, spec file) that are missing, wrong, or never asked for. Each finding quotes the spec line, skips scoring, and always goes to the human | Cycle 1, when a written spec exists |
 
-Standards, Bugs and Comments get whole files, batched to about 1,500 lines per agent. The rest get the diff. After cycle 1, every agent sees only the previous cycle's fixes.
+Standards, Bugs and Comments get whole files, batched to about 1,500 lines per agent. The other agents get the diff. After cycle 1, every agent sees only the previous cycle's fixes.
 
-Two more kinds of subagent support the reviewers. A Haiku scorer, one per reviewer that returned findings, gives each finding a confidence score. On the first run in a repo, a Sonnet agent writes the threat model, and on later runs another one keeps it current (see below).
+Two more kinds of subagent support the reviewers. A Haiku scorer, one per reviewer that returned findings, gives each finding a confidence score. A Sonnet agent writes the threat model on the first run in a repo and updates it on later runs (see below).
 
-A diff under about 30 lines that touches no program logic takes a fast path instead: one combined reviewer covering standards, bugs, comments and security, and one scorer.
+A diff under about 30 lines that touches no program logic gets a fast path in place of the agents above: one combined reviewer covering standards, bugs, comments and security, and one scorer.
 
 ## How it assesses risk
 
