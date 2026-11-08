@@ -7,11 +7,35 @@ The agent's instructions are in [`SKILL.md`](SKILL.md). This page is for people.
 ## What a run does
 
 1. **Static analysis first.** Linters, SAST, secret scanning and the project's own lint/format commands run and auto-fix before any model looks at the code. The review agents leave that territory alone.
-2. **Parallel review agents.** Each one has a single lens: project standards (`CLAUDE.md`), bugs (including omissions, such as state that should reset and doesn't), git history, comment accuracy, test coverage, and a security review built on Anthropic's `/security-review` prompt. Larger or riskier diffs add more agents. These cover structural simplification, observability and cost, intent ("does this do what it was meant to?"), conformance to a written spec, and review comments left on earlier PRs that touched the same files.
+2. **Parallel review agents.** Each one has a single lens. Six run on every review, and five more join when the change calls for them (see the table below).
 3. **Independent scoring.** A separate, cheaper model that didn't produce the findings scores each one 0-100 for confidence.
 4. **Routing.** High-confidence fixes are applied. Mid-confidence fixes are applied too when they pass the risk check below; otherwise they become a question.
 5. **Commit and repeat.** Each cycle is committed on its own, tests run, and the next cycle reviews only what the previous one changed. The loop stops when a cycle finds nothing, or when its agent budget runs out.
 6. **Report and push.** A summary is posted to the PR (or held until a PR exists), and a push gate decides whether the branch may be pushed.
+
+## The review agents
+
+Every review agent runs on Sonnet. Numbers match `SKILL.md`. Number 5 was the old security agent, which the security review replaced.
+
+| # | Agent | What it looks for | When it runs |
+|---|---|---|---|
+| 1 | Standards | Breaks of the repo's `CLAUDE.md` rules, plus a baseline set of code smells | Every cycle |
+| 2 | Bugs | Code that does the wrong thing, and omissions: state that should reset and doesn't, an error path that logs instead of failing, a flag set before the action it guards | Every cycle |
+| 3 | Git history | Changes that revert an earlier deliberate fix, or drop a condition a past commit added on purpose, found with `git log -L` and `git blame` on the changed regions | Every cycle |
+| 4 | Comments | Changes that break guidance written in comments ("must stay alphabetized", "do not call from the main thread"), and comments that claim more than the code does | Every cycle |
+| | Security | Anthropic's `/security-review` prompt, given the repo's threat model. One finder, then one false-positive filter per finding | Cycle 1. Later cycles only if the previous cycle applied a security fix |
+| 6 | Tests | Non-trivial logic changes with no test covering them, in repos that have a test suite | Every cycle |
+| 7 | Structural | Simplifications that delete a layer, branch or abstraction. Never applied on score alone | Substantial diffs: about 150 lines or more, or a file past about 800 lines, and not a pure bugfix, config change or dependency bump |
+| 8 | Observability and cost | Missing logging, metrics or error reporting, and unbounded use of paid or metered resources (LLM calls, CI, cron, queues, storage) | Substantial diffs, when the repo has an observability convention or the diff touches a metered resource |
+| 9 | Intent | Gaps between what the change is meant to do and what the code does. Writes the expected behaviour from the stated goal alone, then compares it to the code | Cycle 1, when the change's purpose can be stated as behaviour |
+| 10 | Prior feedback | Review comments on past merged PRs that touched the same files, checked for whether they apply again | Cycle 1, when `gh` can reach the repo and those files have PR history |
+| 11 | Spec conformance | Requirements from a written spec (issue, agent brief, spec file) that are missing, wrong, or never asked for. Each finding quotes the spec line, skips scoring, and always goes to the human | Cycle 1, when a written spec exists |
+
+Agents 1, 2 and 4 get whole files, batched to about 1,500 lines per agent. The rest get the diff. After cycle 1, every agent sees only the previous cycle's fixes.
+
+Two more kinds of subagent support the reviewers. A Haiku scorer, one per reviewer that returned findings, gives each finding a confidence score. On the first run in a repo, a Sonnet agent writes the threat model, and on later runs another one keeps it current (see below).
+
+A diff under about 30 lines that touches no program logic takes a fast path instead: one combined reviewer covering standards, bugs, comments and security, and one scorer.
 
 ## How it assesses risk
 
