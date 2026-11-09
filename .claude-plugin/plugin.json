@@ -36,11 +36,13 @@
     "./skills/media/surge-image-upload",
     "./skills/media/trim-video",
     "./skills/media/ui-mockups",
+    "./skills/dev/architecture",
     "./skills/dev/cleanup-worktrees",
     "./skills/dev/local-llm",
     "./skills/dev/name-it",
     "./skills/dev/organize-files",
     "./skills/dev/playwright",
-    "./skills/dev/prod-uvis"
+    "./skills/dev/prod-uvis",
+    "./skills/writing/scannable"
   ]
 }
