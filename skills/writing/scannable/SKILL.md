@@ -44,13 +44,15 @@ If the host has its own artifact design guidance (for Claude, the `artifact-desi
 
 ```css
 :root{--accent:#8a2f4a;--head:#4e1a2c;--ink:#2a1a20;--sub:#5f4c54;--rule:#d9c3cb;--mono:ui-monospace,Menlo,Consolas,monospace}
-/* dark mode: redefine each token above under prefers-color-scheme: dark */
+/* dark mode: redefine the color tokens above under prefers-color-scheme: dark */
 h2{color:var(--accent);font-size:13px;text-transform:uppercase;letter-spacing:.08em}
 .panel>*{margin:0}
 .panel>h3{color:var(--head);font-size:15px;margin:16px 0 3px} /* 16px above a subsection, 3px to its list */
 .panel>h2{margin-bottom:6px}
 .panel>h2+h3{margin-top:0}
-.panel>ul.muted{margin-top:10px;color:var(--sub);font-size:13.5px}
+.panel>h2:not(:first-child){margin-top:16px}
+.panel>:is(ul,ol)+:is(ul,ol){margin-top:10px} /* reset above removes the default gap between lists */
+.panel>.muted{margin-top:10px;color:var(--sub);font-size:13.5px}
 .panel>ul:not(.star),.panel>ol{padding-left:1.9em;border-left:2px solid var(--rule);margin-left:2px}
 li::marker{color:var(--accent)}
 .n{font-family:var(--mono);font-weight:700;color:var(--accent)}
@@ -60,7 +62,7 @@ li::marker{color:var(--accent)}
 .star li{padding-left:1.6em;text-indent:-1.6em}
 .star b{display:inline-block;width:1.2em;color:var(--accent);text-indent:0}
 .star li:not(:has(>b:empty)){font-weight:600}
-.star li:not(:has(>b:empty)):not(:first-child){margin-top:10px}
+.star li:not(:has(>b:empty)):not(:first-child){margin-top:7px} /* adds to the 3px gap: 10px between groups */
 .star li:has(>b:empty){padding-left:3.2em;text-indent:-1.2em;color:var(--sub)}
 .star li:has(>b:empty)>b::before{content:"–";color:var(--rule)}
 ```
@@ -76,7 +78,7 @@ Gotcha: `text-indent` is inherited by inline-block children. Without `text-inden
 @media print{
   :root{print-color-adjust:exact;-webkit-print-color-adjust:exact}
   nav{display:none}                       /* sticky nav, filter controls */
-  .panel,.star{break-inside:avoid}        /* no group split across pages */
+  .star,.panel>ul,.panel>ol{break-inside:avoid} /* no group split across pages */
   h2,h3{break-after:avoid}                /* no heading stranded at a page bottom */
 }
 ```
