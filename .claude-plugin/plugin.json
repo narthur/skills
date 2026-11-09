@@ -41,6 +41,7 @@
     "./skills/dev/name-it",
     "./skills/dev/organize-files",
     "./skills/dev/playwright",
-    "./skills/dev/prod-uvis"
+    "./skills/dev/prod-uvis",
+    "./skills/writing/scannable"
   ]
 }

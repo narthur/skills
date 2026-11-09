@@ -2,7 +2,7 @@
 
 Agent skills for [Claude Code](https://claude.com/claude-code), written by Nathan Arthur and split out of a dotfiles repo so they can be read, borrowed and forked.
 
-27 skills in five groups. Everything here is original work. Skills that are merely *used* — vendor packs, other people's published skills — stay in the dotfiles repo they came from.
+28 skills in six groups. Everything here is original work. Skills that are merely *used* — vendor packs, other people's published skills — stay in the dotfiles repo they came from.
 
 ## Install
 
@@ -71,6 +71,12 @@ before deleting (`--prune=yes` to skip the prompt in CI).
 | [`organize-files`](skills/dev/organize-files/) | Organize a folder of files by surveying contents, grouping by type, and presenting a numbered list for user decisions | `pandoc`; a vault map at `~/.config/organize-files/vault-structure.md` |
 | [`playwright`](skills/dev/playwright/) | Browser automation using playwright-cli | `playwright-cli` on PATH |
 | [`prod-uvis`](skills/dev/prod-uvis/) | Find user-visible improvements (UVIs) deployed to production in the current git repo that are not hidden behind a feature flag | — |
+
+### `writing/` — Documents people read.
+
+| Skill | What it does | Requires |
+|---|---|---|
+| [`scannable`](skills/writing/scannable/) | Make any document readable at a glance under pressure, in any format: HTML, PDF, Markdown, slides, Word, chat, plain text | — |
 
 ## A note on requirements
 
