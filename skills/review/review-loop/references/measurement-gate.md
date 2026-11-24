@@ -44,9 +44,11 @@ Anything failing is a **gap**, and gaps block — see below.
 
 3. ⭐⭐ **SCHEDULE THE READ, OR THE WINDOW IS DECORATION.** A threshold nobody returns to is worth nothing: the numbers exist during the window and are gone afterwards, which is the single most common way impact evidence is lost. **Before passing the gate, file the follow-up:**
    ```bash
-   task add due:<window end> project:impact "read impact metric for <repo>#<pr>: <the exact query>"
+   task add due:<window end> project:impact "read impact metric for <repo>#<pr>, then comment the result on the PR: <the exact query>"
    ```
    **Put the literal query in the task, not a description of it** — future-you must be able to run it without reconstructing anything. If Taskwarrior isn't available in the environment, write the same line into the PR as a checklist item and say in the report that the read is unscheduled.
+
+   **When the read is done, post it as a comment on that PR** (`## Impact measurement: read-back`) — the PR is where the plan and threshold live, so the result belongs next to them. Include: the windows read, with counts and rates against the baseline; the verdict by the pre-registered threshold; every caveat that weakens it (traffic concentrated in a burst, a shifted window landing in a different verdict band, a baseline that doesn't reproduce, renamed environments); and links to the queries. Read the comment back after posting.
 
 4. Gate passes → continue to Step 14.
 

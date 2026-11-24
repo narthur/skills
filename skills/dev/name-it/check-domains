@@ -91,19 +91,33 @@ if ! command -v dig >/dev/null 2>&1; then
   exit 1
 fi
 
+# dig prints ";; connection timed out" etc. to stdout even with +short, so
+# strip comment lines before treating output as an answer.
+dig_short() {
+  dig +short +time=3 +tries=2 "$@" "@$RESOLVER" 2>/dev/null | grep -v '^;' || true
+}
+
+# Preflight: a resolver we can't reach would make every name look registered
+# (e.g. inside a sandbox that blocks DNS). Fail loudly instead.
+if [[ -z "$(dig_short SOA com)" ]]; then
+  echo "ERROR: no DNS answer from $RESOLVER for 'com' — DNS is blocked or unreachable." >&2
+  echo "Results would be meaningless. Rerun outside the sandbox or pass --resolver." >&2
+  exit 3
+fi
+
 check_one() {
   local domain="$1"
   local out
 
   # SOA at apex
-  out=$(dig +short +time=3 +tries=2 SOA "$domain" "@$RESOLVER" 2>/dev/null || true)
+  out=$(dig_short SOA "$domain")
   if [[ -n "$out" ]]; then
     printf "%-30s  registered (SOA)\n" "$domain"
     return
   fi
 
   # NS at apex
-  out=$(dig +short +time=3 +tries=2 NS "$domain" "@$RESOLVER" 2>/dev/null || true)
+  out=$(dig_short NS "$domain")
   if [[ -n "$out" ]]; then
     printf "%-30s  registered (NS)\n" "$domain"
     return
